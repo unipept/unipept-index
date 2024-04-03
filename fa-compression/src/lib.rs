@@ -1,0 +1,113 @@
+use std::ops::BitOr;
+
+pub mod encode;
+pub mod decode;
+
+pub trait Encode {
+    fn encode(value: u8) -> CharacterSet;
+}
+
+pub trait Decode {
+    fn decode(value: u8) -> CharacterSet;
+    fn decode_pair(value: u8) -> (CharacterSet, CharacterSet) {
+        ( Self::decode(value >> 4), Self::decode(value & 0b1111) )
+    }
+}
+
+#[repr(u8)]
+#[derive(PartialEq, Eq, Debug)]
+pub enum CharacterSet {
+    EMPTY,
+
+    ZERO,
+    ONE,
+    TWO,
+    THREE,
+    FOUR,
+    FIVE,
+    SIX,
+    SEVEN,
+    EIGHT,
+    NINE,
+
+    DASH,
+    POINT,
+    COMMA,
+    SEMICOLON,
+}
+
+impl Encode for CharacterSet {
+    fn encode(value: u8) -> CharacterSet {
+        match value {
+            b'$' => CharacterSet::EMPTY,
+            b'0' => CharacterSet::ZERO,
+            b'1' => CharacterSet::ONE,
+            b'2' => CharacterSet::TWO,
+            b'3' => CharacterSet::THREE,
+            b'4' => CharacterSet::FOUR,
+            b'5' => CharacterSet::FIVE,
+            b'6' => CharacterSet::SIX,
+            b'7' => CharacterSet::SEVEN,
+            b'8' => CharacterSet::EIGHT,
+            b'9' => CharacterSet::NINE,
+            b'-' => CharacterSet::DASH,
+            b'.' => CharacterSet::POINT,
+            b',' => CharacterSet::COMMA,
+            b';' => CharacterSet::SEMICOLON,
+            _ => panic!("Invalid character"),   
+        }
+    }
+}
+
+impl Decode for CharacterSet {
+    fn decode(value: u8) -> CharacterSet {
+        match value {
+            0 => CharacterSet::EMPTY,
+            1 => CharacterSet::ZERO,
+            2 => CharacterSet::ONE,
+            3 => CharacterSet::TWO,
+            4 => CharacterSet::THREE,
+            5 => CharacterSet::FOUR,
+            6 => CharacterSet::FIVE,
+            7 => CharacterSet::SIX,
+            8 => CharacterSet::SEVEN,
+            9 => CharacterSet::EIGHT,
+            10 => CharacterSet::NINE,
+            11 => CharacterSet::DASH,
+            12 => CharacterSet::POINT,
+            13 => CharacterSet::COMMA,
+            14 => CharacterSet::SEMICOLON,
+            _ => panic!("Invalid character"),   
+        }
+    }
+}
+
+impl Into<char> for CharacterSet {
+    fn into(self) -> char {
+        match self {
+            CharacterSet::EMPTY => '$',
+            CharacterSet::ZERO => '0',
+            CharacterSet::ONE => '1',
+            CharacterSet::TWO => '2',
+            CharacterSet::THREE => '3',
+            CharacterSet::FOUR => '4',
+            CharacterSet::FIVE => '5',
+            CharacterSet::SIX => '6',
+            CharacterSet::SEVEN => '7',
+            CharacterSet::EIGHT => '8',
+            CharacterSet::NINE => '9',
+            CharacterSet::DASH => '-',
+            CharacterSet::POINT => '.',
+            CharacterSet::COMMA => ',',
+            CharacterSet::SEMICOLON => ';',
+        }
+    }
+}
+
+impl BitOr for CharacterSet {
+    type Output = u8;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        ((self as u8) << 4) | rhs as u8
+    }
+}
