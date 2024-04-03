@@ -5,11 +5,19 @@ pub fn encode(input: &str) -> Vec<u8> {
         return Vec::new();
     }
 
-    let mut interpros: Vec<&str> = Vec::new();
-    let mut gos: Vec<&str> = Vec::new();
-    let mut ecs: Vec<&str> = Vec::new();
+    // ==========================================================================================
+    // !!!!! The code between the equal signs can be removed if the input is already sorted !!!!!
+    // ==========================================================================================
 
-    // If we can make sure the input is sorted, we can avoid the sorting step
+    // Create vectors to store the different types of annotations
+    // Note: We assume an average of 12 characters per annotation
+    //       We also know that we have 3 types of annotations
+    //       So we can pre-allocate a vector with a capacity of input.len() / 12 / 3
+    let mut interpros: Vec<&str> = Vec::with_capacity(input.len() / 36);
+    let mut gos: Vec<&str> = Vec::with_capacity(input.len() / 36);
+    let mut ecs: Vec<&str> = Vec::with_capacity(input.len() / 36);
+
+    // Read the input and split the annotations into the corresponding vectors
     for annotation in input.split(';') {
         if annotation.starts_with("IPR") {
             interpros.push(&annotation[7..]);
@@ -20,21 +28,26 @@ pub fn encode(input: &str) -> Vec<u8> {
         }
     }
 
-    let result = format!("{},{},{}", ecs.join(";"), gos.join(";"), interpros.join(";"));
+    // ==========================================================================================
+    // ==========================================================================================
+    // ==========================================================================================
 
-    let mut encoded: Vec<u8> = Vec::new();
+    // Create a string without any unnecessary characters
+    let mut result = String::with_capacity(input.len());
+    result.push_str(&ecs.join(";"));
+    result.push(',');
+    result.push_str(&gos.join(";"));
+    result.push(',');
+    result.push_str(&interpros.join(";"));
 
-    let mut iter = result.as_bytes().chunks_exact(2);
-    while let Some([ b1, b2 ]) = iter.next() {
-        let c1 = CharacterSet::encode(*b1);
-        let c2 = CharacterSet::encode(*b2);
-        encoded.push(c1 | c2);
-    }
-
-    let remainder = iter.remainder();
-    if !remainder.is_empty() {
-        let c1 = CharacterSet::encode(remainder[0]);
-        encoded.push(c1 | CharacterSet::EMPTY);
+    // Take two characters at a time and encode them into a single byte
+    let mut encoded: Vec<u8> = Vec::with_capacity(result.len() / 2);
+    for bytes in result.as_bytes().chunks(2) {
+        if bytes.len() == 2 {
+            encoded.push(CharacterSet::encode(bytes[0]) | CharacterSet::encode(bytes[1]));
+        } else {
+            encoded.push(CharacterSet::encode(bytes[0]) | CharacterSet::EMPTY);
+        }
     }
 
     encoded

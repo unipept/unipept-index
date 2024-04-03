@@ -7,25 +7,27 @@ pub fn decode(input: &[u8]) -> String {
         return String::new();
     }
 
+    // Decode the input by splitting each byte into two characters
     let mut decoded = String::with_capacity(input.len() * 2);
-
     for &byte in input {
         let (c1, c2) = CharacterSet::decode_pair(byte);
 
-        decoded.push(c1.into());
+        decoded.push(c1);
         if c2 != '$' {
-            decoded.push(c2.into());
+            decoded.push(c2);
         }
     }
 
-    let mut result = String::new();
-    for (i, annotations) in decoded.split(',').enumerate() {
-        if !annotations.is_empty() {
-            for annotation in annotations.split(';') {
-                result.push_str(PREFIXES[i]);
-                result.push_str(annotation);
-                result.push(';');
-            }
+    // Reconstruct the original annotations
+    // Note: Each byte is doubled, so the required space will also at least double
+    //       Given the additional prefixes, we can safely triple the space. This might
+    //       allocate more than necessary, but it's a simple and fast solution.
+    let mut result = String::with_capacity(input.len() * 3);
+    for (annotations, prefix) in decoded.split(',').zip(PREFIXES).filter(|(s, _)| !s.is_empty()) {
+        for annotation in annotations.split(';') {
+            result.push_str(prefix);
+            result.push_str(annotation);
+            result.push(';');
         }
     }
 

@@ -1,4 +1,4 @@
-use std::ops::BitOr;
+use std::ops::{BitOr, Shl};
 
 pub mod encode;
 pub mod decode;
@@ -108,6 +108,14 @@ impl BitOr for CharacterSet {
     type Output = u8;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        ((self as u8) << 4) | rhs as u8
+        (self << 4) | rhs as u8
+    }
+}
+
+impl Shl<u8> for CharacterSet {
+    type Output = u8;
+
+    fn shl(self, rhs: u8) -> Self::Output {
+        (self as u8) << rhs
     }
 }
