@@ -1,4 +1,4 @@
-use std::ops::{BitOr, Shl};
+use std::ops::BitOr;
 
 pub mod encode;
 pub mod decode;
@@ -15,6 +15,7 @@ pub trait Decode {
 }
 
 #[repr(u8)]
+#[cfg_attr(test, derive(Clone, Copy))]
 #[derive(PartialEq, Eq, Debug)]
 pub enum CharacterSet {
     EMPTY,
@@ -54,7 +55,7 @@ impl Encode for CharacterSet {
             b'.' => CharacterSet::POINT,
             b',' => CharacterSet::COMMA,
             b';' => CharacterSet::SEMICOLON,
-            _ => panic!("Invalid character"),   
+            _ => panic!("Invalid character")
         }
     }
 }
@@ -77,29 +78,7 @@ impl Decode for CharacterSet {
             12 => '.',
             13 => ',',
             14 => ';',
-            _ => panic!("Invalid character"),   
-        }
-    }
-}
-
-impl Into<char> for CharacterSet {
-    fn into(self) -> char {
-        match self {
-            CharacterSet::EMPTY => '$',
-            CharacterSet::ZERO => '0',
-            CharacterSet::ONE => '1',
-            CharacterSet::TWO => '2',
-            CharacterSet::THREE => '3',
-            CharacterSet::FOUR => '4',
-            CharacterSet::FIVE => '5',
-            CharacterSet::SIX => '6',
-            CharacterSet::SEVEN => '7',
-            CharacterSet::EIGHT => '8',
-            CharacterSet::NINE => '9',
-            CharacterSet::DASH => '-',
-            CharacterSet::POINT => '.',
-            CharacterSet::COMMA => ',',
-            CharacterSet::SEMICOLON => ';',
+            _ => panic!("Invalid character")
         }
     }
 }
@@ -108,14 +87,66 @@ impl BitOr for CharacterSet {
     type Output = u8;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        (self << 4) | rhs as u8
+        ((self as u8) << 4) | rhs as u8
     }
 }
 
-impl Shl<u8> for CharacterSet {
-    type Output = u8;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    fn shl(self, rhs: u8) -> Self::Output {
-        (self as u8) << rhs
+    static CHARACTERS: [u8; 15] = [
+        b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b',', b';'
+    ];
+
+    static CHARACTER_SETS: [CharacterSet; 15] = [
+        CharacterSet::EMPTY,
+        CharacterSet::ZERO,
+        CharacterSet::ONE,
+        CharacterSet::TWO,
+        CharacterSet::THREE,
+        CharacterSet::FOUR,
+        CharacterSet::FIVE,
+        CharacterSet::SIX,
+        CharacterSet::SEVEN,
+        CharacterSet::EIGHT,
+        CharacterSet::NINE,
+        CharacterSet::DASH,
+        CharacterSet::POINT,
+        CharacterSet::COMMA,
+        CharacterSet::SEMICOLON
+    ];
+
+    #[test]
+    fn test_or() {
+        for i in 0..CHARACTERS.len() {
+            for j in 0..CHARACTERS.len() {
+                assert_eq!(CHARACTER_SETS[i] | CHARACTER_SETS[j], ((i as u8) << 4) | (j as u8));
+            }
+        }
+    }
+
+    #[test]
+    fn test_encode() {
+        for i in 0..CHARACTERS.len() {
+            assert_eq!(CHARACTER_SETS[i], CharacterSet::encode(CHARACTERS[i]));
+        }
+    }
+
+    #[test]
+    fn test_decode() {
+        for (i, c) in CHARACTERS.iter().enumerate() {
+            assert_eq!(CharacterSet::decode(i as u8), *c as char);
+        }
+    }
+
+    #[test]
+    fn test_decode_pair() {
+        for (i1, c1) in CHARACTERS.iter().enumerate() {
+            for (i2, c2) in CHARACTERS.iter().enumerate() {
+                let encoded = CharacterSet::encode(*c1) | CharacterSet::encode(*c2);
+                assert_eq!(CharacterSet::decode_pair(encoded), (CharacterSet::decode(i1 as u8), CharacterSet::decode(i2 as u8)));
+            }
+        }
     }
 }

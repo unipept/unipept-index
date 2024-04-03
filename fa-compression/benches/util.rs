@@ -10,7 +10,7 @@ pub fn generate_go(random: &mut ThreadRng) -> String {
 }
 
 pub fn generate_ec(random: &mut ThreadRng) -> String {
-    format!("EC:{}.{}.{}.{}", random.gen_range(0 .. 8), random.gen_range(0 .. 30), random.gen_range(0 .. 30), random.gen_range(0 .. 300))
+    format!("EC:{}.{}.{}.{}", random.gen_range(0 .. 8), random.gen_range(0 .. 30), random.gen_range(0 .. 30), random.gen_range(0 .. 200))
 }
 
 pub fn generate_annotation(random: &mut ThreadRng) -> String {
