@@ -1,17 +1,20 @@
-use fa_compression::encode::encode;
+use fa_compression::encode;
 use rand::{
     rngs::ThreadRng,
     Rng
 };
 
+/// Generate a random InterPro annotation.
 pub fn generate_ipr(random: &mut ThreadRng) -> String {
     format!("IPR:IPR{:06}", random.gen_range(0 .. 999999))
 }
 
+/// Generate a random Gene Ontology annotation.
 pub fn generate_go(random: &mut ThreadRng) -> String {
     format!("GO:{:07}", random.gen_range(0 .. 9999999))
 }
 
+/// Generate a random Enzyme Commission annotation.
 pub fn generate_ec(random: &mut ThreadRng) -> String {
     format!(
         "EC:{}.{}.{}.{}",
@@ -22,6 +25,7 @@ pub fn generate_ec(random: &mut ThreadRng) -> String {
     )
 }
 
+/// Generate a random annotation.
 pub fn generate_annotation(random: &mut ThreadRng) -> String {
     match random.gen_range(0 .. 3) {
         0 => generate_ipr(random),
@@ -31,6 +35,7 @@ pub fn generate_annotation(random: &mut ThreadRng) -> String {
     }
 }
 
+/// Generate a random number of decoded annotations.
 pub fn generate_decoded_annotations(count: usize) -> String {
     let mut random = rand::thread_rng();
 
@@ -43,6 +48,7 @@ pub fn generate_decoded_annotations(count: usize) -> String {
     annotations
 }
 
+/// Generate a random number of encoded annotations.
 pub fn generate_encoded_annotations(count: usize) -> Vec<u8> {
     let mut random = rand::thread_rng();
 

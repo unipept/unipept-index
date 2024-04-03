@@ -4,8 +4,8 @@ use criterion::{
     criterion_main
 };
 use fa_compression::{
-    decode::decode,
-    encode::encode
+    decode,
+    encode
 };
 
 mod util;

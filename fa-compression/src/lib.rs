@@ -3,14 +3,14 @@
 
 use std::ops::BitOr;
 
-pub mod decode;
-pub mod encode;
+mod decode;
+mod encode;
 
 pub use decode::decode;
 pub use encode::encode;
 
 /// Trait for encoding a value into a character set.
-pub trait Encode {
+trait Encode {
     /// Encodes the given value into a character set.
     ///
     /// # Arguments
@@ -24,7 +24,7 @@ pub trait Encode {
 }
 
 /// Trait for decoding a value from a character set.
-pub trait Decode {
+trait Decode {
     /// Decodes the given value from a character set into a character.
     ///
     /// # Arguments
@@ -54,7 +54,7 @@ pub trait Decode {
 #[repr(u8)]
 #[cfg_attr(test, derive(Clone, Copy))]
 #[derive(PartialEq, Eq, Debug)]
-pub enum CharacterSet {
+enum CharacterSet {
     /// Empty placeholder character
     EMPTY,
 
