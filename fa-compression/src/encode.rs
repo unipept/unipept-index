@@ -76,7 +76,7 @@ pub fn encode(input: &str) -> Vec<u8> {
         if bytes.len() == 2 {
             encoded.push(CharacterSet::encode(bytes[0]) | CharacterSet::encode(bytes[1]));
         } else {
-            encoded.push(CharacterSet::encode(bytes[0]) | CharacterSet::EMPTY);
+            encoded.push(CharacterSet::encode(bytes[0]) | CharacterSet::Empty);
         }
     }
 

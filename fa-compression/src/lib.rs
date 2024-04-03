@@ -56,29 +56,29 @@ trait Decode {
 #[derive(PartialEq, Eq, Debug)]
 enum CharacterSet {
     /// Empty placeholder character
-    EMPTY,
+    Empty,
 
     /// Numeric characters
-    ZERO,
-    ONE,
-    TWO,
-    THREE,
-    FOUR,
-    FIVE,
-    SIX,
-    SEVEN,
-    EIGHT,
-    NINE,
+    Zero,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
 
     /// Special Enzyme Commission characters
-    DASH,
-    POINT,
+    Dash,
+    Point,
 
     /// Different annotation type separator
-    COMMA,
+    Comma,
 
     /// Annotation separator
-    SEMICOLON
+    Semicolon
 }
 
 impl Encode for CharacterSet {
@@ -93,21 +93,21 @@ impl Encode for CharacterSet {
     /// The encoded character set.
     fn encode(value: u8) -> CharacterSet {
         match value {
-            b'$' => CharacterSet::EMPTY,
-            b'0' => CharacterSet::ZERO,
-            b'1' => CharacterSet::ONE,
-            b'2' => CharacterSet::TWO,
-            b'3' => CharacterSet::THREE,
-            b'4' => CharacterSet::FOUR,
-            b'5' => CharacterSet::FIVE,
-            b'6' => CharacterSet::SIX,
-            b'7' => CharacterSet::SEVEN,
-            b'8' => CharacterSet::EIGHT,
-            b'9' => CharacterSet::NINE,
-            b'-' => CharacterSet::DASH,
-            b'.' => CharacterSet::POINT,
-            b',' => CharacterSet::COMMA,
-            b';' => CharacterSet::SEMICOLON,
+            b'$' => CharacterSet::Empty,
+            b'0' => CharacterSet::Zero,
+            b'1' => CharacterSet::One,
+            b'2' => CharacterSet::Two,
+            b'3' => CharacterSet::Three,
+            b'4' => CharacterSet::Four,
+            b'5' => CharacterSet::Five,
+            b'6' => CharacterSet::Six,
+            b'7' => CharacterSet::Seven,
+            b'8' => CharacterSet::Eight,
+            b'9' => CharacterSet::Nine,
+            b'-' => CharacterSet::Dash,
+            b'.' => CharacterSet::Point,
+            b',' => CharacterSet::Comma,
+            b';' => CharacterSet::Semicolon,
             _ => panic!("Invalid character")
         }
     }
@@ -171,21 +171,21 @@ mod tests {
         [b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b',', b';'];
 
     static CHARACTER_SETS: [CharacterSet; 15] = [
-        CharacterSet::EMPTY,
-        CharacterSet::ZERO,
-        CharacterSet::ONE,
-        CharacterSet::TWO,
-        CharacterSet::THREE,
-        CharacterSet::FOUR,
-        CharacterSet::FIVE,
-        CharacterSet::SIX,
-        CharacterSet::SEVEN,
-        CharacterSet::EIGHT,
-        CharacterSet::NINE,
-        CharacterSet::DASH,
-        CharacterSet::POINT,
-        CharacterSet::COMMA,
-        CharacterSet::SEMICOLON
+        CharacterSet::Empty,
+        CharacterSet::Zero,
+        CharacterSet::One,
+        CharacterSet::Two,
+        CharacterSet::Three,
+        CharacterSet::Four,
+        CharacterSet::Five,
+        CharacterSet::Six,
+        CharacterSet::Seven,
+        CharacterSet::Eight,
+        CharacterSet::Nine,
+        CharacterSet::Dash,
+        CharacterSet::Point,
+        CharacterSet::Comma,
+        CharacterSet::Semicolon
     ];
 
     #[test]
