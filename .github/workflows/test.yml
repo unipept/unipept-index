@@ -31,8 +31,9 @@ jobs:
         id: coverage
         uses: actions-rs/grcov@v0.1
       
-      - name: Upload coverage information
-        uses: codecov/codecov-action@v3
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4.0.1
         with:
-          files: ${{ steps.cov.outputs.report }}
-          verbose: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ steps.coverage.outputs.report }}
+          slug: unipept/unipept-index
