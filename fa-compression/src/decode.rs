@@ -13,7 +13,7 @@ pub fn decode(input: &[u8]) -> String {
         let (c1, c2) = CharacterSet::decode_pair(byte);
 
         decoded.push(c1.into());
-        if c2 != CharacterSet::EMPTY {
+        if c2 != '$' {
             decoded.push(c2.into());
         }
     }

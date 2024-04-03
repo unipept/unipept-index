@@ -8,8 +8,8 @@ pub trait Encode {
 }
 
 pub trait Decode {
-    fn decode(value: u8) -> CharacterSet;
-    fn decode_pair(value: u8) -> (CharacterSet, CharacterSet) {
+    fn decode(value: u8) -> char;
+    fn decode_pair(value: u8) -> (char, char) {
         ( Self::decode(value >> 4), Self::decode(value & 0b1111) )
     }
 }
@@ -60,23 +60,23 @@ impl Encode for CharacterSet {
 }
 
 impl Decode for CharacterSet {
-    fn decode(value: u8) -> CharacterSet {
+    fn decode(value: u8) -> char {
         match value {
-            0 => CharacterSet::EMPTY,
-            1 => CharacterSet::ZERO,
-            2 => CharacterSet::ONE,
-            3 => CharacterSet::TWO,
-            4 => CharacterSet::THREE,
-            5 => CharacterSet::FOUR,
-            6 => CharacterSet::FIVE,
-            7 => CharacterSet::SIX,
-            8 => CharacterSet::SEVEN,
-            9 => CharacterSet::EIGHT,
-            10 => CharacterSet::NINE,
-            11 => CharacterSet::DASH,
-            12 => CharacterSet::POINT,
-            13 => CharacterSet::COMMA,
-            14 => CharacterSet::SEMICOLON,
+            0 => '$',
+            1 => '0',
+            2 => '1',
+            3 => '2',
+            4 => '3',
+            5 => '4',
+            6 => '5',
+            7 => '6',
+            8 => '7',
+            9 => '8',
+            10 => '9',
+            11 => '-',
+            12 => '.',
+            13 => ',',
+            14 => ';',
             _ => panic!("Invalid character"),   
         }
     }
