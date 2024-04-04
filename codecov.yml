@@ -11,5 +11,5 @@ coverage:
 flags:
   fa-compression:
     paths:
-      - fa-compression/*
-    carryforward: false
+      - fa-compression
+    carryforward: true
