@@ -1,0 +1,15 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 90% #overall project/ repo coverage
+      fa-compression:
+        target: 95%
+        flags:
+          - fa-compression
+
+flags:
+  fa-compression:
+    paths:
+      - fa-compression/**/*
+    carryforward: false
