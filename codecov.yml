@@ -1,0 +1,15 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+      fa-compression:
+        target: 90%
+        flags:
+          - fa-compression
+
+flags:
+  fa-compression:
+    paths:
+      - fa-compression
+    carryforward: true
