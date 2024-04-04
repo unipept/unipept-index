@@ -2,7 +2,7 @@
 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github)
 ![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=fa-compression&logo=codecov)
-![Static Badge](https://img.shields.io/badge/doc-rustdoc-green)
+![Static Badge](https://img.shields.io/badge/doc-rustdoc-blue)
 
 The `fa-compression` library offers compression for Unipept's functional annotation strings. These strings follow a very specific 
 format that the compression algorithm will use to achieve a guaranteed minimal compression of **50%** for both very large and very 
