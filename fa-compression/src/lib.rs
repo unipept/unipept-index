@@ -241,4 +241,18 @@ mod tests {
     fn test_decode_pair_invalid() {
         CharacterSet::decode_pair(0b11111111);
     }
+
+    #[test]
+    fn test_clone() {
+        let character_set = CharacterSet::Empty;
+        let character_set_clone = character_set.clone();
+        assert_eq!(character_set, character_set_clone);
+    }
+
+    #[test]
+    fn test_copy() {
+        let character_set = CharacterSet::Empty;
+        let character_set_copy = character_set;
+        assert_eq!(character_set, character_set_copy);
+    }
 }
