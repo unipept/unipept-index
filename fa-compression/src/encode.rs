@@ -23,7 +23,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use fa_compression::encode::encode;
+/// use fa_compression::encode;
 ///
 /// let input = "IPR:IPR016364;EC:1.1.1.-;GO:0009279";
 /// let encoded = encode(input);
