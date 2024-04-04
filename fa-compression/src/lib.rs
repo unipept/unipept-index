@@ -223,4 +223,22 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    #[should_panic]
+    fn test_encode_invalid() {
+        CharacterSet::encode(b'A');
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_decode_invalid() {
+        CharacterSet::decode(15);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_decode_pair_invalid() {
+        CharacterSet::decode_pair(0b11111111);
+    }
 }

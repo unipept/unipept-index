@@ -4,7 +4,7 @@ name: Test
 
 jobs:
   test:
-    name: Test
+    name: Check + test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -16,6 +16,11 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+
+      - name: Run cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
