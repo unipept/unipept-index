@@ -3,7 +3,7 @@ use criterion::{
     criterion_group,
     criterion_main
 };
-use fa_compression::{
+use fa_compression::algorithm1::{
     decode,
     encode
 };

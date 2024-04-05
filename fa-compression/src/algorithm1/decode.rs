@@ -1,10 +1,7 @@
 //! This module provides a function to decode a byte array into a string representation of
 //! annotations.
 
-use crate::{
-    CharacterSet,
-    Decode
-};
+use super::{CharacterSet, Decode};
 
 /// The prefixes for the different types of annotations.
 static PREFIXES: [&str; 3] = ["EC:", "GO:", "IPR:IPR"];
@@ -26,7 +23,7 @@ static PREFIXES: [&str; 3] = ["EC:", "GO:", "IPR:IPR"];
 /// # Examples
 ///
 /// ```
-/// use fa_compression::decode;
+/// use fa_compression::algorithm1::decode;
 ///
 /// let input = &[ 44, 44, 44, 189, 17, 26, 56, 173, 18, 116, 117, 225, 67, 116, 110, 17, 153, 39 ];
 /// let result = decode(input);

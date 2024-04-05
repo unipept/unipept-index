@@ -1,4 +1,4 @@
-use fa_compression::encode;
+use fa_compression::algorithm1::encode;
 use rand::{
     rngs::ThreadRng,
     Rng

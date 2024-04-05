@@ -1,6 +1,6 @@
 //! This module contains the function to encode the input string into a compressed byte vector.
 
-use crate::{
+use super::{
     CharacterSet,
     Encode
 };
@@ -23,7 +23,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use fa_compression::encode;
+/// use fa_compression::algorithm1::encode;
 ///
 /// let input = "IPR:IPR016364;EC:1.1.1.-;GO:0009279";
 /// let encoded = encode(input);
