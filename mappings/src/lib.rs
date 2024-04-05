@@ -1,14 +1,23 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use std::error::Error;
+
+mod proteins;
+mod taxonomy;
+
+#[derive(Debug)]
+struct DatabaseFormatError {
+    error: Vec<String>
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl DatabaseFormatError {
+    fn new(error: Vec<String>) -> Self {
+        Self { error }
     }
 }
+
+impl std::fmt::Display for DatabaseFormatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Expected the protein database file to have the following fields separated by a tab: <Uniprot_accession> <protein id> <sequence>\nBut tried to unpack following vector in 3 variables: {:?}", self.error)
+    }
+}
+
+impl Error for DatabaseFormatError {}
