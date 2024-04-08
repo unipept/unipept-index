@@ -23,7 +23,6 @@ pub static SEPARATION_CHARACTER: u8 = b'-';
 pub static TERMINATION_CHARACTER: u8 = b'$';
 
 /// A struct that represents a protein and its linked information
-#[derive(Debug)]
 pub struct Protein {
     /// The id of the protein
     pub uniprot_id: String,
@@ -39,7 +38,6 @@ pub struct Protein {
 }
 
 /// A struct that represents a collection of proteins
-#[derive(Debug)]
 pub struct Proteins {
     /// The input string containing all proteins
     input_string: Vec<u8>,
@@ -206,6 +204,58 @@ mod tests {
         writeln!(file, "20\tPhenylobacterium\tgenus\t19\t\x01").unwrap();
 
         taxonomy_file
+    }
+
+    #[test]
+    fn test_new_protein() {
+        let protein = Protein {
+            uniprot_id:             "P12345".to_string(),
+            sequence:               (0, 3),
+            taxon_id:               1,
+            functional_annotations: vec![0xD1, 0x11]
+        };
+
+        assert_eq!(protein.uniprot_id, "P12345");
+        assert_eq!(protein.sequence, (0, 3));
+        assert_eq!(protein.taxon_id, 1);
+        assert_eq!(protein.functional_annotations, vec![0xD1, 0x11]);
+    }
+
+    #[test]
+    fn test_new_proteins() {
+        let proteins = Proteins {
+            input_string: "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG"
+                .as_bytes()
+                .to_vec(),
+            proteins:     vec![
+                Protein {
+                    uniprot_id:             "P12345".to_string(),
+                    sequence:               (0, 3),
+                    taxon_id:               1,
+                    functional_annotations: vec![0xD1, 0x11]
+                },
+                Protein {
+                    uniprot_id:             "P54321".to_string(),
+                    sequence:               (4, 3),
+                    taxon_id:               2,
+                    functional_annotations: vec![0xD1, 0x11]
+                },
+            ]
+        };
+
+        assert_eq!(
+            proteins.input_string,
+            "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG".as_bytes()
+        );
+        assert_eq!(proteins.proteins.len(), 2);
+        assert_eq!(proteins.proteins[0].uniprot_id, "P12345");
+        assert_eq!(proteins.proteins[0].sequence, (0, 3));
+        assert_eq!(proteins.proteins[0].taxon_id, 1);
+        assert_eq!(proteins.proteins[0].functional_annotations, vec![0xD1, 0x11]);
+        assert_eq!(proteins.proteins[1].uniprot_id, "P54321");
+        assert_eq!(proteins.proteins[1].sequence, (4, 3));
+        assert_eq!(proteins.proteins[1].taxon_id, 2);
+        assert_eq!(proteins.proteins[1].functional_annotations, vec![0xD1, 0x11]);
     }
 
     #[test]
