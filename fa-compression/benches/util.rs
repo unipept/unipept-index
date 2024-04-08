@@ -1,4 +1,3 @@
-use fa_compression::encode;
 use rand::{
     rngs::ThreadRng,
     Rng
@@ -33,31 +32,4 @@ pub fn generate_annotation(random: &mut ThreadRng) -> String {
         2 => generate_ec(random),
         _ => unreachable!()
     }
-}
-
-/// Generate a random number of decoded annotations.
-pub fn generate_decoded_annotations(count: usize) -> String {
-    let mut random = rand::thread_rng();
-
-    let mut annotations = String::new();
-    for _ in 0 .. count {
-        annotations.push_str(&generate_annotation(&mut random));
-        annotations.push(';');
-    }
-    annotations.pop();
-    annotations
-}
-
-/// Generate a random number of encoded annotations.
-pub fn generate_encoded_annotations(count: usize) -> Vec<u8> {
-    let mut random = rand::thread_rng();
-
-    let mut annotations = String::new();
-    for _ in 0 .. count {
-        annotations.push_str(&generate_annotation(&mut random));
-        annotations.push(';');
-    }
-    annotations.pop();
-
-    encode(annotations.as_str())
 }

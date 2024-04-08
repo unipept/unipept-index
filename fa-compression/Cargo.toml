@@ -10,5 +10,9 @@ criterion = "0.5.1"
 rand = "0.8.5"
 
 [[bench]]
+opt-level = 0
 name = "bench_main"
 harness = false
+
+[profile.bench]
+opt-level=3
