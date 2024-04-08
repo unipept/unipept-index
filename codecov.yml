@@ -7,6 +7,10 @@ coverage:
         target: 90%
         flags:
           - fa-compression
+      sa-mappings:
+        target: 90%
+        flags:
+          - sa-mappings
     patch:
       default:
         target: 90%
@@ -14,9 +18,17 @@ coverage:
         target: 90%
         flags:
           - fa-compression
+      sa-mappings:
+        target: 90%
+        flags:
+          - sa-mappings
 
 flags:
   fa-compression:
     paths:
       - fa-compression
+    carryforward: true
+  sa-mappings:
+    paths:
+      - sa-mappings
     carryforward: true
