@@ -1,5 +1,6 @@
 use criterion::black_box;
 use fa_compression::algorithm1::encode;
+
 use super::util::generate_annotation;
 
 /// Generate a random number of decoded annotations.

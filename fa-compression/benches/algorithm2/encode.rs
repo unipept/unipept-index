@@ -1,7 +1,9 @@
 use criterion::black_box;
 use fa_compression::algorithm2::{
-    encode, CompressionTable
+    encode,
+    CompressionTable
 };
+
 use super::util::generate_annotation;
 
 fn generate_decoded_annotations_and_table(count: usize) -> (String, CompressionTable) {

@@ -1,9 +1,10 @@
 use criterion::black_box;
 use fa_compression::algorithm2::{
     decode,
-    encode, 
+    encode,
     CompressionTable
 };
+
 use super::util::generate_annotation;
 
 fn generate_encoded_annotations_and_table(count: usize) -> (Vec<u8>, CompressionTable) {

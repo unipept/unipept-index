@@ -1,17 +1,17 @@
-mod encode;
 mod decode;
+mod encode;
 
 use std::ops::Index;
 
-pub use encode::encode;
 pub use decode::decode;
+pub use encode::encode;
 
 pub struct CompressionTableEntry {
     pub annotation: String
 }
 
 pub struct CompressionTable {
-    pub entries: Vec<CompressionTableEntry>,
+    pub entries: Vec<CompressionTableEntry>
 }
 
 impl CompressionTable {
@@ -28,7 +28,15 @@ impl CompressionTable {
     }
 
     pub fn index_of(&self, annotation: &str) -> Option<usize> {
-        self.entries.iter().position(|entry| entry.annotation == annotation)
+        self.entries
+            .iter()
+            .position(|entry| entry.annotation == annotation)
+    }
+}
+
+impl Default for CompressionTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

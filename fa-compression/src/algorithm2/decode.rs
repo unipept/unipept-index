@@ -7,7 +7,7 @@ pub fn decode(input: &[u8], compression_table: CompressionTable) -> String {
 
     let mut result = String::with_capacity(input.len() / 3 * 15);
     for bytes in input.chunks_exact(3) {
-        let index = u32::from_le_bytes([ bytes[0], bytes[1], bytes[2], 0 ]) as usize;
+        let index = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]) as usize;
         result.push_str(&compression_table[index].annotation);
         result.push(';');
     }

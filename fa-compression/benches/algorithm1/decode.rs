@@ -3,6 +3,7 @@ use fa_compression::algorithm1::{
     decode,
     encode
 };
+
 use super::util::generate_annotation;
 
 /// Generate a random number of encoded annotations.
