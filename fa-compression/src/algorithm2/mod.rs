@@ -1,3 +1,6 @@
+//! The `fa-compression` crate provides functions to encode and decode annotations following a
+//! specific format
+
 mod decode;
 mod encode;
 
@@ -6,35 +9,65 @@ use std::ops::Index;
 pub use decode::decode;
 pub use encode::encode;
 
+/// Represents an entry in the compression table.
+#[doc(hidden)]
 pub struct CompressionTableEntry {
-    pub annotation: String
+    annotation: String,
 }
 
+/// Represents a compression table.
 pub struct CompressionTable {
-    pub entries: Vec<CompressionTableEntry>
+    /// List of annotations in the compression table.
+    entries: Vec<CompressionTableEntry>,
 }
 
 impl CompressionTable {
+    /// Creates a new compression table.
+    /// 
+    /// # Returns
+    /// 
+    /// An empty compression table.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use fa_compression::algorithm2::CompressionTable;
+    /// 
+    /// let table = CompressionTable::new();
+    /// ```
     pub fn new() -> CompressionTable {
         CompressionTable {
-            entries: Vec::new()
+            entries: Vec::new(),
         }
     }
 
+    /// Adds a new entry to the compression table.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `annotation` - The annotation to add to the compression table.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use fa_compression::algorithm2::CompressionTable;
+    /// 
+    /// let mut table = CompressionTable::new();
+    /// table.add_entry("IPR:IPR000001".to_string());
+    /// table.add_entry("IPR:IPR000002".to_string());
+    /// ```
     pub fn add_entry(&mut self, annotation: String) {
-        self.entries.push(CompressionTableEntry {
-            annotation
-        });
+        self.entries.push(CompressionTableEntry { annotation });
     }
 
-    pub fn index_of(&self, annotation: &str) -> Option<usize> {
-        self.entries
-            .iter()
-            .position(|entry| entry.annotation == annotation)
+    /// Returns the index of the given annotation in the compression table, if it exists.
+    fn index_of(&self, annotation: &str) -> Option<usize> {
+        self.entries.iter().position(|entry| entry.annotation == annotation)
     }
 }
 
 impl Default for CompressionTable {
+    /// Creates a default compression table.
     fn default() -> Self {
         Self::new()
     }
@@ -43,6 +76,7 @@ impl Default for CompressionTable {
 impl Index<usize> for CompressionTable {
     type Output = CompressionTableEntry;
 
+    /// Returns a reference to the compression table entry at the given index.
     fn index(&self, index: usize) -> &Self::Output {
         &self.entries[index]
     }
@@ -52,6 +86,7 @@ impl Index<usize> for CompressionTable {
 mod tests {
     use super::*;
 
+    /// Creates a compression table with some predefined entries for testing.
     fn create_compresion_table() -> CompressionTable {
         let mut table = CompressionTable::new();
 

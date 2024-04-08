@@ -1,12 +1,37 @@
+//! This module contains the function to encode the input string into a compressed byte vector.
+
 use super::CompressionTable;
 
+/// Encodes the input string using the provided compression table.
+///
+/// # Arguments
+///
+/// * `input` - The input string to encode.
+/// * `compression_table` - The compression table used for encoding.
+///
+/// # Returns
+/// 
+/// A compressed byte vector representing the encoded annotations.
+/// 
+/// # Examples
+///
+/// ```
+/// use fa_compression::algorithm2::encode;
+/// use fa_compression::algorithm2::CompressionTable;
+///
+/// let mut compression_table = CompressionTable::new();
+/// compression_table.add_entry("IPR:IPR000001".to_string());
+/// compression_table.add_entry("IPR:IPR000002".to_string());
+/// 
+/// let encoded = encode("IPR:IPR000001;IPR:IPR000002", compression_table);
+/// assert_eq!(encoded, vec![0, 0, 0, 1, 0, 0]);
+/// ```
 pub fn encode(input: &str, compression_table: CompressionTable) -> Vec<u8> {
     if input.is_empty() {
         return Vec::new();
     }
 
     let mut encoded: Vec<u8> = Vec::with_capacity(input.len() / 3);
-
     for annotation in input.split(';') {
         if let Some(index) = compression_table.index_of(annotation) {
             encoded.extend_from_slice(&index.to_le_bytes()[0 .. 3])

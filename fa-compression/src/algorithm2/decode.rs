@@ -1,5 +1,33 @@
+//! This module provides a function to decode a byte array into a string representation of
+//! annotations.
+
 use super::CompressionTable;
 
+/// Decodes a byte slice using a compression table and returns the corresponding string.
+///
+/// # Arguments
+///
+/// * `input` - The byte slice to decode.
+/// * `compression_table` - The compression table used for decoding.
+///
+/// # Returns
+///
+/// The decoded string.
+///
+/// # Examples
+///
+/// ```
+/// use fa_compression::algorithm2::decode;
+/// use fa_compression::algorithm2::CompressionTable;
+///
+/// let input = &[0, 0, 0, 1, 0, 0];
+/// let mut compression_table = CompressionTable::new();
+/// compression_table.add_entry("IPR:IPR000001".to_string());
+/// compression_table.add_entry("IPR:IPR000002".to_string());
+/// 
+/// let decoded_string = decode(input, compression_table);
+/// assert_eq!(decoded_string, "IPR:IPR000001;IPR:IPR000002");
+/// ```
 pub fn decode(input: &[u8], compression_table: CompressionTable) -> String {
     if input.is_empty() {
         return String::new();
@@ -7,6 +35,7 @@ pub fn decode(input: &[u8], compression_table: CompressionTable) -> String {
 
     let mut result = String::with_capacity(input.len() / 3 * 15);
     for bytes in input.chunks_exact(3) {
+        // Convert the first 3 bytes to a u32 and use it as an index in the compression table
         let index = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]) as usize;
         result.push_str(&compression_table[index].annotation);
         result.push(';');
