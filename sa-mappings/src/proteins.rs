@@ -1,14 +1,21 @@
+//! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins and collections of proteins, respectively.
+
 use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
 
 use bytelines::ByteLines;
-use fa_compression::decode;
+use fa_compression::algorithm1::decode;
 use umgap::taxon::TaxonId;
 
 use crate::taxonomy::TaxonAggregator;
 
+/// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
+
+/// The termination character used in the input string
+/// This character should be smaller than the separation character
 pub static TERMINATION_CHARACTER: u8 = b'$';
 
+/// A struct that represents a protein and its linked information
 #[derive(Debug)]
 pub struct Protein {
     /// The id of the protein
@@ -24,6 +31,7 @@ pub struct Protein {
     pub functional_annotations: Vec<u8>,
 }
 
+/// A struct that represents a collection of proteins
 #[derive(Debug)]
 pub struct Proteins {
     /// The input string containing all proteins
@@ -34,12 +42,26 @@ pub struct Proteins {
 }
 
 impl Protein {
+    /// Returns the decoded functional annotations of the protein
     pub fn get_functional_annotations(&self) -> String {
         decode(&self.functional_annotations)
     }
 }
 
 impl Proteins {
+    /// Creates a new `Proteins` struct from a database file and a `TaxonAggregator`
+    /// 
+    /// # Arguments
+    /// * `file` - The path to the database file
+    /// * `taxon_aggregator` - The `TaxonAggregator` to use
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a `Result` containing the `Proteins` struct
+    /// 
+    /// # Errors
+    /// 
+    /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
     pub fn try_from_database_file(file: &str, taxon_aggregator: &TaxonAggregator) -> Result<Self, Box<dyn Error>> {
         let mut input_string: String = String::new();
         let mut proteins: Vec<Protein> = Vec::new();
@@ -48,10 +70,14 @@ impl Proteins {
 
         let mut start_index = 0;
 
+        // Read the lines as bytes, since the input string is not guaranteed to be utf8
+        // because of the encoded functional annotations
         let mut lines = ByteLines::new(BufReader::new(file));
 
         while let Some(Ok(line)) = lines.next() {
             let mut fields = line.split(|b| *b == b'\t');
+
+            // uniprot_id, taxon_id and sequence should always contain valid utf8
             let uniprot_id = from_utf8(fields.next().unwrap())?;
             let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
             let sequence = from_utf8(fields.next().unwrap())?;
@@ -80,11 +106,20 @@ impl Proteins {
         Ok(Self { input_string: input_string.into_bytes(), proteins })
     }
 
+    /// Returns the sequence of a protein
+    ///
+    /// # Arguments
+    /// * `protein` - The protein to get the sequence from
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a string slice containing the sequence of the protein
     pub fn get_sequence(&self, protein: &Protein) -> &str {
         let (start, length) = protein.sequence;
         let end = start + length as usize;
 
-        std::str::from_utf8(&self.input_string[start..end]).unwrap() // should never fail since the input string will always be utf8
+        // unwrap should never fail since the input string will always be utf8
+        std::str::from_utf8(&self.input_string[start..end]).unwrap()
     }
 }
 
@@ -102,7 +137,7 @@ mod tests {
     use std::io::Write;
     use std::path::PathBuf;
 
-    use fa_compression::decode;
+    use fa_compression::algorithm1::decode;
     use tempdir::TempDir;
 
     use crate::taxonomy::AggregationMethod;

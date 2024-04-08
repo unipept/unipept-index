@@ -1,8 +1,19 @@
+//! This module contains the FunctionAggregator struct that is responsible for aggregating the functional annotations of proteins.
+
 use crate::proteins::Protein;
 
+/// A struct that represents a function aggregator
 pub struct FunctionAggregator {}
 
 impl FunctionAggregator {
+    /// Aggregates the functional annotations of proteins
+    /// 
+    /// # Arguments
+    /// * `proteins` - A vector of proteins
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a string containing the aggregated functional annotations
     pub fn aggregate(&self, proteins: Vec<Protein>) -> String {
         proteins
             .iter()

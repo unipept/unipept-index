@@ -1,19 +1,46 @@
+//! This module provides a `TaxonAggregator` struct that is used to aggregate taxonomic information.
+//! It uses a taxonomy file to create a taxonomic tree and performs aggregation using different methods.
+
 use std::error::Error;
 
 use umgap::{agg::{count, MultiThreadSafeAggregator}, rmq::{lca::LCACalculator, mix::MixCalculator}, taxon::{read_taxa_file, TaxonId, TaxonList, TaxonTree}};
 
+/// A struct that represents a taxon aggregator.
 pub struct TaxonAggregator {
+    /// A vector that contains the snapped taxon IDs.
     snapping: Vec<Option<TaxonId>>,
+
+    /// The aggregator used to aggregate taxon IDs.
     aggregator: Box<dyn MultiThreadSafeAggregator>,
+
+    /// The taxon list.
     taxon_list: TaxonList
 }
 
+/// An enum that specifies the aggregation method to use.
 pub enum AggregationMethod {
+    /// The Lowest Common Ancestor (LCA) aggregation method.
     Lca,
+
+    /// The LCA* aggregation method.
     LcaStar
 }
 
 impl TaxonAggregator {
+    /// Creates a new `TaxonAggregator` from a taxonomy file and an aggregation method.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - A string slice that represents the path to the taxonomy file.
+    /// * `method` - An `AggregationMethod` enum that specifies the aggregation method to use.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `TaxonAggregator`
+    /// 
+    /// # Errors
+    /// 
+    /// Returns a `Box<dyn Error>` if an error occurred while reading the taxonomy file.
     pub fn try_from_taxonomy_file(file: &str, method: AggregationMethod) -> Result<Self, Box<dyn Error>> {
         let taxons = read_taxa_file(file)?;
         let taxon_tree = TaxonTree::new(&taxons);
@@ -28,14 +55,41 @@ impl TaxonAggregator {
         Ok(Self { snapping, aggregator, taxon_list })
     }
 
+    /// Checks if a taxon exists in the taxon list.
+    ///
+    /// # Arguments
+    ///
+    /// * `taxon` - The taxon ID to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns a boolean value indicating whether the taxon exists in the taxon list.
     pub fn taxon_exists(&self, taxon: TaxonId) -> bool {
         self.taxon_list.get(taxon).is_some()
     }
 
+    /// Snaps a taxon to its closest ancestor in the taxonomic tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `taxon` - The taxon ID to snap.
+    ///
+    /// # Returns
+    ///
+    /// Returns the snapped taxon ID, or panics if the taxon cannot be snapped.
     pub fn snap_taxon(&self, taxon: TaxonId) -> TaxonId {
         self.snapping[taxon].unwrap_or_else(|| panic!("Could not snap taxon with id {taxon}"))
     }
 
+    /// Aggregates a list of taxon IDs using the specified aggregation method.
+    ///
+    /// # Arguments
+    ///
+    /// * `taxa` - A vector of taxon IDs to aggregate.
+    ///
+    /// # Returns
+    ///
+    /// Returns the aggregated taxon ID, or panics if aggregation fails.
     pub fn aggregate(&self, taxa: Vec<TaxonId>) -> TaxonId {
         let count = count(taxa.into_iter().map(|t| (t, 1.0)));
         self.aggregator.aggregate(&count).unwrap_or_else(|_| panic!("Could not aggregate following taxon ids: {:?}", &count))
