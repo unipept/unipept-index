@@ -1,9 +1,10 @@
-use std::{error::Error, fs::File, io::{BufRead, BufReader}, ops::Index};
+use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
 
-use memchr::memchr_iter;
+use bytelines::ByteLines;
+use fa_compression::decode;
 use umgap::taxon::TaxonId;
 
-use crate::{taxonomy::TaxonAggregator, DatabaseFormatError};
+use crate::taxonomy::TaxonAggregator;
 
 pub static SEPARATION_CHARACTER: u8 = b'-';
 pub static TERMINATION_CHARACTER: u8 = b'$';
@@ -19,8 +20,8 @@ pub struct Protein {
     /// the taxon id of the protein
     pub taxon_id: TaxonId,
 
-    // /// The encoded functional annotations of the protein
-    functional_annotations: Vec<u8>,
+    /// The encoded functional annotations of the protein
+    pub functional_annotations: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -32,6 +33,12 @@ pub struct Proteins {
     proteins: Vec<Protein>,
 }
 
+impl Protein {
+    pub fn get_functional_annotations(&self) -> String {
+        decode(&self.functional_annotations)
+    }
+}
+
 impl Proteins {
     pub fn try_from_database_file(file: &str, taxon_aggregator: &TaxonAggregator) -> Result<Self, Box<dyn Error>> {
         let mut input_string: String = String::new();
@@ -41,19 +48,14 @@ impl Proteins {
 
         let mut start_index = 0;
 
-        let mut reader = BufReader::new(file);
+        let mut lines = ByteLines::new(BufReader::new(file));
 
-        let mut buffer = Vec::new();
-        println!("{:?}", reader.read_until(b'\n', &mut buffer));
-
-        println!("{:?}", buffer);
-
-        for line in reader.lines().into_iter().map_while(Result::ok) {
-            println!("{:?}", line);
-            let fields: Vec<String> = line.split('\t').map(str::to_string).collect();
-            let [uniprot_id, taxon_id, sequence, fa]: [String; 4] = fields.try_into().map_err(DatabaseFormatError::new)?;
-            println!("{:?}", taxon_id);
-            let taxon_id = taxon_id.parse::<TaxonId>()?;
+        while let Some(Ok(line)) = lines.next() {
+            let mut fields = line.split(|b| *b == b'\t');
+            let uniprot_id = from_utf8(fields.next().unwrap())?;
+            let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
+            let sequence = from_utf8(fields.next().unwrap())?;
+            let functional_annotations: Vec<u8> = fields.next().unwrap().iter().copied().collect();
 
             if !taxon_aggregator.taxon_exists(taxon_id) {
                 continue;
@@ -63,10 +65,10 @@ impl Proteins {
             input_string.push(SEPARATION_CHARACTER.into());
 
             proteins.push(Protein {
-                uniprot_id,
+                uniprot_id: uniprot_id.to_string(),
                 sequence: (start_index, sequence.len() as u32),
                 taxon_id,
-                functional_annotations: fa.as_bytes().to_vec(),
+                functional_annotations
             });
 
             start_index += sequence.len() + 1;
@@ -160,8 +162,6 @@ mod tests {
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::Lca).unwrap();
         let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator).unwrap();
 
-        println!("{:?}", proteins);
-
         //assert_eq!(proteins.proteins.len(), 4);
         assert_eq!(proteins.get_sequence(&proteins[0]), "MLPGLALLLLAAWTARALEV");
         assert_eq!(proteins.get_sequence(&proteins[1]), "PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG");
@@ -198,7 +198,6 @@ mod tests {
         let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator).unwrap();
 
         for protein in proteins.proteins.iter() {
-            println!("{:?}", protein.functional_annotations);
             assert_eq!(decode(&protein.functional_annotations), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
         }
     }

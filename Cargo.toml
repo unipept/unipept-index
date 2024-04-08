@@ -3,5 +3,5 @@ resolver = "2"
 
 members = [ 
     "fa-compression",
-    "mappings"
+    "sa-mappings"
 ]

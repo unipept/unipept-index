@@ -1,5 +1,5 @@
 [package]
-name = "mappings"
+name = "sa-mappings"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,9 +7,8 @@ edition = "2021"
 
 [dev-dependencies]
 tempdir = "0.3.7"
-static_assertions = "1.1.0"
 
 [dependencies]
 fa-compression = { path = "../fa-compression" }
-memchr = "2.5.0"
+bytelines = "2.5.0"
 umgap = "1.1.0"
