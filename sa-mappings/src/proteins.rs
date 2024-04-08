@@ -1,6 +1,13 @@
-//! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins and collections of proteins, respectively.
+//! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins
+//! and collections of proteins, respectively.
 
-use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
+use std::{
+    error::Error,
+    fs::File,
+    io::BufReader,
+    ops::Index,
+    str::from_utf8
+};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::decode;
@@ -28,7 +35,7 @@ pub struct Protein {
     pub taxon_id: TaxonId,
 
     /// The encoded functional annotations of the protein
-    pub functional_annotations: Vec<u8>,
+    pub functional_annotations: Vec<u8>
 }
 
 /// A struct that represents a collection of proteins
@@ -38,7 +45,7 @@ pub struct Proteins {
     input_string: Vec<u8>,
 
     /// The proteins in the input string
-    proteins: Vec<Protein>,
+    proteins: Vec<Protein>
 }
 
 impl Protein {
@@ -50,19 +57,22 @@ impl Protein {
 
 impl Proteins {
     /// Creates a new `Proteins` struct from a database file and a `TaxonAggregator`
-    /// 
+    ///
     /// # Arguments
     /// * `file` - The path to the database file
     /// * `taxon_aggregator` - The `TaxonAggregator` to use
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns a `Result` containing the `Proteins` struct
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
-    pub fn try_from_database_file(file: &str, taxon_aggregator: &TaxonAggregator) -> Result<Self, Box<dyn Error>> {
+    pub fn try_from_database_file(
+        file: &str,
+        taxon_aggregator: &TaxonAggregator
+    ) -> Result<Self, Box<dyn Error>> {
         let mut input_string: String = String::new();
         let mut proteins: Vec<Protein> = Vec::new();
 
@@ -81,7 +91,7 @@ impl Proteins {
             let uniprot_id = from_utf8(fields.next().unwrap())?;
             let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
             let sequence = from_utf8(fields.next().unwrap())?;
-            let functional_annotations: Vec<u8> = fields.next().unwrap().iter().copied().collect();
+            let functional_annotations: Vec<u8> = fields.next().unwrap().to_vec();
 
             if !taxon_aggregator.taxon_exists(taxon_id) {
                 continue;
@@ -103,23 +113,26 @@ impl Proteins {
         input_string.pop();
         input_string.push(TERMINATION_CHARACTER.into());
 
-        Ok(Self { input_string: input_string.into_bytes(), proteins })
+        Ok(Self {
+            input_string: input_string.into_bytes(),
+            proteins
+        })
     }
 
     /// Returns the sequence of a protein
     ///
     /// # Arguments
     /// * `protein` - The protein to get the sequence from
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns a string slice containing the sequence of the protein
     pub fn get_sequence(&self, protein: &Protein) -> &str {
         let (start, length) = protein.sequence;
         let end = start + length as usize;
 
         // unwrap should never fail since the input string will always be utf8
-        std::str::from_utf8(&self.input_string[start..end]).unwrap()
+        std::str::from_utf8(&self.input_string[start .. end]).unwrap()
     }
 }
 
@@ -133,32 +146,41 @@ impl Index<usize> for Proteins {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::Write;
-    use std::path::PathBuf;
+    use std::{
+        fs::File,
+        io::Write,
+        path::PathBuf
+    };
 
     use fa_compression::algorithm1::decode;
     use tempdir::TempDir;
 
-    use crate::taxonomy::AggregationMethod;
-
     use super::*;
+    use crate::taxonomy::AggregationMethod;
 
     fn create_database_file(tmp_dir: &TempDir) -> PathBuf {
         let database_file = tmp_dir.path().join("database.tsv");
         let mut file = File::create(&database_file).unwrap();
 
-        file.write("P12345\t1\tMLPGLALLLLAAWTARALEV\t".as_bytes()).unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27]).unwrap();
+        file.write("P12345\t1\tMLPGLALLLLAAWTARALEV\t".as_bytes())
+            .unwrap();
+        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
+            .unwrap();
         file.write("\n".as_bytes()).unwrap();
-        file.write("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\t".as_bytes()).unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27]).unwrap();
+        file.write("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\t".as_bytes())
+            .unwrap();
+        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
+            .unwrap();
         file.write("\n".as_bytes()).unwrap();
-        file.write("P67890\t6\tKWDSDPSGTKTCIDT\t".as_bytes()).unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27]).unwrap();
+        file.write("P67890\t6\tKWDSDPSGTKTCIDT\t".as_bytes())
+            .unwrap();
+        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
+            .unwrap();
         file.write("\n".as_bytes()).unwrap();
-        file.write("P13579\t17\tKEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH\t".as_bytes()).unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27]).unwrap();
+        file.write("P13579\t17\tKEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH\t".as_bytes())
+            .unwrap();
+        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
+            .unwrap();
         file.write("\n".as_bytes()).unwrap();
 
         database_file
@@ -194,14 +216,23 @@ mod tests {
         let database_file = create_database_file(&tmp_dir);
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::Lca).unwrap();
-        let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator).unwrap();
+        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
+            taxonomy_file.to_str().unwrap(),
+            AggregationMethod::Lca
+        )
+        .unwrap();
+        let proteins =
+            Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
+                .unwrap();
 
         //assert_eq!(proteins.proteins.len(), 4);
         assert_eq!(proteins.get_sequence(&proteins[0]), "MLPGLALLLLAAWTARALEV");
         assert_eq!(proteins.get_sequence(&proteins[1]), "PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG");
         assert_eq!(proteins.get_sequence(&proteins[2]), "KWDSDPSGTKTCIDT");
-        assert_eq!(proteins.get_sequence(&proteins[3]), "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH");
+        assert_eq!(
+            proteins.get_sequence(&proteins[3]),
+            "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH"
+        );
     }
 
     #[test]
@@ -212,8 +243,14 @@ mod tests {
         let database_file = create_database_file(&tmp_dir);
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::Lca).unwrap();
-        let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator).unwrap();
+        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
+            taxonomy_file.to_str().unwrap(),
+            AggregationMethod::Lca
+        )
+        .unwrap();
+        let proteins =
+            Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
+                .unwrap();
 
         let taxa = vec![1, 2, 6, 17];
         for (i, protein) in proteins.proteins.iter().enumerate() {
@@ -229,11 +266,20 @@ mod tests {
         let database_file = create_database_file(&tmp_dir);
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::Lca).unwrap();
-        let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator).unwrap();
+        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
+            taxonomy_file.to_str().unwrap(),
+            AggregationMethod::Lca
+        )
+        .unwrap();
+        let proteins =
+            Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
+                .unwrap();
 
         for protein in proteins.proteins.iter() {
-            assert_eq!(decode(&protein.functional_annotations), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
+            assert_eq!(
+                decode(&protein.functional_annotations),
+                "GO:0009279;IPR:IPR016364;IPR:IPR008816"
+            );
         }
     }
 }
