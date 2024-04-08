@@ -10,9 +10,9 @@ use super::CompressionTable;
 /// * `compression_table` - The compression table used for encoding.
 ///
 /// # Returns
-/// 
+///
 /// A compressed byte vector representing the encoded annotations.
-/// 
+///
 /// # Examples
 ///
 /// ```
@@ -22,7 +22,7 @@ use super::CompressionTable;
 /// let mut compression_table = CompressionTable::new();
 /// compression_table.add_entry("IPR:IPR000001".to_string());
 /// compression_table.add_entry("IPR:IPR000002".to_string());
-/// 
+///
 /// let encoded = encode("IPR:IPR000001;IPR:IPR000002", compression_table);
 /// assert_eq!(encoded, vec![0, 0, 0, 1, 0, 0]);
 /// ```

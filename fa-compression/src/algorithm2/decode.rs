@@ -24,7 +24,7 @@ use super::CompressionTable;
 /// let mut compression_table = CompressionTable::new();
 /// compression_table.add_entry("IPR:IPR000001".to_string());
 /// compression_table.add_entry("IPR:IPR000002".to_string());
-/// 
+///
 /// let decoded_string = decode(input, compression_table);
 /// assert_eq!(decoded_string, "IPR:IPR000001;IPR:IPR000002");
 /// ```
