@@ -65,6 +65,11 @@ mod tests {
     }
 
     #[test]
+    fn test_default() {
+        assert_eq!(CompressionTable::default().entries.len(), 0);
+    }
+
+    #[test]
     fn test_add_entry() {
         assert_eq!(create_compresion_table().entries.len(), 5);
     }
