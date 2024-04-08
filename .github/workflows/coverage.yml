@@ -39,3 +39,26 @@ jobs:
           flags: fa-compression
           verbose: true
           fail_ci_if_error: true
+
+      - name: Run cargo test (sa-mappings)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features --no-fail-fast -p sa-mappings
+        env:
+          CARGO_INCREMENTAL: 0
+          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+
+      - name: Gather coverage information (sa-mappings)
+        id: coverage
+        uses: actions-rs/grcov@v0.1
+      
+      - name: Upload coverage reports to Codecov (sa-mappings)
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ${{ steps.coverage.outputs.report }}
+          flags: sa-mappings
+          verbose: true
+          fail_ci_if_error: true
