@@ -961,6 +961,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 
 [[package]]
+name = "sa-builder"
+version = "0.1.0"
+
+[[package]]
+name = "sa-index"
+version = "0.1.0"
+
+[[package]]
 name = "sa-mappings"
 version = "0.1.0"
 dependencies = [
