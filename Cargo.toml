@@ -6,4 +6,4 @@ members = [
     "sa-builder",
     "sa-index",
     "sa-mappings"
-]
+, "sa-server"]
