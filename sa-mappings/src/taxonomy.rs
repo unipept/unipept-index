@@ -91,6 +91,23 @@ impl TaxonAggregator {
         self.taxon_list.get(taxon).is_some()
     }
 
+    /// Checks if a taxon is valid to be used during taxonomic aggregation
+    ///
+    /// # Arguments
+    ///
+    /// * `taxon` - The taxon ID to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns a boolean value indicating whether the taxon exists and is valid
+    pub fn taxon_valid(&self, taxon: TaxonId) -> bool {
+        let optional_taxon = self.taxon_list.get(taxon);
+        match optional_taxon {
+            None => false,
+            Some(taxon) => taxon.valid
+        }
+    }
+
     /// Snaps a taxon to its closest ancestor in the taxonomic tree.
     ///
     /// # Arguments
@@ -109,15 +126,22 @@ impl TaxonAggregator {
     /// # Arguments
     ///
     /// * `taxa` - A vector of taxon IDs to aggregate.
+    /// * `clean_taxa` - If true, only the taxa which are stored as "valid" are used during aggregation
     ///
     /// # Returns
     ///
-    /// Returns the aggregated taxon ID, or panics if aggregation fails.
-    pub fn aggregate(&self, taxa: Vec<TaxonId>) -> TaxonId {
-        let count = count(taxa.into_iter().map(|t| (t, 1.0)));
-        self.aggregator
+    /// Returns the aggregated taxon ID wrapped in Some if aggregation succeeds,
+    /// Returns None if the list of taxa to aggregate is emtpy,
+    /// Panics if aggregation fails.
+    pub fn aggregate(&self, taxa: Vec<TaxonId>, ) -> Option<TaxonId> {
+        if taxa.is_empty() {
+            return None
+        }
+
+        let count = count(taxa.into_iter().map(|t| (t, 1.0_f32)));
+        Some(self.aggregator
             .aggregate(&count)
-            .unwrap_or_else(|_| panic!("Could not aggregate following taxon ids: {:?}", &count))
+            .unwrap_or_else(|_| panic!("Could not aggregate following taxon ids: {:?}", &count)))
     }
 }
 
@@ -151,6 +175,7 @@ mod tests {
         writeln!(file, "18\tPelobacter\tgenus\t17\t\x01").unwrap();
         writeln!(file, "19\tSyntrophotalea carbinolica\tspecies\t17\t\x01").unwrap();
         writeln!(file, "20\tPhenylobacterium\tgenus\t19\t\x01").unwrap();
+        writeln!(file, "21\tInvalid\tspecies\t19\t\x00").unwrap();
 
         taxonomy_file
     }
@@ -166,12 +191,12 @@ mod tests {
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::Lca
         )
-        .unwrap();
+            .unwrap();
         let _ = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::LcaStar
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[test]
@@ -185,7 +210,7 @@ mod tests {
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::Lca
         )
-        .unwrap();
+            .unwrap();
 
         for i in 0 ..= 20 {
             if [0, 3, 4, 5, 8, 12, 15].contains(&i) {
@@ -207,7 +232,7 @@ mod tests {
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::Lca
         )
-        .unwrap();
+            .unwrap();
 
         for i in 0 ..= 20 {
             if ![0, 3, 4, 5, 8, 12, 15].contains(&i) {
@@ -227,11 +252,11 @@ mod tests {
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::Lca
         )
-        .unwrap();
+            .unwrap();
 
-        assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), 6);
-        assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), 10);
-        assert_eq!(taxon_aggregator.aggregate(vec![17, 19]), 17);
+        assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), Some(6));
+        assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), Some(10));
+        assert_eq!(taxon_aggregator.aggregate(vec![17, 19]), Some(17));
     }
 
     #[test]
@@ -245,10 +270,10 @@ mod tests {
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::LcaStar
         )
-        .unwrap();
+            .unwrap();
 
-        assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), 6);
-        assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), 10);
-        assert_eq!(taxon_aggregator.aggregate(vec![17, 19]), 19);
+        assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), Some(6));
+        assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), Some(10));
+        assert_eq!(taxon_aggregator.aggregate(vec![17, 19]), Some(19));
     }
 }

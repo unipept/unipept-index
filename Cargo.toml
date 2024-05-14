@@ -1,9 +1,11 @@
 [workspace]
 resolver = "2"
 
-members = [ 
+members = [
     "fa-compression",
+    "libsais64-rs",
     "sa-builder",
     "sa-index",
-    "sa-mappings"
-, "sa-server"]
+    "sa-mappings",
+    "sa-server"
+]
