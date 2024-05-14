@@ -12,13 +12,13 @@ pub use encode::encode;
 /// Represents an entry in the compression table.
 #[doc(hidden)]
 pub struct CompressionTableEntry {
-    annotation: String
+    annotation: String,
 }
 
 /// Represents a compression table.
 pub struct CompressionTable {
     /// List of annotations in the compression table.
-    entries: Vec<CompressionTableEntry>
+    entries: Vec<CompressionTableEntry>,
 }
 
 impl CompressionTable {
@@ -37,7 +37,7 @@ impl CompressionTable {
     /// ```
     pub fn new() -> CompressionTable {
         CompressionTable {
-            entries: Vec::new()
+            entries: Vec::new(),
         }
     }
 
@@ -57,9 +57,7 @@ impl CompressionTable {
     /// table.add_entry("IPR:IPR000002".to_string());
     /// ```
     pub fn add_entry(&mut self, annotation: String) {
-        self.entries.push(CompressionTableEntry {
-            annotation
-        });
+        self.entries.push(CompressionTableEntry { annotation });
     }
 
     /// Returns the index of the given annotation in the compression table, if it exists.

@@ -1,19 +1,22 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use axum::{http::StatusCode, Json, Router};
 use axum::extract::{DefaultBodyLimit, State};
 use axum::routing::{get, post};
+use axum::{http::StatusCode, Json, Router};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
+use sa_builder::binary::load_suffix_array;
+use sa_index::peptide_search::{
+    analyse_all_peptides, search_all_peptides, OutputData, SearchOnlyResult,
+    SearchResultWithAnalysis,
+};
+use sa_index::sa_searcher::Searcher;
+use sa_index::suffix_to_protein_index::SparseSuffixToProtein;
 use sa_mappings::functionality::FunctionAggregator;
 use sa_mappings::proteins::Proteins;
 use sa_mappings::taxonomy::{AggregationMethod, TaxonAggregator};
-use sa_index::peptide_search::{OutputData, analyse_all_peptides, SearchResultWithAnalysis, SearchOnlyResult, search_all_peptides};
-use sa_index::sa_searcher::Searcher;
-use sa_index::suffix_to_protein_index::SparseSuffixToProtein;
-use sa_builder::binary::load_suffix_array;
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -40,7 +43,7 @@ fn default_true() -> bool {
 }
 
 /// Struct representing the input arguments accepted by the endpoints
-/// 
+///
 /// # Arguments
 /// * `peptides` - List of peptides we want to process
 /// * `cutoff` - The maximum amount of matches to process, default value 10000
@@ -78,7 +81,7 @@ async fn root() -> &'static str {
 /// # Arguments
 /// * `state(searcher)` - The searcher object provided by the server
 /// * `data` - InputData object provided by the user with the peptides to be searched and the config
-/// 
+///
 /// # Returns
 ///
 /// Returns the search and analysis results from the index as a JSON
@@ -129,9 +132,9 @@ async fn search(
 /// # Returns
 ///
 /// Returns ()
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let Arguments {

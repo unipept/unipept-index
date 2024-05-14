@@ -8,7 +8,6 @@ const ONE_GIB: usize = 2usize.pow(30);
 /// Trait implemented by structs that are binary serializable
 /// In our case this is will be a [i64] since the suffix array is a Vec<i64>
 pub trait Serializable {
-
     /// Serializes self into a vector of bytes
     ///
     /// # Returns
@@ -20,9 +19,8 @@ pub trait Serializable {
 impl Serializable for [i64] {
     fn serialize(&self) -> Vec<u8> {
         let mut res = vec![];
-        self.iter().for_each(|entry|
-            res.extend_from_slice(&entry.to_le_bytes())
-        );
+        self.iter()
+            .for_each(|entry| res.extend_from_slice(&entry.to_le_bytes()));
         res
     }
 }
@@ -60,7 +58,11 @@ fn deserialize_sa(data: &[u8]) -> Vec<i64> {
 /// # Errors
 ///
 /// Returns an io::Error if writing away the suffix array failed
-pub fn write_suffix_array(sparseness_factor: u8, suffix_array: &[i64], filename: &str) -> Result<(), std::io::Error> {
+pub fn write_suffix_array(
+    sparseness_factor: u8,
+    suffix_array: &[i64],
+    filename: &str,
+) -> Result<(), std::io::Error> {
     // create the file
     let mut f = OpenOptions::new()
         .create(true)
@@ -71,8 +73,8 @@ pub fn write_suffix_array(sparseness_factor: u8, suffix_array: &[i64], filename:
 
     // write 1 GiB at a time, to minimize extra used memory since we need to translate i64 to [u8; 8]
     let sa_len = suffix_array.len();
-    for start_index in (0..sa_len).step_by(ONE_GIB/8) {
-        let end_index = min(start_index + ONE_GIB/8, sa_len);
+    for start_index in (0..sa_len).step_by(ONE_GIB / 8) {
+        let end_index = min(start_index + ONE_GIB / 8, sa_len);
         f.write_all(&suffix_array[start_index..end_index].serialize())?;
     }
 
@@ -94,7 +96,8 @@ pub fn write_suffix_array(sparseness_factor: u8, suffix_array: &[i64], filename:
 pub fn load_suffix_array(filename: &str) -> Result<(u8, Vec<i64>), Box<dyn Error>> {
     let mut file = &File::open(filename)?;
     let mut sparseness_factor_buffer = [0_u8; 1];
-    file.read_exact(&mut sparseness_factor_buffer).map_err(|_| "Could not read the sample rate from the binary file")?;
+    file.read_exact(&mut sparseness_factor_buffer)
+        .map_err(|_| "Could not read the sample rate from the binary file")?;
     let sparseness_factor = sparseness_factor_buffer[0];
 
     let mut sa = vec![];
@@ -110,7 +113,6 @@ pub fn load_suffix_array(filename: &str) -> Result<(u8, Vec<i64>), Box<dyn Error
 
     Ok((sparseness_factor, sa))
 }
-
 
 #[cfg(test)]
 mod tests {

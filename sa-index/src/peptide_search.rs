@@ -88,7 +88,6 @@ pub fn search_proteins_for_peptide<'a>(
     Some((cutoff_used, proteins))
 }
 
-
 /// Searches the `peptide` in the index multithreaded and retrieves the protein information from the database
 /// This does NOT perform any of the analyses, it only retrieves the functional and taxonomic annotations
 ///
@@ -130,7 +129,6 @@ pub fn search_peptide_retrieve_annotations(
         cutoff_used,
     })
 }
-
 
 /// Searches the `peptide` in the index multithreaded and performs the taxonomic and functional analyses
 ///
@@ -189,7 +187,6 @@ pub fn analyse_peptide(
     })
 }
 
-
 /// Searches the list of `peptides` in the index multithreaded and performs the functional and taxonomic analyses
 ///
 /// # Arguments
@@ -222,7 +219,7 @@ pub fn analyse_all_peptides(
 
 /// Searches the list of `peptides` in the index and retrieves all related information about the found proteins
 /// This does NOT perform any of the analyses
-/// 
+///
 /// # Arguments
 /// * `searcher` - The Searcher which contains the protein database
 /// * `peptides` - List of peptides we want to search in the index
@@ -243,7 +240,15 @@ pub fn search_all_peptides(
     let res: Vec<SearchOnlyResult> = peptides
         .par_iter()
         // calculate the results
-        .map(|peptide| search_peptide_retrieve_annotations(searcher, peptide, cutoff, equalize_i_and_l, clean_taxa))
+        .map(|peptide| {
+            search_peptide_retrieve_annotations(
+                searcher,
+                peptide,
+                cutoff,
+                equalize_i_and_l,
+                clean_taxa,
+            )
+        })
         // remove None's
         .filter_map(|search_result| search_result)
         .collect();

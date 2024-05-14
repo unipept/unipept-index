@@ -1,7 +1,7 @@
 pub mod binary;
 
-use std::error::Error;
 use clap::{Parser, ValueEnum};
+use std::error::Error;
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -35,7 +35,7 @@ pub enum SAConstructionAlgorithm {
 /// * `data` - The text on which we want to build the suffix array
 /// * `construction_algorithm` - The algorithm used during construction
 /// * `sparseness_factor` - The sparseness factor used on the suffix array
-/// 
+///
 /// # Returns
 ///
 /// Returns the constructed suffix array
@@ -43,21 +43,23 @@ pub enum SAConstructionAlgorithm {
 /// # Errors
 ///
 /// The errors that occurred during the building of the suffix array itself
-pub fn build_sa(data: &mut Vec<u8>, construction_algorithm: &SAConstructionAlgorithm, sparseness_factor: u8) -> Result<Vec<i64>, Box<dyn Error>> {
-    
+pub fn build_sa(
+    data: &mut Vec<u8>,
+    construction_algorithm: &SAConstructionAlgorithm,
+    sparseness_factor: u8,
+) -> Result<Vec<i64>, Box<dyn Error>> {
     // translate all L's to a I
     for character in data.iter_mut() {
         if *character == b'L' {
             *character = b'I'
         }
     }
-    
+
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(data),
-        SAConstructionAlgorithm::LibDivSufSort => {
-            libdivsufsort_rs::divsufsort64(data)
-        }
-    }.ok_or("Building suffix array failed")?;
+        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(data),
+    }
+    .ok_or("Building suffix array failed")?;
 
     // make the SA sparse and decrease the vector size if we have sampling (== sampling_rate > 1)
     if sparseness_factor > 1 {

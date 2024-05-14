@@ -4,7 +4,6 @@
 #![allow(non_snake_case)]
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-
 /// Builds the suffix array over the `text` using the libsais64 algorithm
 ///
 /// # Arguments
@@ -16,7 +15,9 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 /// Returns None if construction of the suffix array failed
 pub fn sais64(text: &[u8]) -> Option<Vec<i64>> {
     let mut sa = vec![0; text.len()];
-    let exit_code = unsafe { libsais64(text.as_ptr(), sa.as_mut_ptr(), text.len() as i64, 0, std::ptr::null_mut()) };
+    let exit_code = unsafe {
+        libsais64(text.as_ptr(), sa.as_mut_ptr(), text.len() as i64, 0, std::ptr::null_mut())
+    };
     if exit_code == 0 {
         Some(sa)
     } else {
@@ -26,7 +27,7 @@ pub fn sais64(text: &[u8]) -> Option<Vec<i64>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{sais64};
+    use crate::sais64;
 
     #[test]
     fn check_build_sa_with_libsais64() {

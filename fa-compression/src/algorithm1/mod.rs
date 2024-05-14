@@ -78,7 +78,7 @@ enum CharacterSet {
     Comma,
 
     /// Annotation separator
-    Semicolon
+    Semicolon,
 }
 
 impl Encode for CharacterSet {
@@ -108,7 +108,7 @@ impl Encode for CharacterSet {
             b'.' => CharacterSet::Point,
             b',' => CharacterSet::Comma,
             b';' => CharacterSet::Semicolon,
-            _ => panic!("Invalid character")
+            _ => panic!("Invalid character"),
         }
     }
 }
@@ -140,7 +140,7 @@ impl Decode for CharacterSet {
             12 => '.',
             13 => ',',
             14 => ';',
-            _ => panic!("Invalid character")
+            _ => panic!("Invalid character"),
         }
     }
 }
@@ -185,13 +185,13 @@ mod tests {
         CharacterSet::Dash,
         CharacterSet::Point,
         CharacterSet::Comma,
-        CharacterSet::Semicolon
+        CharacterSet::Semicolon,
     ];
 
     #[test]
     fn test_or() {
-        for i in 0 .. CHARACTERS.len() {
-            for j in 0 .. CHARACTERS.len() {
+        for i in 0..CHARACTERS.len() {
+            for j in 0..CHARACTERS.len() {
                 assert_eq!(CHARACTER_SETS[i] | CHARACTER_SETS[j], ((i as u8) << 4) | (j as u8));
             }
         }
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_encode() {
-        for i in 0 .. CHARACTERS.len() {
+        for i in 0..CHARACTERS.len() {
             assert_eq!(CHARACTER_SETS[i], CharacterSet::encode(CHARACTERS[i]));
         }
     }

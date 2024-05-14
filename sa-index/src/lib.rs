@@ -3,11 +3,11 @@ use std::num::NonZeroUsize;
 
 use clap::{arg, Parser, ValueEnum};
 
+use sa_builder::binary::{load_suffix_array, write_suffix_array};
+use sa_builder::{build_sa, SAConstructionAlgorithm};
 use sa_mappings::functionality::FunctionAggregator;
 use sa_mappings::proteins::Proteins;
 use sa_mappings::taxonomy::{AggregationMethod, TaxonAggregator};
-use sa_builder::{build_sa, SAConstructionAlgorithm};
-use sa_builder::binary::{load_suffix_array, write_suffix_array};
 
 use crate::peptide_search::{analyse_all_peptides, search_all_peptides};
 use crate::sa_searcher::Searcher;
@@ -67,9 +67,8 @@ pub struct Arguments {
     #[arg(long)]
     clean_taxa: bool,
     #[arg(long, value_enum, default_value_t = SearchMode::Analysis)]
-    search_mode: SearchMode
+    search_mode: SearchMode,
 }
-
 
 /// Run the suffix array program
 ///
@@ -78,10 +77,10 @@ pub struct Arguments {
 ///
 /// # Returns
 ///
-/// Unit
-/// 
+/// Returns Unit
+///
 /// # Errors
-/// 
+///
 /// Returns all possible errors that occurred during the program
 pub fn run(mut args: Arguments) -> Result<(), Box<dyn Error>> {
     let taxon_id_calculator =
@@ -92,7 +91,6 @@ pub fn run(mut args: Arguments) -> Result<(), Box<dyn Error>> {
         Some(index_file_name) => {
             let (sparseness_factor, sa) = load_suffix_array(index_file_name)?;
             args.sparseness_factor = sparseness_factor;
-            // println!("Loading the SA took {} ms and loading the proteins + SA took {} ms", end_loading_ms - start_loading_ms, end_loading_ms - start_reading_proteins_ms);
             // TODO: some kind of security check that the loaded database file and SA match
             sa
         }
@@ -153,7 +151,7 @@ pub fn run(mut args: Arguments) -> Result<(), Box<dyn Error>> {
 ///
 /// # Returns
 ///
-/// Unit
+/// Returns Unit
 ///
 /// # Errors
 ///
@@ -198,14 +196,11 @@ fn execute_search(searcher: &Searcher, args: &Arguments) -> Result<(), Box<dyn E
             println!("{}", serde_json::to_string(&search_result)?);
         }
     }
-        
+
     let end_time = get_time_ms()?;
 
     // output to other channel to prevent integrating it into the actual output
-    eprintln!(
-        "Spend {} ms to search the whole file",
-        end_time - start_time
-    );
+    eprintln!("Spend {} ms to search the whole file", end_time - start_time);
 
     Ok(())
 }

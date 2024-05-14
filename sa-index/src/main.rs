@@ -1,5 +1,5 @@
 use clap::Parser;
-use sa_index::{Arguments, run};
+use sa_index::{run, Arguments};
 
 fn main() {
     let args = Arguments::parse();

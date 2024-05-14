@@ -8,7 +8,7 @@ fn generate_decoded_annotations(count: usize) -> String {
     let mut random = rand::thread_rng();
 
     let mut annotations = String::new();
-    for _ in 0 .. count {
+    for _ in 0..count {
         annotations.push_str(&generate_annotation(&mut random));
         annotations.push(';');
     }
@@ -22,7 +22,7 @@ pub fn encode_benchmark(c: &mut criterion::Criterion) {
         b.iter_batched(
             || generate_decoded_annotations(100),
             |annotations| black_box(encode(annotations.as_str())),
-            criterion::BatchSize::SmallInput
+            criterion::BatchSize::SmallInput,
         )
     });
 }

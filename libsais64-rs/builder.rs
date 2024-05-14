@@ -34,9 +34,9 @@ impl<'a> Error for CompileError<'a> {}
 /// # Returns
 ///
 /// Returns () if the exit status was success
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns a CompilationError if the command failed
 fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), CompileError> {
     match exit_status.success() {
@@ -52,17 +52,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     // compile the c library
     Command::new("rm")
         .args(["libsais/CMakeCache.txt"])
-        .status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+        .status()
+        .unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
     exit_status_to_result(
         "cmake",
         Command::new("cmake")
             .args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais", "-Blibsais"])
             .status()?,
     )?;
-    exit_status_to_result(
-        "make",
-        Command::new("make").args(["-C", "libsais"]).status()?,
-    )?;
+    exit_status_to_result("make", Command::new("make").args(["-C", "libsais"]).status()?)?;
 
     // link the c libsais library to rust
     println!("cargo:rustc-link-search=native=libsais64-rs/libsais");

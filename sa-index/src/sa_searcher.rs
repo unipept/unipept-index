@@ -1,6 +1,5 @@
 use std::cmp::min;
 
-
 use sa_mappings::functionality::{FunctionAggregator, FunctionalAggregation};
 use sa_mappings::proteins::{Protein, Proteins};
 use sa_mappings::taxonomy::TaxonAggregator;
@@ -37,7 +36,6 @@ pub enum SearchAllSuffixesResult {
 /// We consider 2 SearchAllSuffixesResult equal if they exist of the same key, and the Vec contains the same values, but the order can be different
 impl PartialEq for SearchAllSuffixesResult {
     fn eq(&self, other: &Self) -> bool {
-
         /// Returns true if `arr1` and `arr2` contains the same elements, the order of the elements is ignored
         ///
         /// # Arguments
@@ -87,11 +85,10 @@ pub struct Searcher {
     suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     proteins: Proteins,
     taxon_id_calculator: TaxonAggregator,
-    function_aggregator: FunctionAggregator
+    function_aggregator: FunctionAggregator,
 }
 
 impl Searcher {
-    
     /// Creates a new Searcher object
     ///
     /// # Arguments
@@ -111,7 +108,7 @@ impl Searcher {
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
         proteins: Proteins,
         taxon_id_calculator: TaxonAggregator,
-        function_aggregator: FunctionAggregator
+        function_aggregator: FunctionAggregator,
     ) -> Self {
         Self {
             sa,
@@ -119,10 +116,10 @@ impl Searcher {
             suffix_index_to_protein,
             proteins,
             taxon_id_calculator,
-            function_aggregator
+            function_aggregator,
         }
     }
-    
+
     /// Compares the `search_string` to the `suffix`
     /// During search this function performs extra logic since the suffix array is build with I == L, while ` self.proteins.input_string` is the original text where I != L
     ///
@@ -190,7 +187,7 @@ impl Searcher {
 
         (is_cond_or_equal, index_in_search_string)
     }
-    
+
     /// Searches for the minimum or maximum bound for a string in the suffix array
     ///
     /// # Arguments
@@ -293,7 +290,8 @@ impl Searcher {
         let mut skip: usize = 0;
         while skip < self.sparseness_factor as usize {
             let mut il_locations_start = 0;
-            while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip {
+            while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip
+            {
                 il_locations_start += 1;
             }
             let il_locations_current_suffix = &il_locations[il_locations_start..];
@@ -311,7 +309,7 @@ impl Searcher {
                     if suffix >= skip
                         && ((skip == 0
                             || Self::check_prefix(
-                        current_search_string_prefix,
+                                current_search_string_prefix,
                                 &self.proteins.input_string[suffix - skip..suffix],
                                 equalize_i_and_l,
                             ))
@@ -415,7 +413,7 @@ impl Searcher {
     ///
     /// # Returns
     ///
-    /// Returns the proteins that every suffix is a part of 
+    /// Returns the proteins that every suffix is a part of
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &Vec<i64>) -> Vec<&Protein> {
         let mut res = vec![];
@@ -437,7 +435,11 @@ impl Searcher {
     /// # Returns
     ///
     /// Returns the matching proteins for the search_string
-    pub fn search_proteins_for_peptide(&self, search_string: &[u8], equalize_i_and_l: bool) -> Vec<&Protein> {
+    pub fn search_proteins_for_peptide(
+        &self,
+        search_string: &[u8],
+        equalize_i_and_l: bool,
+    ) -> Vec<&Protein> {
         let mut matching_suffixes = vec![];
         if let SearchAllSuffixesResult::SearchResult(suffixes) =
             self.search_matching_suffixes(search_string, usize::MAX, equalize_i_and_l)
@@ -458,12 +460,10 @@ impl Searcher {
     #[inline]
     pub fn retrieve_lca(&self, proteins: &[&Protein]) -> Option<TaxonId> {
         let taxon_ids: Vec<TaxonId> = proteins.iter().map(|prot| prot.taxon_id).collect();
-        
+
         self.taxon_id_calculator
             .aggregate(taxon_ids)
-            .map(|id| self.taxon_id_calculator
-                .snap_taxon(id)
-            )
+            .map(|id| self.taxon_id_calculator.snap_taxon(id))
     }
 
     /// Returns true if the protein is considered valid by the provided taxonomy file
@@ -500,7 +500,7 @@ impl Searcher {
     ///
     /// Returns all functional annotations for a collection of proteins
     pub fn get_all_functional_annotations(&self, proteins: &[&Protein]) -> Vec<Vec<String>> {
-        self.function_aggregator.get_all_functional_annotations(proteins)
+        self.function_aggregator
+            .get_all_functional_annotations(proteins)
     }
-    
 }

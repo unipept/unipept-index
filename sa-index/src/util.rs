@@ -11,9 +11,9 @@ use crate::sa_searcher::Searcher;
 /// # Returns
 ///
 /// Returns the current time in ms
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns a SystemTimeError if getting the current time somehow fails
 #[allow(unused)]
 pub fn get_time_ms() -> Result<f64, SystemTimeError> {
@@ -44,12 +44,14 @@ pub fn time_execution(
 ///
 /// # Arguments
 /// * `filename` - The file we want to iterate over per line
-/// 
+///
 /// # Returns
 ///
 /// Returns an Iterator to the Reader of the lines of the file.
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-    where P: AsRef<Path>, {
+where
+    P: AsRef<Path>,
+{
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
 }

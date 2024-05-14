@@ -1,17 +1,16 @@
+use crate::Nullable;
 use clap::ValueEnum;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use crate::Nullable;
 
 /// Enum used to define the commandline arguments and choose which index style is used
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SuffixToProteinMappingStyle {
     Dense,
-    Sparse
+    Sparse,
 }
 
 /// Trait implemented by the SuffixToProtein mappings
 pub trait SuffixToProteinIndex: Send + Sync {
-    
     /// Returns the index of the protein in the protein list for the given suffix
     ///
     /// # Arguments
@@ -44,18 +43,20 @@ impl SuffixToProteinIndex for DenseSuffixToProtein {
 
 impl SuffixToProteinIndex for SparseSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
-        let protein_index = self.mapping.binary_search(&suffix).unwrap_or_else(|index| index - 1);
+        let protein_index = self
+            .mapping
+            .binary_search(&suffix)
+            .unwrap_or_else(|index| index - 1);
         // if the next value in the mapping is 1 larger than the current suffix, that means that the current suffix starts with a SEPARATION_CHARACTER or TERMINATION_CHARACTER
         // this means it does not belong to a protein
         if self.mapping[protein_index + 1] == suffix + 1 {
-            return u32::NULL
+            return u32::NULL;
         }
         protein_index as u32
     }
 }
 
 impl DenseSuffixToProtein {
-
     /// Creates a new DenseSuffixToProtein mapping
     ///
     /// # Arguments
@@ -77,12 +78,13 @@ impl DenseSuffixToProtein {
             }
         }
         suffix_index_to_protein.shrink_to_fit();
-        DenseSuffixToProtein { mapping: suffix_index_to_protein }
+        DenseSuffixToProtein {
+            mapping: suffix_index_to_protein,
+        }
     }
 }
 
 impl SparseSuffixToProtein {
-
     /// Creates a new SparseSuffixToProtein mapping
     ///
     /// # Arguments
@@ -99,17 +101,19 @@ impl SparseSuffixToProtein {
             }
         }
         suffix_index_to_protein.shrink_to_fit();
-        SparseSuffixToProtein { mapping: suffix_index_to_protein }
+        SparseSuffixToProtein {
+            mapping: suffix_index_to_protein,
+        }
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+    use crate::suffix_to_protein_index::{
+        DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex,
+    };
     use crate::Nullable;
-    use crate::suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex};
+    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
     fn build_text() -> Vec<u8> {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -121,7 +125,9 @@ mod tests {
     fn test_dense_build() {
         let u8_text = &build_text();
         let index = DenseSuffixToProtein::new(u8_text);
-        let expected = DenseSuffixToProtein {mapping: vec![0, 0, 0, u32::NULL, 1, 1, u32::NULL, 2, 2, 2, u32::NULL]};
+        let expected = DenseSuffixToProtein {
+            mapping: vec![0, 0, 0, u32::NULL, 1, 1, u32::NULL, 2, 2, 2, u32::NULL],
+        };
         assert_eq!(index, expected);
     }
 
@@ -129,7 +135,9 @@ mod tests {
     fn test_sparse_build() {
         let u8_text = &build_text();
         let index = SparseSuffixToProtein::new(u8_text);
-        let expected = SparseSuffixToProtein {mapping: vec![0, 4, 7, 11]};
+        let expected = SparseSuffixToProtein {
+            mapping: vec![0, 4, 7, 11],
+        };
         assert_eq!(index, expected);
     }
 

@@ -5,20 +5,9 @@
 use std::error::Error;
 
 use umgap::{
-    agg::{
-        count,
-        MultiThreadSafeAggregator
-    },
-    rmq::{
-        lca::LCACalculator,
-        mix::MixCalculator
-    },
-    taxon::{
-        read_taxa_file,
-        TaxonId,
-        TaxonList,
-        TaxonTree
-    }
+    agg::{count, MultiThreadSafeAggregator},
+    rmq::{lca::LCACalculator, mix::MixCalculator},
+    taxon::{read_taxa_file, TaxonId, TaxonList, TaxonTree},
 };
 
 /// A struct that represents a taxon aggregator.
@@ -30,7 +19,7 @@ pub struct TaxonAggregator {
     aggregator: Box<dyn MultiThreadSafeAggregator>,
 
     /// The taxon list.
-    taxon_list: TaxonList
+    taxon_list: TaxonList,
 }
 
 /// An enum that specifies the aggregation method to use.
@@ -39,7 +28,7 @@ pub enum AggregationMethod {
     Lca,
 
     /// The LCA* aggregation method.
-    LcaStar
+    LcaStar,
 }
 
 impl TaxonAggregator {
@@ -59,7 +48,7 @@ impl TaxonAggregator {
     /// Returns a `Box<dyn Error>` if an error occurred while reading the taxonomy file.
     pub fn try_from_taxonomy_file(
         file: &str,
-        method: AggregationMethod
+        method: AggregationMethod,
     ) -> Result<Self, Box<dyn Error>> {
         let taxons = read_taxa_file(file)?;
         let taxon_tree = TaxonTree::new(&taxons);
@@ -68,13 +57,13 @@ impl TaxonAggregator {
 
         let aggregator: Box<dyn MultiThreadSafeAggregator> = match method {
             AggregationMethod::Lca => Box::new(MixCalculator::new(taxon_tree, 1.0)),
-            AggregationMethod::LcaStar => Box::new(LCACalculator::new(taxon_tree))
+            AggregationMethod::LcaStar => Box::new(LCACalculator::new(taxon_tree)),
         };
 
         Ok(Self {
             snapping,
             aggregator,
-            taxon_list
+            taxon_list,
         })
     }
 
@@ -104,7 +93,7 @@ impl TaxonAggregator {
         let optional_taxon = self.taxon_list.get(taxon);
         match optional_taxon {
             None => false,
-            Some(taxon) => taxon.valid
+            Some(taxon) => taxon.valid,
         }
     }
 
@@ -133,25 +122,23 @@ impl TaxonAggregator {
     /// Returns the aggregated taxon ID wrapped in Some if aggregation succeeds,
     /// Returns None if the list of taxa to aggregate is emtpy,
     /// Panics if aggregation fails.
-    pub fn aggregate(&self, taxa: Vec<TaxonId>, ) -> Option<TaxonId> {
+    pub fn aggregate(&self, taxa: Vec<TaxonId>) -> Option<TaxonId> {
         if taxa.is_empty() {
-            return None
+            return None;
         }
 
         let count = count(taxa.into_iter().map(|t| (t, 1.0_f32)));
-        Some(self.aggregator
-            .aggregate(&count)
-            .unwrap_or_else(|_| panic!("Could not aggregate following taxon ids: {:?}", &count)))
+        Some(
+            self.aggregator.aggregate(&count).unwrap_or_else(|_| {
+                panic!("Could not aggregate following taxon ids: {:?}", &count)
+            }),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs::File,
-        io::Write,
-        path::PathBuf
-    };
+    use std::{fs::File, io::Write, path::PathBuf};
 
     use tempdir::TempDir;
 
@@ -189,14 +176,14 @@ mod tests {
 
         let _ = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
+            AggregationMethod::Lca,
         )
-            .unwrap();
+        .unwrap();
         let _ = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::LcaStar
+            AggregationMethod::LcaStar,
         )
-            .unwrap();
+        .unwrap();
     }
 
     #[test]
@@ -208,11 +195,11 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
+            AggregationMethod::Lca,
         )
-            .unwrap();
+        .unwrap();
 
-        for i in 0 ..= 20 {
+        for i in 0..=20 {
             if [0, 3, 4, 5, 8, 12, 15].contains(&i) {
                 assert!(!taxon_aggregator.taxon_exists(i));
             } else {
@@ -230,11 +217,11 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
+            AggregationMethod::Lca,
         )
-            .unwrap();
+        .unwrap();
 
-        for i in 0 ..= 20 {
+        for i in 0..=20 {
             if ![0, 3, 4, 5, 8, 12, 15].contains(&i) {
                 assert_eq!(taxon_aggregator.snap_taxon(i), i);
             }
@@ -250,9 +237,9 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
+            AggregationMethod::Lca,
         )
-            .unwrap();
+        .unwrap();
 
         assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), Some(6));
         assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), Some(10));
@@ -268,9 +255,9 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::LcaStar
+            AggregationMethod::LcaStar,
         )
-            .unwrap();
+        .unwrap();
 
         assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), Some(6));
         assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), Some(10));

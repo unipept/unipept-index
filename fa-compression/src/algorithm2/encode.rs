@@ -34,7 +34,7 @@ pub fn encode(input: &str, compression_table: CompressionTable) -> Vec<u8> {
     let mut encoded: Vec<u8> = Vec::with_capacity(input.len() / 3);
     for annotation in input.split(';') {
         if let Some(index) = compression_table.index_of(annotation) {
-            encoded.extend_from_slice(&index.to_le_bytes()[0 .. 3])
+            encoded.extend_from_slice(&index.to_le_bytes()[0..3])
         }
     }
 
