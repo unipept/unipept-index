@@ -1,20 +1,47 @@
-use std::error::Error;
-use std::num::NonZeroUsize;
-
-use clap::{arg, Parser, ValueEnum};
-
-use sa_builder::binary::{load_suffix_array, write_suffix_array};
-use sa_builder::{build_sa, SAConstructionAlgorithm};
-use sa_mappings::functionality::FunctionAggregator;
-use sa_mappings::proteins::Proteins;
-use sa_mappings::taxonomy::{AggregationMethod, TaxonAggregator};
-
-use crate::peptide_search::{analyse_all_peptides, search_all_peptides};
-use crate::sa_searcher::Searcher;
-use crate::suffix_to_protein_index::{
-    DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle,
+use std::{
+    error::Error,
+    num::NonZeroUsize
 };
-use crate::util::{get_time_ms, read_lines};
+
+use clap::{
+    arg,
+    Parser,
+    ValueEnum
+};
+use sa_builder::{
+    binary::{
+        load_suffix_array,
+        write_suffix_array
+    },
+    build_sa,
+    SAConstructionAlgorithm
+};
+use sa_mappings::{
+    functionality::FunctionAggregator,
+    proteins::Proteins,
+    taxonomy::{
+        AggregationMethod,
+        TaxonAggregator
+    }
+};
+
+use crate::{
+    peptide_search::{
+        analyse_all_peptides,
+        search_all_peptides
+    },
+    sa_searcher::Searcher,
+    suffix_to_protein_index::{
+        DenseSuffixToProtein,
+        SparseSuffixToProtein,
+        SuffixToProteinIndex,
+        SuffixToProteinMappingStyle
+    },
+    util::{
+        get_time_ms,
+        read_lines
+    }
+};
 
 pub mod peptide_search;
 pub mod sa_searcher;
@@ -25,49 +52,52 @@ pub mod util;
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SearchMode {
     Search,
-    Analysis,
+    Analysis
 }
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// File with the proteins used to build the suffix tree. All the proteins are expected to be concatenated using a `#`.
+    /// File with the proteins used to build the suffix tree. All the proteins are expected to be
+    /// concatenated using a `#`.
     #[arg(short, long)]
-    database_file: String,
+    database_file:             String,
     #[arg(short, long)]
-    search_file: Option<String>,
+    search_file:               Option<String>,
     #[arg(short, long)]
     /// The taxonomy to be used as a tsv file. This is a preprocessed version of the NCBI taxonomy.
-    taxonomy: String,
+    taxonomy:                  String,
     /// This will only build the tree and stop after that is completed. Used during benchmarking.
     #[arg(long)]
-    build_only: bool,
+    build_only:                bool,
     /// Output file to store the built index.
     #[arg(short, long)]
-    output: Option<String>,
-    /// The sparseness factor used on the suffix array (default value 1, which means every value in the SA is used)
+    output:                    Option<String>,
+    /// The sparseness factor used on the suffix array (default value 1, which means every value in
+    /// the SA is used)
     #[arg(long, default_value_t = 1)]
-    sparseness_factor: u8,
-    /// Set the style used to map back from the suffix to the protein. 2 options <sparse> or <dense>. Dense is default
-    /// Dense uses O(n) memory with n the size of the input text, and takes O(1) time to find the mapping
-    /// Sparse uses O(m) memory with m the number of proteins, and takes O(log m) to find the mapping
+    sparseness_factor:         u8,
+    /// Set the style used to map back from the suffix to the protein. 2 options <sparse> or
+    /// <dense>. Dense is default Dense uses O(n) memory with n the size of the input text, and
+    /// takes O(1) time to find the mapping Sparse uses O(m) memory with m the number of
+    /// proteins, and takes O(log m) to find the mapping
     #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::Sparse)]
     suffix_to_protein_mapping: SuffixToProteinMappingStyle,
     #[arg(long)]
-    load_index: Option<String>,
+    load_index:                Option<String>,
     #[arg(short, long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
-    construction_algorithm: SAConstructionAlgorithm,
+    construction_algorithm:    SAConstructionAlgorithm,
     /// Assume the resulting taxon ID is root (1) whenever a peptide matches >= cutoff proteins
     #[arg(long, default_value_t = 10000)]
-    cutoff: usize,
+    cutoff:                    usize,
     #[arg(long)]
-    threads: Option<NonZeroUsize>,
+    threads:                   Option<NonZeroUsize>,
     #[arg(long)]
-    equalize_i_and_l: bool,
+    equalize_i_and_l:          bool,
     #[arg(long)]
-    clean_taxa: bool,
+    clean_taxa:                bool,
     #[arg(long, value_enum, default_value_t = SearchMode::Analysis)]
-    search_mode: SearchMode,
+    search_mode:               SearchMode
 }
 
 /// Run the suffix array program
@@ -101,7 +131,7 @@ pub fn run(mut args: Arguments) -> Result<(), Box<dyn Error>> {
             build_sa(
                 &mut protein_sequences.input_string.clone(),
                 &args.construction_algorithm,
-                args.sparseness_factor,
+                args.sparseness_factor
             )?
         }
     };
@@ -112,7 +142,8 @@ pub fn run(mut args: Arguments) -> Result<(), Box<dyn Error>> {
         write_suffix_array(args.sparseness_factor, &sa, output)?;
     }
 
-    // option that only builds the tree, but does not allow for querying (easy for benchmark purposes)
+    // option that only builds the tree, but does not allow for querying (easy for benchmark
+    // purposes)
     if args.build_only {
         return Ok(());
     }
@@ -136,7 +167,7 @@ pub fn run(mut args: Arguments) -> Result<(), Box<dyn Error>> {
         suffix_index_to_protein,
         proteins,
         taxon_id_calculator,
-        functional_aggregator,
+        functional_aggregator
     );
 
     execute_search(&searcher, &args)?;
@@ -181,7 +212,7 @@ fn execute_search(searcher: &Searcher, args: &Arguments) -> Result<(), Box<dyn E
                 &all_peptides,
                 cutoff,
                 args.equalize_i_and_l,
-                args.clean_taxa,
+                args.clean_taxa
             );
             println!("{}", serde_json::to_string(&search_result)?);
         }
@@ -191,7 +222,7 @@ fn execute_search(searcher: &Searcher, args: &Arguments) -> Result<(), Box<dyn E
                 &all_peptides,
                 cutoff,
                 args.equalize_i_and_l,
-                args.clean_taxa,
+                args.clean_taxa
             );
             println!("{}", serde_json::to_string(&search_result)?);
         }

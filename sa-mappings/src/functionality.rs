@@ -1,8 +1,12 @@
 //! This module contains the FunctionAggregator struct that is responsible for aggregating the
 //! functional annotations of proteins.
 
+use std::collections::{
+    HashMap,
+    HashSet
+};
+
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
 
 use crate::proteins::Protein;
 
@@ -12,7 +16,7 @@ pub struct FunctionalAggregation {
     /// A HashMap representing how many GO, EC and IPR terms were found
     pub counts: HashMap<String, usize>,
     /// A HashMap representing how often a certain functional annotation was found
-    pub data: HashMap<String, u32>,
+    pub data:   HashMap<String, u32>
 }
 
 /// A struct that represents a function aggregator
@@ -42,7 +46,7 @@ impl FunctionAggregator {
                     Some('E') => proteins_with_ec.insert(protein.uniprot_id.clone()),
                     Some('G') => proteins_with_go.insert(protein.uniprot_id.clone()),
                     Some('I') => proteins_with_ipr.insert(protein.uniprot_id.clone()),
-                    _ => false,
+                    _ => false
                 };
 
                 data.entry(annotation.to_string())
@@ -59,7 +63,10 @@ impl FunctionAggregator {
 
         data.remove("");
 
-        FunctionalAggregation { counts, data }
+        FunctionalAggregation {
+            counts,
+            data
+        }
     }
 
     /// Aggregates the functional annotations of proteins

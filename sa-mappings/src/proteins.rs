@@ -1,7 +1,13 @@
 //! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins
 //! and collections of proteins, respectively.
 
-use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
+use std::{
+    error::Error,
+    fs::File,
+    io::BufReader,
+    ops::Index,
+    str::from_utf8
+};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::decode;
@@ -25,7 +31,7 @@ pub struct Protein {
     pub taxon_id: TaxonId,
 
     /// The encoded functional annotations of the protein
-    pub functional_annotations: Vec<u8>,
+    pub functional_annotations: Vec<u8>
 }
 
 /// A struct that represents a collection of proteins
@@ -34,7 +40,7 @@ pub struct Proteins {
     pub input_string: Vec<u8>,
 
     /// The proteins in the input string
-    proteins: Vec<Protein>,
+    proteins: Vec<Protein>
 }
 
 impl Protein {
@@ -60,7 +66,7 @@ impl Proteins {
     /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
     pub fn try_from_database_file(
         file: &str,
-        taxon_aggregator: &TaxonAggregator,
+        taxon_aggregator: &TaxonAggregator
     ) -> Result<Self, Box<dyn Error>> {
         let mut input_string: String = String::new();
         let mut proteins: Vec<Protein> = Vec::new();
@@ -90,7 +96,7 @@ impl Proteins {
             proteins.push(Protein {
                 uniprot_id: uniprot_id.to_string(),
                 taxon_id,
-                functional_annotations,
+                functional_annotations
             });
         }
 
@@ -100,7 +106,7 @@ impl Proteins {
         proteins.shrink_to_fit();
         Ok(Self {
             input_string: input_string.into_bytes(),
-            proteins,
+            proteins
         })
     }
 
@@ -119,7 +125,7 @@ impl Proteins {
     /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
     pub fn try_from_database_file_without_annotations(
         database_file: &str,
-        taxon_aggregator: &TaxonAggregator,
+        taxon_aggregator: &TaxonAggregator
     ) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut input_string: String = String::new();
 
@@ -164,7 +170,11 @@ impl Index<usize> for Proteins {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write, path::PathBuf};
+    use std::{
+        fs::File,
+        io::Write,
+        path::PathBuf
+    };
 
     use fa_compression::algorithm1::decode;
     use tempdir::TempDir;
@@ -225,9 +235,9 @@ mod tests {
     #[test]
     fn test_new_protein() {
         let protein = Protein {
-            uniprot_id: "P12345".to_string(),
-            taxon_id: 1,
-            functional_annotations: vec![0xD1, 0x11],
+            uniprot_id:             "P12345".to_string(),
+            taxon_id:               1,
+            functional_annotations: vec![0xD1, 0x11]
         };
 
         assert_eq!(protein.uniprot_id, "P12345");
@@ -241,18 +251,18 @@ mod tests {
             input_string: "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG"
                 .as_bytes()
                 .to_vec(),
-            proteins: vec![
+            proteins:     vec![
                 Protein {
-                    uniprot_id: "P12345".to_string(),
-                    taxon_id: 1,
-                    functional_annotations: vec![0xD1, 0x11],
+                    uniprot_id:             "P12345".to_string(),
+                    taxon_id:               1,
+                    functional_annotations: vec![0xD1, 0x11]
                 },
                 Protein {
-                    uniprot_id: "P54321".to_string(),
-                    taxon_id: 2,
-                    functional_annotations: vec![0xD1, 0x11],
+                    uniprot_id:             "P54321".to_string(),
+                    taxon_id:               2,
+                    functional_annotations: vec![0xD1, 0x11]
                 },
-            ],
+            ]
         };
 
         assert_eq!(
@@ -278,7 +288,7 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca,
+            AggregationMethod::Lca
         )
         .unwrap();
         let proteins =
@@ -301,7 +311,7 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca,
+            AggregationMethod::Lca
         )
         .unwrap();
         let proteins =
@@ -326,18 +336,21 @@ mod tests {
 
         let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca,
+            AggregationMethod::Lca
         )
         .unwrap();
         let proteins = Proteins::try_from_database_file_without_annotations(
             database_file.to_str().unwrap(),
-            &taxon_aggregator,
+            &taxon_aggregator
         )
         .unwrap();
 
         let sep_char = SEPARATION_CHARACTER as char;
         let end_char = TERMINATION_CHARACTER as char;
-        let expected = format!("MLPGLALLLLAAWTARALEV{}PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG{}KWDSDPSGTKTCIDT{}KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH{}", sep_char, sep_char, sep_char, end_char);
+        let expected = format!(
+            "MLPGLALLLLAAWTARALEV{}PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG{}KWDSDPSGTKTCIDT{}KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH{}",
+            sep_char, sep_char, sep_char, end_char
+        );
         assert_eq!(proteins, expected.as_bytes());
     }
 }

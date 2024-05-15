@@ -1,7 +1,10 @@
 //! This module provides a function to decode a byte array into a string representation of
 //! annotations.
 
-use super::{CharacterSet, Decode};
+use super::{
+    CharacterSet,
+    Decode
+};
 
 /// The prefixes for the different types of annotations.
 static PREFIXES: [&str; 3] = ["EC:", "GO:", "IPR:IPR"];

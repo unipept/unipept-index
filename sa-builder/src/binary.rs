@@ -1,7 +1,15 @@
-use std::cmp::min;
-use std::error::Error;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::{
+    cmp::min,
+    error::Error,
+    fs::{
+        File,
+        OpenOptions
+    },
+    io::{
+        Read,
+        Write
+    }
+};
 
 const ONE_GIB: usize = 2usize.pow(30);
 
@@ -38,8 +46,8 @@ fn deserialize_sa(data: &[u8]) -> Vec<i64> {
     if data.len() % 8 != 0 {
         panic!("Serialized data is not a multiple of 8 bytes long!")
     }
-    for start in (0..data.len()).step_by(8) {
-        res.push(i64::from_le_bytes(data[start..start + 8].try_into().unwrap()));
+    for start in (0 .. data.len()).step_by(8) {
+        res.push(i64::from_le_bytes(data[start .. start + 8].try_into().unwrap()));
     }
     res
 }
@@ -61,7 +69,7 @@ fn deserialize_sa(data: &[u8]) -> Vec<i64> {
 pub fn write_suffix_array(
     sparseness_factor: u8,
     suffix_array: &[i64],
-    filename: &str,
+    filename: &str
 ) -> Result<(), std::io::Error> {
     // create the file
     let mut f = OpenOptions::new()
@@ -71,11 +79,12 @@ pub fn write_suffix_array(
         .open(filename)?;
     f.write_all(&[sparseness_factor])?; // write the sample rate as the first byte
 
-    // write 1 GiB at a time, to minimize extra used memory since we need to translate i64 to [u8; 8]
+    // write 1 GiB at a time, to minimize extra used memory since we need to translate i64 to [u8;
+    // 8]
     let sa_len = suffix_array.len();
-    for start_index in (0..sa_len).step_by(ONE_GIB / 8) {
+    for start_index in (0 .. sa_len).step_by(ONE_GIB / 8) {
         let end_index = min(start_index + ONE_GIB / 8, sa_len);
-        f.write_all(&suffix_array[start_index..end_index].serialize())?;
+        f.write_all(&suffix_array[start_index .. end_index].serialize())?;
     }
 
     Ok(())
@@ -103,12 +112,13 @@ pub fn load_suffix_array(filename: &str) -> Result<(u8, Vec<i64>), Box<dyn Error
     let mut sa = vec![];
     loop {
         let mut buffer = vec![];
-        // use take in combination with read_to_end to ensure that the buffer will be completely filled (except when the file is smaller than the buffer)
+        // use take in combination with read_to_end to ensure that the buffer will be completely
+        // filled (except when the file is smaller than the buffer)
         let count = file.take(ONE_GIB as u64).read_to_end(&mut buffer)?;
         if count == 0 {
             break;
         }
-        sa.extend_from_slice(&deserialize_sa(&buffer[..count]));
+        sa.extend_from_slice(&deserialize_sa(&buffer[.. count]));
     }
 
     Ok((sparseness_factor, sa))
@@ -116,7 +126,10 @@ pub fn load_suffix_array(filename: &str) -> Result<(u8, Vec<i64>), Box<dyn Error
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{deserialize_sa, Serializable};
+    use crate::binary::{
+        deserialize_sa,
+        Serializable
+    };
 
     #[test]
     fn test_serialize_deserialize() {

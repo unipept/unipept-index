@@ -1,8 +1,16 @@
 use clap::Parser;
-use sa_builder::binary::write_suffix_array;
-use sa_builder::{build_sa, Arguments};
-use sa_mappings::proteins::Proteins;
-use sa_mappings::taxonomy::{AggregationMethod, TaxonAggregator};
+use sa_builder::{
+    binary::write_suffix_array,
+    build_sa,
+    Arguments
+};
+use sa_mappings::{
+    proteins::Proteins,
+    taxonomy::{
+        AggregationMethod,
+        TaxonAggregator
+    }
+};
 
 fn main() {
     let args = Arguments::parse();
@@ -11,7 +19,7 @@ fn main() {
         taxonomy,
         output,
         sparseness_factor,
-        construction_algorithm,
+        construction_algorithm
     } = args;
     let taxon_id_calculator =
         TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar);

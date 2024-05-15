@@ -1,42 +1,58 @@
 use std::cmp::min;
 
-use sa_mappings::functionality::{FunctionAggregator, FunctionalAggregation};
-use sa_mappings::proteins::{Protein, Proteins};
-use sa_mappings::taxonomy::TaxonAggregator;
+use sa_mappings::{
+    functionality::{
+        FunctionAggregator,
+        FunctionalAggregation
+    },
+    proteins::{
+        Protein,
+        Proteins
+    },
+    taxonomy::TaxonAggregator
+};
 use umgap::taxon::TaxonId;
 
-use crate::sa_searcher::BoundSearch::{Maximum, Minimum};
-use crate::suffix_to_protein_index::SuffixToProteinIndex;
-use crate::Nullable;
+use crate::{
+    sa_searcher::BoundSearch::{
+        Maximum,
+        Minimum
+    },
+    suffix_to_protein_index::SuffixToProteinIndex,
+    Nullable
+};
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
 #[derive(Clone, Copy, PartialEq)]
 enum BoundSearch {
     Minimum,
-    Maximum,
+    Maximum
 }
 
 /// Enum representing the minimum and maximum bound of the found matches in the suffix array
 #[derive(PartialEq, Debug)]
 pub enum BoundSearchResult {
     NoMatches,
-    SearchResult((usize, usize)),
+    SearchResult((usize, usize))
 }
 
 /// Enum representing the matching suffixes after searching a peptide in the suffix array
-/// Both the MaxMatches and SearchResult indicate found suffixes, but MaxMatches is used when the cutoff is reached.
+/// Both the MaxMatches and SearchResult indicate found suffixes, but MaxMatches is used when the
+/// cutoff is reached.
 #[derive(Debug)]
 pub enum SearchAllSuffixesResult {
     NoMatches,
     MaxMatches(Vec<i64>),
-    SearchResult(Vec<i64>),
+    SearchResult(Vec<i64>)
 }
 
 /// Custom implementation of partialEq for SearchAllSuffixesResult
-/// We consider 2 SearchAllSuffixesResult equal if they exist of the same key, and the Vec contains the same values, but the order can be different
+/// We consider 2 SearchAllSuffixesResult equal if they exist of the same key, and the Vec contains
+/// the same values, but the order can be different
 impl PartialEq for SearchAllSuffixesResult {
     fn eq(&self, other: &Self) -> bool {
-        /// Returns true if `arr1` and `arr2` contains the same elements, the order of the elements is ignored
+        /// Returns true if `arr1` and `arr2` contains the same elements, the order of the elements
+        /// is ignored
         ///
         /// # Arguments
         /// * `arr1` - The first array used in the comparison
@@ -44,7 +60,8 @@ impl PartialEq for SearchAllSuffixesResult {
         ///
         /// # Returns
         ///
-        /// Returns true if arr1 and arr2 contains the same elements, the order of the elements is ignored
+        /// Returns true if arr1 and arr2 contains the same elements, the order of the elements is
+        /// ignored
         fn array_eq_unordered(arr1: &[i64], arr2: &[i64]) -> bool {
             let mut arr1_copy = arr1.to_owned();
             let mut arr2_copy = arr2.to_owned();
@@ -58,14 +75,14 @@ impl PartialEq for SearchAllSuffixesResult {
         match (self, other) {
             (
                 SearchAllSuffixesResult::MaxMatches(arr1),
-                SearchAllSuffixesResult::MaxMatches(arr2),
+                SearchAllSuffixesResult::MaxMatches(arr2)
             ) => array_eq_unordered(arr1, arr2),
             (
                 SearchAllSuffixesResult::SearchResult(arr1),
-                SearchAllSuffixesResult::SearchResult(arr2),
+                SearchAllSuffixesResult::SearchResult(arr2)
             ) => array_eq_unordered(arr1, arr2),
             (SearchAllSuffixesResult::NoMatches, SearchAllSuffixesResult::NoMatches) => true,
-            _ => false,
+            _ => false
         }
     }
 }
@@ -76,16 +93,19 @@ impl PartialEq for SearchAllSuffixesResult {
 /// # Arguments
 /// * `sa` - The sparse suffix array representing the protein database
 /// * `sparseness_factor` - The sparseness factor used by the suffix array
-/// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix is part of
-/// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the taxonomic analysis provided by Unipept
-/// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate the functional analysis provided by Unipept
+/// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix is
+///   part of
+/// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the
+///   taxonomic analysis provided by Unipept
+/// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
+///   the functional analysis provided by Unipept
 pub struct Searcher {
     sa: Vec<i64>,
     pub sparseness_factor: u8,
     suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     proteins: Proteins,
     taxon_id_calculator: TaxonAggregator,
-    function_aggregator: FunctionAggregator,
+    function_aggregator: FunctionAggregator
 }
 
 impl Searcher {
@@ -94,10 +114,13 @@ impl Searcher {
     /// # Arguments
     /// * `sa` - The sparse suffix array representing the protein database
     /// * `sparseness_factor` - The sparseness factor used by the suffix array
-    /// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix is part of
+    /// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix
+    ///   is part of
     /// * `proteins` - List of all the proteins where the suffix array is build on
-    /// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the taxonomic analysis provided by Unipept
-    /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate the functional analysis provided by Unipept
+    /// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the
+    ///   taxonomic analysis provided by Unipept
+    /// * `function_aggregator` - Object used to retrieve the functional annotations and to
+    ///   calculate the functional analysis provided by Unipept
     ///
     /// # Returns
     ///
@@ -108,7 +131,7 @@ impl Searcher {
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
         proteins: Proteins,
         taxon_id_calculator: TaxonAggregator,
-        function_aggregator: FunctionAggregator,
+        function_aggregator: FunctionAggregator
     ) -> Self {
         Self {
             sa,
@@ -116,29 +139,33 @@ impl Searcher {
             suffix_index_to_protein,
             proteins,
             taxon_id_calculator,
-            function_aggregator,
+            function_aggregator
         }
     }
 
     /// Compares the `search_string` to the `suffix`
-    /// During search this function performs extra logic since the suffix array is build with I == L, while ` self.proteins.input_string` is the original text where I != L
+    /// During search this function performs extra logic since the suffix array is build with I ==
+    /// L, while ` self.proteins.input_string` is the original text where I != L
     ///
     /// # Arguments
     /// * `search_string` - The string/peptide being searched in the suffix array
-    /// * `suffix` - The current suffix from the suffix array we are comparing with in the binary search
-    /// * `skip` - How many characters we can skip in the comparison because we already know these match
+    /// * `suffix` - The current suffix from the suffix array we are comparing with in the binary
+    ///   search
+    /// * `skip` - How many characters we can skip in the comparison because we already know these
+    ///   match
     /// * `bound` - Indicates if we are searching for the min of max bound
     ///
     /// # Returns
     ///
-    /// The first argument is true if `bound` == `Minimum` and `search_string` <= `suffix` or if `bound` == `Maximum` and `search_string` >= `suffix`
-    /// The second argument indicates how far the `suffix` and `search_string` matched
+    /// The first argument is true if `bound` == `Minimum` and `search_string` <= `suffix` or if
+    /// `bound` == `Maximum` and `search_string` >= `suffix` The second argument indicates how
+    /// far the `suffix` and `search_string` matched
     fn compare(
         &self,
         search_string: &[u8],
         suffix: i64,
         skip: usize,
-        bound: BoundSearch,
+        bound: BoundSearch
     ) -> (bool, usize) {
         let mut index_in_suffix = (suffix as usize) + skip;
         let mut index_in_search_string = skip;
@@ -147,7 +174,7 @@ impl Searcher {
         // Depending on if we are searching for the min of max bound our condition is different
         let condition_check = match bound {
             Minimum => |a: u8, b: u8| a < b,
-            Maximum => |a: u8, b: u8| a > b,
+            Maximum => |a: u8, b: u8| a > b
         };
 
         // match as long as possible
@@ -163,12 +190,14 @@ impl Searcher {
             index_in_suffix += 1;
             index_in_search_string += 1;
         }
-        // check if match found OR current search string is smaller lexicographically (and the empty search string should not be found)
+        // check if match found OR current search string is smaller lexicographically (and the empty
+        // search string should not be found)
         if !search_string.is_empty() {
             if index_in_search_string == search_string.len() {
                 is_cond_or_equal = true
             } else if index_in_suffix < self.proteins.input_string.len() {
-                // in our index every L was replaced by a I, so we need to replace them if we want to search in the right direction
+                // in our index every L was replaced by a I, so we need to replace them if we want
+                // to search in the right direction
                 let peptide_char = if search_string[index_in_search_string] == b'L' {
                     b'I'
                 } else {
@@ -197,7 +226,8 @@ impl Searcher {
     /// # Returns
     ///
     /// The first argument is true if a match was found
-    /// The second argument indicates the index of the minimum or maximum bound for the match (depending on `bound`)
+    /// The second argument indicates the index of the minimum or maximum bound for the match
+    /// (depending on `bound`)
     fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8]) -> (bool, usize) {
         let mut left: usize = 0;
         let mut right: usize = self.sa.len();
@@ -205,7 +235,8 @@ impl Searcher {
         let mut lcp_right: usize = 0;
         let mut found = false;
 
-        // repeat until search window is minimum size OR we matched the whole search string last iteration
+        // repeat until search window is minimum size OR we matched the whole search string last
+        // iteration
         while right - left > 1 {
             let center = (left + right) / 2;
             let skip = min(lcp_left, lcp_right);
@@ -213,7 +244,8 @@ impl Searcher {
 
             found |= lcp_center == search_string.len();
 
-            // update the left and right bound, depending on if we are searching the min or max bound
+            // update the left and right bound, depending on if we are searching the min or max
+            // bound
             if retval && bound == Minimum || !retval && bound == Maximum {
                 right = center;
                 lcp_right = lcp_center;
@@ -237,7 +269,7 @@ impl Searcher {
 
         match bound {
             Minimum => (found, right),
-            Maximum => (found, left),
+            Maximum => (found, left)
         }
     }
 
@@ -248,7 +280,8 @@ impl Searcher {
     ///
     /// # Returns
     ///
-    /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if no matches were found
+    /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
+    /// no matches were found
     pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
         let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string);
 
@@ -266,7 +299,8 @@ impl Searcher {
     ///
     /// # Arguments
     /// * `search_string` - The string/peptide we are searching in the suffix array
-    /// * `max_matches` - The maximum amount of matches processed, if more matches are found we don't process them
+    /// * `max_matches` - The maximum amount of matches processed, if more matches are found we
+    ///   don't process them
     /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
     ///
     /// # Returns
@@ -277,7 +311,7 @@ impl Searcher {
         &self,
         search_string: &[u8],
         max_matches: usize,
-        equalize_i_and_l: bool,
+        equalize_i_and_l: bool
     ) -> SearchAllSuffixesResult {
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
@@ -294,32 +328,36 @@ impl Searcher {
             {
                 il_locations_start += 1;
             }
-            let il_locations_current_suffix = &il_locations[il_locations_start..];
-            let current_search_string_prefix = &search_string[..skip];
-            let current_search_string_suffix = &search_string[skip..];
-            let search_bound_result = self.search_bounds(&search_string[skip..]);
-            // if the shorter part is matched, see if what goes before the matched suffix matches the unmatched part of the prefix
+            let il_locations_current_suffix = &il_locations[il_locations_start ..];
+            let current_search_string_prefix = &search_string[.. skip];
+            let current_search_string_suffix = &search_string[skip ..];
+            let search_bound_result = self.search_bounds(&search_string[skip ..]);
+            // if the shorter part is matched, see if what goes before the matched suffix matches
+            // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
-                // try all the partially matched suffixes and store the matching suffixes in an array (stop when our max number of matches is reached)
+                // try all the partially matched suffixes and store the matching suffixes in an
+                // array (stop when our max number of matches is reached)
                 let mut sa_index = min_bound;
                 while sa_index < max_bound {
                     let suffix = self.sa[sa_index] as usize;
-                    // filter away matches where I was wrongfully equalized to L, and check the unmatched prefix
-                    // when I and L equalized, we only need to check the prefix, not the whole match, when the prefix is 0, we don't need to check at all
+                    // filter away matches where I was wrongfully equalized to L, and check the
+                    // unmatched prefix when I and L equalized, we only need to
+                    // check the prefix, not the whole match, when the prefix is 0, we don't need to
+                    // check at all
                     if suffix >= skip
                         && ((skip == 0
                             || Self::check_prefix(
                                 current_search_string_prefix,
-                                &self.proteins.input_string[suffix - skip..suffix],
-                                equalize_i_and_l,
+                                &self.proteins.input_string[suffix - skip .. suffix],
+                                equalize_i_and_l
                             ))
                             && Self::check_suffix(
                                 skip,
                                 il_locations_current_suffix,
                                 current_search_string_suffix,
                                 &self.proteins.input_string
-                                    [suffix..suffix + search_string.len() - skip],
-                                equalize_i_and_l,
+                                    [suffix .. suffix + search_string.len() - skip],
+                                equalize_i_and_l
                             ))
                     {
                         matching_suffixes.push((suffix - skip) as i64);
@@ -352,12 +390,13 @@ impl Searcher {
     ///
     /// # Returns
     ///
-    /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise false
+    /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise
+    /// false
     #[inline]
     fn check_prefix(
         search_string_prefix: &[u8],
         index_prefix: &[u8],
-        equalize_i_and_l: bool,
+        equalize_i_and_l: bool
     ) -> bool {
         if equalize_i_and_l {
             search_string_prefix.iter().zip(index_prefix).all(
@@ -365,7 +404,7 @@ impl Searcher {
                     search_character == index_character
                         || (search_character == b'I' && index_character == b'L')
                         || (search_character == b'L' && index_character == b'I')
-                },
+                }
             )
         } else {
             search_string_prefix == index_prefix
@@ -373,14 +412,17 @@ impl Searcher {
     }
 
     /// Returns true of the search_string and index_string are equal
-    /// This is automatically true if `equalize_i_and_l` is set to true, since there matched during search where I = L
-    /// If `equalize_i_and_l` is set to false, we need to check if the I and L locations have the same character
+    /// This is automatically true if `equalize_i_and_l` is set to true, since there matched during
+    /// search where I = L If `equalize_i_and_l` is set to false, we need to check if the I and
+    /// L locations have the same character
     ///
     /// # Arguments
     /// * `skip` - The used skip factor during the search iteration
     /// * `il_locations` - The locations of the I's and L's in the **original** peptide
-    /// * `search_string` - The peptide that is being searched, but already with the skipped prefix removed from it
-    /// * `index_string` - The suffix that search_string matches with when I and L were equalized during search
+    /// * `search_string` - The peptide that is being searched, but already with the skipped prefix
+    ///   removed from it
+    /// * `index_string` - The suffix that search_string matches with when I and L were equalized
+    ///   during search
     /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
     ///
     /// # Returns
@@ -391,7 +433,7 @@ impl Searcher {
         il_locations: &[usize],
         search_string: &[u8],
         index_string: &[u8],
-        equalize_i_and_l: bool,
+        equalize_i_and_l: bool
     ) -> bool {
         if equalize_i_and_l {
             true
@@ -438,7 +480,7 @@ impl Searcher {
     pub fn search_proteins_for_peptide(
         &self,
         search_string: &[u8],
-        equalize_i_and_l: bool,
+        equalize_i_and_l: bool
     ) -> Vec<&Protein> {
         let mut matching_suffixes = vec![];
         if let SearchAllSuffixesResult::SearchResult(suffixes) =

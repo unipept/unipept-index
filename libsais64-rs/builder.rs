@@ -1,14 +1,22 @@
-use std::env;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::path::PathBuf;
-use std::process::{Command, ExitStatus};
+use std::{
+    env,
+    error::Error,
+    fmt::{
+        Display,
+        Formatter
+    },
+    path::PathBuf,
+    process::{
+        Command,
+        ExitStatus
+    }
+};
 
 /// Custom error for compilation of the C library
 #[derive(Debug)]
 struct CompileError<'a> {
-    command: &'a str,
-    exit_code: Option<i32>,
+    command:   &'a str,
+    exit_code: Option<i32>
 }
 
 impl<'a> Display for CompileError<'a> {
@@ -42,9 +50,9 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
     match exit_status.success() {
         true => Ok(()),
         false => Err(CompileError {
-            command: name,
-            exit_code: exit_status.code(),
-        }),
+            command:   name,
+            exit_code: exit_status.code()
+        })
     }
 }
 
@@ -58,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "cmake",
         Command::new("cmake")
             .args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais", "-Blibsais"])
-            .status()?,
+            .status()?
     )?;
     exit_status_to_result("make", Command::new("make").args(["-C", "libsais"]).status()?)?;
 

@@ -1,6 +1,9 @@
 //! This module contains the function to encode the input string into a compressed byte vector.
 
-use super::{CharacterSet, Encode};
+use super::{
+    CharacterSet,
+    Encode
+};
 
 /// Encodes the input string into a compressed byte vector.
 ///
@@ -47,11 +50,11 @@ pub fn encode(input: &str) -> Vec<u8> {
     // Read the input and split the annotations into the corresponding vectors
     for annotation in input.split(';') {
         if annotation.starts_with("IPR") {
-            interpros.push(&annotation[7..]);
+            interpros.push(&annotation[7 ..]);
         } else if annotation.starts_with("GO") {
-            gos.push(&annotation[3..]);
+            gos.push(&annotation[3 ..]);
         } else if annotation.starts_with("EC") {
-            ecs.push(&annotation[3..]);
+            ecs.push(&annotation[3 ..]);
         }
     }
 

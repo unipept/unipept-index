@@ -1,34 +1,59 @@
-use std::error::Error;
-use std::sync::Arc;
-
-use axum::extract::{DefaultBodyLimit, State};
-use axum::routing::{get, post};
-use axum::{http::StatusCode, Json, Router};
-use clap::Parser;
-use serde::{Deserialize, Serialize};
-
-use sa_builder::binary::load_suffix_array;
-use sa_index::peptide_search::{
-    analyse_all_peptides, search_all_peptides, OutputData, SearchOnlyResult,
-    SearchResultWithAnalysis,
+use std::{
+    error::Error,
+    sync::Arc
 };
-use sa_index::sa_searcher::Searcher;
-use sa_index::suffix_to_protein_index::SparseSuffixToProtein;
-use sa_mappings::functionality::FunctionAggregator;
-use sa_mappings::proteins::Proteins;
-use sa_mappings::taxonomy::{AggregationMethod, TaxonAggregator};
+
+use axum::{
+    extract::{
+        DefaultBodyLimit,
+        State
+    },
+    http::StatusCode,
+    routing::{
+        get,
+        post
+    },
+    Json,
+    Router
+};
+use clap::Parser;
+use sa_builder::binary::load_suffix_array;
+use sa_index::{
+    peptide_search::{
+        analyse_all_peptides,
+        search_all_peptides,
+        OutputData,
+        SearchOnlyResult,
+        SearchResultWithAnalysis
+    },
+    sa_searcher::Searcher,
+    suffix_to_protein_index::SparseSuffixToProtein
+};
+use sa_mappings::{
+    functionality::FunctionAggregator,
+    proteins::Proteins,
+    taxonomy::{
+        AggregationMethod,
+        TaxonAggregator
+    }
+};
+use serde::{
+    Deserialize,
+    Serialize
+};
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// File with the proteins used to build the suffix tree. All the proteins are expected to be concatenated using a `#`.
+    /// File with the proteins used to build the suffix tree. All the proteins are expected to be
+    /// concatenated using a `#`.
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file: String,
+    index_file:    String,
     #[arg(short, long)]
     /// The taxonomy to be used as a tsv file. This is a preprocessed version of the NCBI taxonomy.
-    taxonomy: String,
+    taxonomy:      String
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -52,14 +77,14 @@ fn default_true() -> bool {
 #[derive(Debug, Deserialize, Serialize)]
 #[allow(non_snake_case)]
 struct InputData {
-    peptides: Vec<String>,
+    peptides:         Vec<String>,
     #[serde(default = "default_cutoff")] // default value is 10000
     cutoff: usize,
     #[serde(default = "bool::default")]
     // default value is false // TODO: maybe default should be true?
     equalize_I_and_L: bool,
     #[serde(default = "bool::default")] // default value is false
-    clean_taxa: bool,
+    clean_taxa: bool
 }
 
 #[tokio::main]
@@ -87,14 +112,14 @@ async fn root() -> &'static str {
 /// Returns the search and analysis results from the index as a JSON
 async fn analyse(
     State(searcher): State<Arc<Searcher>>,
-    data: Json<InputData>,
+    data: Json<InputData>
 ) -> Result<Json<OutputData<SearchResultWithAnalysis>>, StatusCode> {
     let search_result = analyse_all_peptides(
         &searcher,
         &data.peptides,
         data.cutoff,
         data.equalize_I_and_L,
-        data.clean_taxa,
+        data.clean_taxa
     );
 
     Ok(Json(search_result))
@@ -111,14 +136,14 @@ async fn analyse(
 /// Returns the search results from the index as a JSON
 async fn search(
     State(searcher): State<Arc<Searcher>>,
-    data: Json<InputData>,
+    data: Json<InputData>
 ) -> Result<Json<OutputData<SearchOnlyResult>>, StatusCode> {
     let search_result = search_all_peptides(
         &searcher,
         &data.peptides,
         data.cutoff,
         data.equalize_I_and_L,
-        data.clean_taxa,
+        data.clean_taxa
     );
 
     Ok(Json(search_result))
@@ -140,7 +165,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let Arguments {
         database_file,
         index_file,
-        taxonomy,
+        taxonomy
     } = args;
 
     eprintln!("Loading suffix array...");
@@ -163,7 +188,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         suffix_index_to_protein,
         proteins,
         taxon_id_calculator,
-        function_aggregator,
+        function_aggregator
     ));
 
     // build our application with a route

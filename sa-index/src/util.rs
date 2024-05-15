@@ -1,8 +1,14 @@
-use std::fs::File;
-use std::io;
-use std::io::BufRead;
-use std::path::Path;
-use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
+use std::{
+    fs::File,
+    io,
+    io::BufRead,
+    path::Path,
+    time::{
+        SystemTime,
+        SystemTimeError,
+        UNIX_EPOCH
+    }
+};
 
 use crate::sa_searcher::Searcher;
 
@@ -32,7 +38,7 @@ pub fn get_time_ms() -> Result<f64, SystemTimeError> {
 #[allow(unused)]
 pub fn time_execution(
     searcher: &mut Searcher,
-    f: &dyn Fn(&mut Searcher) -> bool,
+    f: &dyn Fn(&mut Searcher) -> bool
 ) -> Result<(bool, f64), SystemTimeError> {
     let start_ms = get_time_ms()?;
     let found = f(searcher);
@@ -50,7 +56,7 @@ pub fn time_execution(
 /// Returns an Iterator to the Reader of the lines of the file.
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where
-    P: AsRef<Path>,
+    P: AsRef<Path>
 {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
