@@ -111,9 +111,9 @@ impl<const B: usize> BitArray<B> {
     }
 
     /// Checks if the `BitArray` is empty.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if the `BitArray` is empty, `false` otherwise.
     pub fn is_empty(&self) -> bool {
         self.len == 0
