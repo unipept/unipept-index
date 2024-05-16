@@ -90,3 +90,94 @@ impl FunctionAggregator {
             .collect::<Vec<Vec<String>>>()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use fa_compression::algorithm1::encode;
+
+    use super::*;
+
+    #[test]
+    fn test_aggregate() {
+        let mut proteins: Vec<Protein> = Vec::new();
+        proteins.push(Protein {
+            uniprot_id: "P12345".to_string(),
+            taxon_id: 9606,
+            functional_annotations: encode("GO:0001234;GO:0005678")
+        });
+        proteins.push(Protein {
+            uniprot_id: "P23456".to_string(),
+            taxon_id: 9606,
+            functional_annotations: encode("EC:1.1.1.-")
+        });
+
+        let function_aggregator = FunctionAggregator {};
+
+        let result = function_aggregator.aggregate(proteins.iter().collect());
+
+        assert_eq!(result.counts.get("all"), Some(&2));
+        assert_eq!(result.counts.get("EC"), Some(&1));
+        assert_eq!(result.counts.get("GO"), Some(&1));
+        assert_eq!(result.counts.get("IPR"), Some(&0));
+        assert_eq!(result.counts.get("NOTHING"), None);
+
+        assert_eq!(result.data.get("GO:0001234"), Some(&1));
+        assert_eq!(result.data.get("GO:0005678"), Some(&1));
+        assert_eq!(result.data.get("EC:1.1.1.-"), Some(&1));
+        assert_eq!(result.data.get("EC:1.1.2.-"), None);
+    }
+
+    #[test]
+    fn test_get_all_functional_annotations() {
+        let mut proteins: Vec<&Protein> = Vec::new();
+
+        let protein1 = Protein {
+            uniprot_id: "P12345".to_string(),
+            taxon_id: 9606,
+            functional_annotations: encode("GO:0001234;GO:0005678")
+        };
+        let protein2 = Protein {
+            uniprot_id: "P23456".to_string(),
+            taxon_id: 9606,
+            functional_annotations: encode("EC:1.1.1.-")
+        };
+
+        proteins.push(&protein1);
+        proteins.push(&protein2);
+
+        let function_aggregator = FunctionAggregator {};
+        
+        let result = function_aggregator.get_all_functional_annotations(proteins.as_slice());
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].len(), 2);
+        assert_eq!(result[1].len(), 1);
+    }
+
+    #[test]
+    fn test_serialize_functional_aggregation() {
+        let mut proteins: Vec<Protein> = Vec::new();
+        proteins.push(Protein {
+            uniprot_id: "P12345".to_string(),
+            taxon_id: 9606,
+            functional_annotations: encode("GO:0001234;GO:0005678")
+        });
+        proteins.push(Protein {
+            uniprot_id: "P23456".to_string(),
+            taxon_id: 9606,
+            functional_annotations: encode("EC:1.1.1.-")
+        });
+
+        let function_aggregator = FunctionAggregator {};
+
+        let result = function_aggregator.aggregate(proteins.iter().collect());
+
+        let generated_json = serde_json::to_string(&result).unwrap();
+        let expected_json = "{\"counts\":{\"all\":2,\"GO\":1,\"EC\":1,\"IPR\":0},\"data\":{\"GO:0001234\":1,\"GO:0005678\":1,\"EC:1.1.1.-\":1}}";
+
+        assert_eq!(
+            generated_json.parse::<serde_json::Value>().unwrap(),
+            expected_json.parse::<serde_json::Value>().unwrap(),
+        );
+    }
+}

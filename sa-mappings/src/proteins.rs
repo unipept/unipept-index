@@ -176,7 +176,6 @@ mod tests {
         path::PathBuf
     };
 
-    use fa_compression::algorithm1::decode;
     use tempdir::TempDir;
 
     use super::*;
@@ -270,12 +269,12 @@ mod tests {
             "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG".as_bytes()
         );
         assert_eq!(proteins.proteins.len(), 2);
-        assert_eq!(proteins.proteins[0].uniprot_id, "P12345");
-        assert_eq!(proteins.proteins[0].taxon_id, 1);
-        assert_eq!(proteins.proteins[0].functional_annotations, vec![0xD1, 0x11]);
-        assert_eq!(proteins.proteins[1].uniprot_id, "P54321");
-        assert_eq!(proteins.proteins[1].taxon_id, 2);
-        assert_eq!(proteins.proteins[1].functional_annotations, vec![0xD1, 0x11]);
+        assert_eq!(proteins[0].uniprot_id, "P12345");
+        assert_eq!(proteins[0].taxon_id, 1);
+        assert_eq!(proteins[0].functional_annotations, vec![0xD1, 0x11]);
+        assert_eq!(proteins[1].uniprot_id, "P54321");
+        assert_eq!(proteins[1].taxon_id, 2);
+        assert_eq!(proteins[1].functional_annotations, vec![0xD1, 0x11]);
     }
 
     #[test]
@@ -291,6 +290,7 @@ mod tests {
             AggregationMethod::Lca
         )
         .unwrap();
+
         let proteins =
             Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
                 .unwrap();
@@ -314,13 +314,14 @@ mod tests {
             AggregationMethod::Lca
         )
         .unwrap();
+
         let proteins =
             Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
                 .unwrap();
 
         for protein in proteins.proteins.iter() {
             assert_eq!(
-                decode(&protein.functional_annotations),
+                protein.get_functional_annotations(),
                 "GO:0009279;IPR:IPR016364;IPR:IPR008816"
             );
         }
@@ -339,6 +340,7 @@ mod tests {
             AggregationMethod::Lca
         )
         .unwrap();
+
         let proteins = Proteins::try_from_database_file_without_annotations(
             database_file.to_str().unwrap(),
             &taxon_aggregator

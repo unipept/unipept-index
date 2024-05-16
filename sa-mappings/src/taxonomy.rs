@@ -195,6 +195,7 @@ mod tests {
             AggregationMethod::Lca
         )
         .unwrap();
+
         let _ = TaxonAggregator::try_from_taxonomy_file(
             taxonomy_file.to_str().unwrap(),
             AggregationMethod::LcaStar
@@ -222,6 +223,26 @@ mod tests {
                 assert!(taxon_aggregator.taxon_exists(i));
             }
         }
+    }
+
+    #[test]
+    fn test_taxon_valid() {
+        // Create a temporary directory for this test
+        let tmp_dir = TempDir::new("test_taxon_valid").unwrap();
+
+        let taxonomy_file = create_taxonomy_file(&tmp_dir);
+
+        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
+            taxonomy_file.to_str().unwrap(),
+            AggregationMethod::Lca
+        )
+        .unwrap();
+
+        for i in [ 1, 2, 6, 7, 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 ].iter() {
+            assert!(taxon_aggregator.taxon_valid(*i));
+        }
+        assert!(!taxon_aggregator.taxon_valid(21));
+        assert!(!taxon_aggregator.taxon_valid(22));
     }
 
     #[test]
@@ -257,6 +278,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(taxon_aggregator.aggregate(vec![]), None);
         assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), Some(6));
         assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), Some(10));
         assert_eq!(taxon_aggregator.aggregate(vec![17, 19]), Some(17));
@@ -275,6 +297,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(taxon_aggregator.aggregate(vec![]), None);
         assert_eq!(taxon_aggregator.aggregate(vec![7, 9]), Some(6));
         assert_eq!(taxon_aggregator.aggregate(vec![11, 14]), Some(10));
         assert_eq!(taxon_aggregator.aggregate(vec![17, 19]), Some(19));
