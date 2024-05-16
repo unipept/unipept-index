@@ -101,13 +101,13 @@ mod tests {
     fn test_aggregate() {
         let mut proteins: Vec<Protein> = Vec::new();
         proteins.push(Protein {
-            uniprot_id: "P12345".to_string(),
-            taxon_id: 9606,
+            uniprot_id:             "P12345".to_string(),
+            taxon_id:               9606,
             functional_annotations: encode("GO:0001234;GO:0005678")
         });
         proteins.push(Protein {
-            uniprot_id: "P23456".to_string(),
-            taxon_id: 9606,
+            uniprot_id:             "P23456".to_string(),
+            taxon_id:               9606,
             functional_annotations: encode("EC:1.1.1.-")
         });
 
@@ -132,13 +132,13 @@ mod tests {
         let mut proteins: Vec<&Protein> = Vec::new();
 
         let protein1 = Protein {
-            uniprot_id: "P12345".to_string(),
-            taxon_id: 9606,
+            uniprot_id:             "P12345".to_string(),
+            taxon_id:               9606,
             functional_annotations: encode("GO:0001234;GO:0005678")
         };
         let protein2 = Protein {
-            uniprot_id: "P23456".to_string(),
-            taxon_id: 9606,
+            uniprot_id:             "P23456".to_string(),
+            taxon_id:               9606,
             functional_annotations: encode("EC:1.1.1.-")
         };
 
@@ -146,7 +146,7 @@ mod tests {
         proteins.push(&protein2);
 
         let function_aggregator = FunctionAggregator {};
-        
+
         let result = function_aggregator.get_all_functional_annotations(proteins.as_slice());
 
         assert_eq!(result.len(), 2);
@@ -158,13 +158,13 @@ mod tests {
     fn test_serialize_functional_aggregation() {
         let mut proteins: Vec<Protein> = Vec::new();
         proteins.push(Protein {
-            uniprot_id: "P12345".to_string(),
-            taxon_id: 9606,
+            uniprot_id:             "P12345".to_string(),
+            taxon_id:               9606,
             functional_annotations: encode("GO:0001234;GO:0005678")
         });
         proteins.push(Protein {
-            uniprot_id: "P23456".to_string(),
-            taxon_id: 9606,
+            uniprot_id:             "P23456".to_string(),
+            taxon_id:               9606,
             functional_annotations: encode("EC:1.1.1.-")
         });
 

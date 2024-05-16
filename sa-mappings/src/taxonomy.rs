@@ -238,7 +238,7 @@ mod tests {
         )
         .unwrap();
 
-        for i in [ 1, 2, 6, 7, 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 ].iter() {
+        for i in [1, 2, 6, 7, 9, 10, 11, 13, 14, 16, 17, 18, 19, 20].iter() {
             assert!(taxon_aggregator.taxon_valid(*i));
         }
         assert!(!taxon_aggregator.taxon_valid(21));
