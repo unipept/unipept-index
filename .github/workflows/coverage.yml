@@ -19,6 +19,33 @@ jobs:
           toolchain: nightly
           override: true
 
+
+
+      - name: Run cargo test (bitarray)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features --no-fail-fast -p bitarray
+        env:
+          CARGO_INCREMENTAL: 0
+          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+
+      - name: Gather coverage information (bitarray)
+        id: coverage-bitarray
+        uses: actions-rs/grcov@v0.1
+      
+      - name: Upload coverage reports to Codecov (bitarray)
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ${{ steps.coverage-bitarray.outputs.report }}
+          flags: bitarray
+          verbose: true
+          fail_ci_if_error: true
+
+
+
       - name: Run cargo test (fa-compression)
         uses: actions-rs/cargo@v1
         with:
@@ -41,6 +68,8 @@ jobs:
           flags: fa-compression
           verbose: true
           fail_ci_if_error: true
+
+
 
       - name: Run cargo test (sa-mappings)
         uses: actions-rs/cargo@v1

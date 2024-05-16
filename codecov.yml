@@ -3,6 +3,10 @@ coverage:
     project:
       default:
         target: 90%
+      bitarray:
+        target: 90%
+        flags:
+          - bitarray
       fa-compression:
         target: 90%
         flags:
@@ -14,6 +18,10 @@ coverage:
     patch:
       default:
         target: 90%
+      bitarray:
+        target: 90%
+        flags:
+          - bitarray
       fa-compression:
         target: 90%
         flags:
@@ -24,6 +32,10 @@ coverage:
           - sa-mappings
 
 flags:
+  bitarray:
+    paths:
+      - bitarray
+    carryforward: true
   fa-compression:
     paths:
       - fa-compression

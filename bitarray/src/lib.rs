@@ -83,7 +83,6 @@ mod tests {
     #[test]
     fn test_bitarray_set() {
         let mut bitarray = BitArray::<40>::with_capacity(4);
-        bitarray.data = vec![ 0, 0, 0 ];
 
         bitarray.set(0, 0b0001110011111010110001000111111100110010);
         bitarray.set(1, 0b1100001001010010011000010100110111001001);
