@@ -12,7 +12,7 @@ pub struct BitArray<const B: usize> {
     /// The mask used to extract the relevant bits from each element in the data vector.
     mask: u64,
     /// The length of the bit array.
-    len: usize,
+    len:  usize
 }
 
 impl<const B: usize> BitArray<B> {
@@ -29,7 +29,7 @@ impl<const B: usize> BitArray<B> {
         Self {
             data: vec![0; capacity * B / 64 + 1],
             mask: (1 << B) - 1,
-            len: capacity,
+            len:  capacity
         }
     }
 
@@ -48,18 +48,20 @@ impl<const B: usize> BitArray<B> {
 
         // If the value is contained within a single block
         if start_block_offset + B <= 64 {
-            // Shift the value to the right so that the relevant bits are in the least significant position
-            // Then mask out the irrelevant bits
+            // Shift the value to the right so that the relevant bits are in the least significant
+            // position Then mask out the irrelevant bits
             return self.data[start_block] >> (64 - start_block_offset - B) & self.mask;
         }
 
         let end_block = (index + 1) * B / 64;
         let end_block_offset = (index + 1) * B % 64;
 
-        // Extract the relevant bits from the start block and shift them {end_block_offset} bits to the left
+        // Extract the relevant bits from the start block and shift them {end_block_offset} bits to
+        // the left
         let a = self.data[start_block] << end_block_offset;
 
-        // Extract the relevant bits from the end block and shift them to the least significant position
+        // Extract the relevant bits from the end block and shift them to the least significant
+        // position
         let b = self.data[end_block] >> (64 - end_block_offset);
 
         // Paste the two values together and mask out the irrelevant bits
@@ -116,7 +118,7 @@ mod tests {
     #[test]
     fn test_bitarray_with_capacity() {
         let bitarray = BitArray::<40>::with_capacity(4);
-        assert_eq!(bitarray.data, vec![ 0, 0, 0 ]);
+        assert_eq!(bitarray.data, vec![0, 0, 0]);
         assert_eq!(bitarray.mask, 0xff_ffff_ffff);
         assert_eq!(bitarray.len, 4);
     }
@@ -124,7 +126,7 @@ mod tests {
     #[test]
     fn test_bitarray_get() {
         let mut bitarray = BitArray::<40>::with_capacity(4);
-        bitarray.data = vec![ 0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4 ];
+        bitarray.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
 
         assert_eq!(bitarray.get(0), 0b0001110011111010110001000111111100110010);
         assert_eq!(bitarray.get(1), 0b1100001001010010011000010100110111001001);
@@ -141,7 +143,7 @@ mod tests {
         bitarray.set(2, 0b1111001101001101101101101011101001010001);
         bitarray.set(3, 0b0000100010010001010001001110101110011100);
 
-        assert_eq!(bitarray.data, vec![ 0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000 ]);
+        assert_eq!(bitarray.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
     }
 
     #[test]
