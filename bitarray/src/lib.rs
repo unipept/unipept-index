@@ -109,6 +109,15 @@ impl<const B: usize> BitArray<B> {
     pub fn len(&self) -> usize {
         self.len
     }
+
+    /// Checks if the `BitArray` is empty.
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if the `BitArray` is empty, `false` otherwise.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 #[cfg(test)]
@@ -150,5 +159,17 @@ mod tests {
     fn test_bitarray_len() {
         let bitarray = BitArray::<40>::with_capacity(4);
         assert_eq!(bitarray.len(), 4);
+    }
+
+    #[test]
+    fn test_bitarray_is_empty() {
+        let bitarray = BitArray::<40>::with_capacity(0);
+        assert!(bitarray.is_empty());
+    }
+
+    #[test]
+    fn test_bitarray_is_not_empty() {
+        let bitarray = BitArray::<40>::with_capacity(4);
+        assert!(!bitarray.is_empty());
     }
 }
