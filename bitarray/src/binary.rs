@@ -1,13 +1,45 @@
+//! This module provides utilities for reading and writing the bitarray as binary.
+
 use std::io::{BufRead, Read, Result, Write};
 
 use crate::BitArray;
 
+/// The `Binary` trait provides methods for reading and writing a struct as binary.
 pub trait Binary {
+    /// Writes the struct as binary to the given writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to write the binary data to.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the write operation is successful, or an `Err` if an error occurs.
     fn write_binary<W: Write>(&self, writer: W) -> Result<()>;
+
+    /// Reads binary data into a struct from the given reader.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The reader to read the binary data from.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the read operation is successful, or an `Err` if an error occurs.
     fn read_binary<R: BufRead>(&mut self, reader: R) -> Result<()>;
 }
 
+/// Implementation of the `Binary` trait for the `BitArray` struct.
 impl<const B: usize> Binary for BitArray<B> {
+    /// Writes the binary representation of the `BitArray` to the given writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to which the binary data will be written.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there was a problem writing to the writer.
     fn write_binary<W: Write>(&self, mut writer: W) -> Result<()> {
         for value in self.data.iter() {
             writer.write_all(&value.to_le_bytes())?;
@@ -16,6 +48,15 @@ impl<const B: usize> Binary for BitArray<B> {
         Ok(())
     }
 
+    /// Reads the binary representation of the `BitArray` from the given reader.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The reader from which the binary data will be read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there was a problem reading from the reader.
     fn read_binary<R: BufRead>(&mut self, mut reader: R) -> Result<()> {
         self.data.clear();
 
@@ -36,6 +77,17 @@ impl<const B: usize> Binary for BitArray<B> {
     }
 }
 
+/// Fills the buffer with data read from the input.
+///
+/// # Arguments
+///
+/// * `input` - The input source to read data from.
+/// * `buffer` - The buffer to fill with data.
+///
+/// # Returns
+///
+/// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input is reached,
+/// and `bytes_read` is the number of bytes read into the buffer.
 fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
     // Store the buffer size in advance, because rust will complain
     // about the buffer being borrowed mutably while it's borrowed
@@ -71,6 +123,14 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
 mod tests {
     use super::*;
 
+    pub struct ErrorInput;
+
+    impl Read for ErrorInput {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "read error"))
+        }
+    }
+
     #[test]
     fn test_fill_buffer() {
         let input_str = "a".repeat(8_000);
@@ -88,6 +148,15 @@ mod tests {
                 assert_eq!(bytes_read, 800);
             }
         }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_fill_buffer_read_error() {
+        let mut input = ErrorInput;
+        let mut buffer = vec![0; 800];
+
+        fill_buffer(&mut input, &mut buffer);
     }
 
     #[test]

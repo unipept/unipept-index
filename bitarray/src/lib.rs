@@ -1,12 +1,30 @@
-pub mod binary;
+//! This module contains the `BitArray` struct and its associated methods.
 
+mod binary;
+
+/// Re-export the `Binary` trait.
+pub use binary::Binary;
+
+/// A fixed-size bit array implementation.
 pub struct BitArray<const B: usize> {
-    pub data: Vec<u64>,
-    pub mask: u64,
-    pub len: usize,
+    /// The underlying data storage for the bit array.
+    data: Vec<u64>,
+    /// The mask used to extract the relevant bits from each element in the data vector.
+    mask: u64,
+    /// The length of the bit array.
+    len: usize,
 }
 
 impl<const B: usize> BitArray<B> {
+    /// Creates a new `BitArray` with the specified capacity.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - The number of bits the `BitArray` can hold.
+    ///
+    /// # Returns
+    ///
+    /// A new `BitArray` with the specified capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             data: vec![0; capacity * B / 64 + 1],
@@ -15,29 +33,54 @@ impl<const B: usize> BitArray<B> {
         }
     }
 
+    /// Retrieves the value at the specified index in the `BitArray`.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the value to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// The value at the specified index.
     pub fn get(&self, index: usize) -> u64 {
         let start_block = index * B / 64;
         let start_block_offset = index * B % 64;
 
+        // If the value is contained within a single block
         if start_block_offset + B <= 64 {
+            // Shift the value to the right so that the relevant bits are in the least significant position
+            // Then mask out the irrelevant bits
             return self.data[start_block] >> (64 - start_block_offset - B) & self.mask;
         }
 
         let end_block = (index + 1) * B / 64;
         let end_block_offset = (index + 1) * B % 64;
 
+        // Extract the relevant bits from the start block and shift them {end_block_offset} bits to the left
         let a = self.data[start_block] << end_block_offset;
+
+        // Extract the relevant bits from the end block and shift them to the least significant position
         let b = self.data[end_block] >> (64 - end_block_offset);
 
+        // Paste the two values together and mask out the irrelevant bits
         (a | b) & self.mask
     }
 
+    /// Sets the value at the specified index in the `BitArray`.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the value to set.
+    /// * `value` - The value to set at the specified index.
     pub fn set(&mut self, index: usize, value: u64) {
         let start_block = index * B / 64;
         let start_block_offset = index * B % 64;
 
+        // If the value is contained within a single block
         if start_block_offset + B <= 64 {
+            // Clear the relevant bits in the start block
             self.data[start_block] &= !(self.mask << (64 - start_block_offset - B));
+            // Set the relevant bits in the start block
             self.data[start_block] |= value << (64 - start_block_offset - B);
             return;
         }
@@ -45,13 +88,22 @@ impl<const B: usize> BitArray<B> {
         let end_block = (index + 1) * B / 64;
         let end_block_offset = (index + 1) * B % 64;
 
+        // Clear the relevant bits in the start block
         self.data[start_block] &= !(self.mask >> start_block_offset);
+        // Set the relevant bits in the start block
         self.data[start_block] |= value >> end_block_offset;
 
+        // Clear the relevant bits in the end block
         self.data[end_block] &= !(self.mask << (64 - end_block_offset));
+        // Set the relevant bits in the end block
         self.data[end_block] |= value << (64 - end_block_offset);
     }
 
+    /// Returns the length of the `BitArray`.
+    ///
+    /// # Returns
+    ///
+    /// The length of the `BitArray`.
     pub fn len(&self) -> usize {
         self.len
     }
