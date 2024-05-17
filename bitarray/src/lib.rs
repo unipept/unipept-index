@@ -25,6 +25,7 @@ impl BitArray {
     /// # Arguments
     ///
     /// * `capacity` - The number of bits the `BitArray` can hold.
+    /// * `bits_per_value` - The number of bits in a single value.
     ///
     /// # Returns
     ///
@@ -137,8 +138,9 @@ impl BitArray {
 /// # Arguments
 ///
 /// * `data` - The data to write.
-/// * `writer` - The writer to write the data to.
+/// * `bits_per_value` - The number of bits in a single value.
 /// * `max_capacity` - The maximum amount of elements that may be stored in the bit array.
+/// * `writer` - The writer to write the data to.
 ///
 /// # Returns
 ///

@@ -2,6 +2,18 @@ use std::{error::Error, io::{BufRead, Write}};
 
 use bitarray::{data_to_writer, Binary, BitArray};
 
+/// Writes the compressed suffix array to a writer.
+///
+/// # Arguments
+///
+/// * `sa` - The suffix array to be compressed.
+/// * `sparseness_factor` - The sparseness factor used for compression.
+/// * `bits_per_value` - The number of bits used to represent each value in the compressed array.
+/// * `writer` - The writer to which the compressed array will be written.
+///
+/// # Errors
+///
+/// Returns an error if writing to the writer fails.
 pub fn dump_compressed_suffix_array(
     sa: Vec<i64>, 
     sparseness_factor: u8,
@@ -24,6 +36,16 @@ pub fn dump_compressed_suffix_array(
     Ok(())
 }
 
+/// Load the compressed suffix array from a reader.
+///
+/// # Arguments
+///
+/// * `reader` - The reader from which the compressed array will be read.
+/// * `bits_per_value` - The number of bits used to represent each value in the compressed array.
+///
+/// # Errors
+///
+/// Returns an error if reading from the reader fails.
 pub fn load_compressed_suffix_array(
     reader: &mut impl BufRead,
     bits_per_value: usize
@@ -57,8 +79,8 @@ mod tests {
         dump_compressed_suffix_array(sa, 1, 8, &mut writer).unwrap();
 
         assert_eq!(writer, vec![
-            // flags
-            1,
+            // bits per value
+            8,
             // sparseness factor
             1,
             // size of the suffix array
