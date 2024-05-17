@@ -277,7 +277,7 @@ mod tests {
             vec![
                 // required bits
                 64, // Sparseness factor
-                1, // Size of the suffix array
+                1,  // Size of the suffix array
                 5, 0, 0, 0, 0, 0, 0, 0, // Suffix array
                 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
                 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0
