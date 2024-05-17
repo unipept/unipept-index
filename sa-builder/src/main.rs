@@ -45,7 +45,8 @@ fn main() {
     );
 
     if compress_sa {
-        if let Err(err) = dump_compressed_suffix_array::<37>(sa, sparseness_factor, &mut file) {
+        let bits_per_value = (data.len() as f64).log2().ceil() as usize;
+        if let Err(err) = dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file) {
             eprint_and_exit(err.to_string().as_str());
         };
     } else {

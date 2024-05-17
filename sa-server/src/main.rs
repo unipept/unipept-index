@@ -219,16 +219,16 @@ fn load_suffix_array_file(file: &str) -> Result<(u8, SuffixArray), Box<dyn Error
     // Create a buffer reader for the file
     let mut reader = BufReader::new(&mut sa_file);
 
-    // Read the flags from the binary file (1 byte)
-    let mut flags_buffer = [0_u8; 1];
-    reader.read_exact(&mut flags_buffer).map_err(|_| "Could not read the flags from the binary file")?;
-    let flags = flags_buffer[0];
+    // Read the bits per value from the binary file (1 byte)
+    let mut bits_per_value_buffer = [0_u8; 1];
+    reader.read_exact(&mut bits_per_value_buffer).map_err(|_| "Could not read the flags from the binary file")?;
+    let bits_per_value = bits_per_value_buffer[0];
 
-    if flags == 0 {
+    if bits_per_value == 64 {
         let (sample_rate, sa) = load_suffix_array(&mut reader)?;
         Ok((sample_rate, SuffixArray::Original(sa)))
     } else {
-        let (sample_rate, sa) = load_compressed_suffix_array(&mut reader)?;
+        let (sample_rate, sa) = load_compressed_suffix_array(&mut reader, bits_per_value as usize)?;
         Ok((sample_rate, SuffixArray::Compressed(sa)))
     }
 }

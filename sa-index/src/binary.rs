@@ -90,7 +90,7 @@ pub fn dump_suffix_array(
 ) -> Result<(), Box<dyn Error>> {
     // Write the flags to the writer
     // 00000000 indicates that the suffix array is not compressed
-    writer.write(&[0_u8]).map_err(|_| "Could not write the flags to the writer")?;
+    writer.write(&[64_u8]).map_err(|_| "Could not write the flags to the writer")?;
 
     // Write the sparseness factor to the writer
     writer.write(&[sparseness_factor]).map_err(|_| "Could not write the sparseness factor to the writer")?;

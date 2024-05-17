@@ -7,7 +7,7 @@ pub mod suffix_to_protein_index;
 
 pub enum SuffixArray {
     Original(Vec<i64>),
-    Compressed(BitArray<37>)
+    Compressed(BitArray)
 }
 
 impl SuffixArray {

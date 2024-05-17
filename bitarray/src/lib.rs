@@ -2,22 +2,24 @@
 
 mod binary;
 
-use std::{io::{Result, Write}, ops::Index};
+use std::io::{Result, Write};
 
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
 
 /// A fixed-size bit array implementation.
-pub struct BitArray<const B: usize> {
+pub struct BitArray {
     /// The underlying data storage for the bit array.
     data: Vec<u64>,
     /// The mask used to extract the relevant bits from each element in the data vector.
     mask: u64,
     /// The length of the bit array.
-    len:  usize
+    len:  usize,
+    /// The number of bits in a single element of the data vector.
+    bits_per_value: usize
 }
 
-impl<const B: usize> BitArray<B> {
+impl BitArray {
     /// Creates a new `BitArray` with the specified capacity.
     ///
     /// # Arguments
@@ -27,11 +29,12 @@ impl<const B: usize> BitArray<B> {
     /// # Returns
     ///
     /// A new `BitArray` with the specified capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
         Self {
-            data: vec![0; capacity * B / 64 + 1],
-            mask: (1 << B) - 1,
-            len:  capacity
+            data: vec![0; capacity * bits_per_value / 64 + 1],
+            mask: (1 << bits_per_value) - 1,
+            len:  capacity,
+            bits_per_value
         }
     }
 
@@ -45,18 +48,18 @@ impl<const B: usize> BitArray<B> {
     ///
     /// The value at the specified index.
     pub fn get(&self, index: usize) -> u64 {
-        let start_block = index * B / 64;
-        let start_block_offset = index * B % 64;
+        let start_block = index * self.bits_per_value / 64;
+        let start_block_offset = index * self.bits_per_value % 64;
 
         // If the value is contained within a single block
-        if start_block_offset + B <= 64 {
+        if start_block_offset + self.bits_per_value <= 64 {
             // Shift the value to the right so that the relevant bits are in the least significant
             // position Then mask out the irrelevant bits
-            return self.data[start_block] >> (64 - start_block_offset - B) & self.mask;
+            return self.data[start_block] >> (64 - start_block_offset - self.bits_per_value) & self.mask;
         }
 
-        let end_block = (index + 1) * B / 64;
-        let end_block_offset = (index + 1) * B % 64;
+        let end_block = (index + 1) * self.bits_per_value / 64;
+        let end_block_offset = (index + 1) * self.bits_per_value % 64;
 
         // Extract the relevant bits from the start block and shift them {end_block_offset} bits to
         // the left
@@ -77,20 +80,20 @@ impl<const B: usize> BitArray<B> {
     /// * `index` - The index of the value to set.
     /// * `value` - The value to set at the specified index.
     pub fn set(&mut self, index: usize, value: u64) {
-        let start_block = index * B / 64;
-        let start_block_offset = index * B % 64;
+        let start_block = index * self.bits_per_value / 64;
+        let start_block_offset = index * self.bits_per_value % 64;
 
         // If the value is contained within a single block
-        if start_block_offset + B <= 64 {
+        if start_block_offset + self.bits_per_value <= 64 {
             // Clear the relevant bits in the start block
-            self.data[start_block] &= !(self.mask << (64 - start_block_offset - B));
+            self.data[start_block] &= !(self.mask << (64 - start_block_offset - self.bits_per_value));
             // Set the relevant bits in the start block
-            self.data[start_block] |= value << (64 - start_block_offset - B);
+            self.data[start_block] |= value << (64 - start_block_offset - self.bits_per_value);
             return;
         }
 
-        let end_block = (index + 1) * B / 64;
-        let end_block_offset = (index + 1) * B % 64;
+        let end_block = (index + 1) * self.bits_per_value / 64;
+        let end_block_offset = (index + 1) * self.bits_per_value % 64;
 
         // Clear the relevant bits in the start block
         self.data[start_block] &= !(self.mask >> start_block_offset);
@@ -140,17 +143,30 @@ impl<const B: usize> BitArray<B> {
 /// # Returns
 ///
 /// A `Result` indicating whether the write operation was successful or not.
-pub fn data_to_writer<const B: usize>(
+pub fn data_to_writer(
     data: Vec<i64>, 
+    bits_per_value: usize,
+    max_capacity: usize,
     writer: &mut impl Write,
-    max_capacity: usize
 ) -> Result<()> {
     // Calculate the capacity of the bit array so the data buffer can be stored entirely
     // This makes the process of writing partial data to the writer easier as bounds checking is not needed
-    let capacity = max_capacity / (B * 64) * B * 64;
+    let capacity = max_capacity / (bits_per_value * 64) * bits_per_value * 64;
+
+    // If the capacity is 0, we can write the data directly to the writer
+    if capacity == 0 {
+        let mut bitarray = BitArray::with_capacity(data.len(), bits_per_value);
+
+        for (i, &value) in data.iter().enumerate() {
+            bitarray.set(i, value as u64);
+        }
+        bitarray.write_binary(writer)?;
+
+        return Ok(());
+    }
 
     // Create a bit array that can store a single chunk of data
-    let mut bitarray = BitArray::<B>::with_capacity(capacity);
+    let mut bitarray = BitArray::with_capacity(capacity, bits_per_value);
 
     // Write the data to the writer in chunks of the specified capacity
     let chunks = data.chunks_exact(capacity);
@@ -167,7 +183,7 @@ pub fn data_to_writer<const B: usize>(
     }
 
     // Create a new bit array with the remainder capacity
-    bitarray = BitArray::<B>::with_capacity(remainder.len());
+    bitarray = BitArray::with_capacity(remainder.len(), bits_per_value);
 
     for (i, &value) in remainder.iter().enumerate() {
         bitarray.set(i, value as u64);
@@ -183,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_bitarray_with_capacity() {
-        let bitarray = BitArray::<40>::with_capacity(4);
+        let bitarray = BitArray::with_capacity(4, 40);
         assert_eq!(bitarray.data, vec![0, 0, 0]);
         assert_eq!(bitarray.mask, 0xff_ffff_ffff);
         assert_eq!(bitarray.len, 4);
@@ -191,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_bitarray_get() {
-        let mut bitarray = BitArray::<40>::with_capacity(4);
+        let mut bitarray = BitArray::with_capacity(4, 40);
         bitarray.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
 
         assert_eq!(bitarray.get(0), 0b0001110011111010110001000111111100110010);
@@ -202,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_bitarray_set() {
-        let mut bitarray = BitArray::<40>::with_capacity(4);
+        let mut bitarray = BitArray::with_capacity(4, 40);
 
         bitarray.set(0, 0b0001110011111010110001000111111100110010);
         bitarray.set(1, 0b1100001001010010011000010100110111001001);
@@ -214,28 +230,28 @@ mod tests {
 
     #[test]
     fn test_bitarray_len() {
-        let bitarray = BitArray::<40>::with_capacity(4);
+        let bitarray = BitArray::with_capacity(4, 40);
         assert_eq!(bitarray.len(), 4);
     }
 
     #[test]
     fn test_bitarray_is_empty() {
-        let bitarray = BitArray::<40>::with_capacity(0);
+        let bitarray = BitArray::with_capacity(0, 40);
         assert!(bitarray.is_empty());
     }
 
     #[test]
     fn test_bitarray_is_not_empty() {
-        let bitarray = BitArray::<40>::with_capacity(4);
+        let bitarray = BitArray::with_capacity(4, 40);
         assert!(!bitarray.is_empty());
     }
 
     #[test]
-    fn test_data_to_writer() {
+    fn test_data_to_writer_no_chunks_needed() {
         let data = vec![0x1234567890, 0xabcdef0123, 0x4567890abc, 0xdef0123456];
         let mut writer = Vec::new();
 
-        data_to_writer::<40>(data, &mut writer, 2).unwrap();
+        data_to_writer(data, 40, 2, &mut writer).unwrap();
 
         assert_eq!(writer, vec![
             0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12,
@@ -243,4 +259,14 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
         ]);
     }
+
+    // #[test]
+    // fn test_data_to_writer_chunks_needed() {
+    //     todo!("Implement test");
+    // }
+
+    // #[test]
+    // fn test_data_to_writer_chunks_needed_plus_remainder() {
+    //     todo!("Implement test");
+    // }
 }

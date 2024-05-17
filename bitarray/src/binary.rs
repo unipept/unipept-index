@@ -30,7 +30,7 @@ pub trait Binary {
 }
 
 /// Implementation of the `Binary` trait for the `BitArray` struct.
-impl<const B: usize> Binary for BitArray<B> {
+impl Binary for BitArray {
     /// Writes the binary representation of the `BitArray` to the given writer.
     ///
     /// # Arguments
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_write_binary() {
-        let mut bitarray = BitArray::<40>::with_capacity(4);
+        let mut bitarray = BitArray::with_capacity(4, 40);
         bitarray.set(0, 0x1234567890);
         bitarray.set(1, 0xabcdef0123);
         bitarray.set(2, 0x4567890abc);
@@ -185,7 +185,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
         ];
 
-        let mut bitarray = BitArray::<40>::with_capacity(4);
+        let mut bitarray = BitArray::with_capacity(4, 40);
         bitarray.read_binary(&buffer[..]).unwrap();
 
         assert_eq!(bitarray.get(0), 0x1234567890);
