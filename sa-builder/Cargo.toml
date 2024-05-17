@@ -10,3 +10,5 @@ clap = { version = "4.4.8", features = ["derive"] }
 libsais64-rs = { path = "../libsais64-rs" }
 libdivsufsort-rs = "0.1.0"
 sa-mappings = { path = "../sa-mappings" }
+sa-compression = { path = "../sa-compression" }
+sa-index = { path = "../sa-index" }

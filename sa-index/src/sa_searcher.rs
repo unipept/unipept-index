@@ -19,7 +19,7 @@ use crate::{
         Minimum
     },
     suffix_to_protein_index::SuffixToProteinIndex,
-    Nullable
+    Nullable, SuffixArray
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -100,7 +100,7 @@ impl PartialEq for SearchAllSuffixesResult {
 /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
-    sa: Vec<i64>,
+    sa: SuffixArray,
     pub sparseness_factor: u8,
     suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     proteins: Proteins,
@@ -126,7 +126,7 @@ impl Searcher {
     ///
     /// Returns a new Searcher object
     pub fn new(
-        sa: Vec<i64>,
+        sa: SuffixArray,
         sparseness_factor: u8,
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
         proteins: Proteins,
@@ -240,7 +240,7 @@ impl Searcher {
         while right - left > 1 {
             let center = (left + right) / 2;
             let skip = min(lcp_left, lcp_right);
-            let (retval, lcp_center) = self.compare(search_string, self.sa[center], skip, bound);
+            let (retval, lcp_center) = self.compare(search_string, self.sa.get(center), skip, bound);
 
             found |= lcp_center == search_string.len();
 
@@ -258,7 +258,7 @@ impl Searcher {
         // handle edge case to search at index 0
         if right == 1 && left == 0 {
             let (retval, lcp_center) =
-                self.compare(search_string, self.sa[0], min(lcp_left, lcp_right), bound);
+                self.compare(search_string, self.sa.get(0), min(lcp_left, lcp_right), bound);
 
             found |= lcp_center == search_string.len();
 
@@ -339,7 +339,7 @@ impl Searcher {
                 // array (stop when our max number of matches is reached)
                 let mut sa_index = min_bound;
                 while sa_index < max_bound {
-                    let suffix = self.sa[sa_index] as usize;
+                    let suffix = self.sa.get(sa_index) as usize;
                     // filter away matches where I was wrongfully equalized to L, and check the
                     // unmatched prefix when I and L equalized, we only need to
                     // check the prefix, not the whole match, when the prefix is 0, we don't need to

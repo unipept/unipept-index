@@ -2,7 +2,7 @@
 
 mod binary;
 
-use std::io::{Write, Result};
+use std::{io::{Result, Write}, ops::Index};
 
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
@@ -127,7 +127,6 @@ impl<const B: usize> BitArray<B> {
     }
 }
 
-
 /// Writes the data to a writer in a binary format using a bit array. This function is helpfull
 /// when writing large amounts of data to a writer in chunks. The data is written in chunks of the
 /// specified capacity, so memory usage is minimized.
@@ -148,7 +147,7 @@ pub fn data_to_writer<const B: usize>(
 ) -> Result<()> {
     // Calculate the capacity of the bit array so the data buffer can be stored entirely
     // This makes the process of writing partial data to the writer easier as bounds checking is not needed
-    let capacity = max_capacity % (B * 64) * B * 64;
+    let capacity = max_capacity / (B * 64) * B * 64;
 
     // Create a bit array that can store a single chunk of data
     let mut bitarray = BitArray::<B>::with_capacity(capacity);

@@ -1,5 +1,3 @@
-pub mod binary;
-
 use std::error::Error;
 
 use clap::{
@@ -25,7 +23,10 @@ pub struct Arguments {
     #[arg(long, default_value_t = 1)]
     pub sparseness_factor:      u8,
     #[arg(short, long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
-    pub construction_algorithm: SAConstructionAlgorithm
+    pub construction_algorithm: SAConstructionAlgorithm,
+    /// If the suffix array should be compressed (default value true)
+    #[arg(long, default_value_t = true)]
+    pub compress_sa:            bool
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array
@@ -49,18 +50,15 @@ pub enum SAConstructionAlgorithm {
 /// # Errors
 ///
 /// The errors that occurred during the building of the suffix array itself
-pub fn build_sa(
+pub fn build_ssa(
     data: &mut Vec<u8>,
     construction_algorithm: &SAConstructionAlgorithm,
     sparseness_factor: u8
 ) -> Result<Vec<i64>, Box<dyn Error>> {
     // translate all L's to a I
-    for character in data.iter_mut() {
-        if *character == b'L' {
-            *character = b'I'
-        }
-    }
+    translate_l_to_i(data);
 
+    // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(data),
         SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(data)
@@ -69,17 +67,30 @@ pub fn build_sa(
 
     // make the SA sparse and decrease the vector size if we have sampling (== sampling_rate > 1)
     if sparseness_factor > 1 {
-        let mut current_sampled_index = 0;
-        for i in 0 .. sa.len() {
-            let current_sa_val = sa[i];
-            if current_sa_val % sparseness_factor as i64 == 0 {
-                sa[current_sampled_index] = current_sa_val;
-                current_sampled_index += 1;
-            }
-        }
-        // make shorter
-        sa.resize(current_sampled_index, 0);
+        sample_sa(&mut sa, sparseness_factor)
     }
 
     Ok(sa)
+}
+
+fn translate_l_to_i(data: &mut Vec<u8>) {
+    for character in data.iter_mut() {
+        if *character == b'L' {
+            *character = b'I'
+        }
+    }
+}
+
+fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) {
+    let mut current_sampled_index = 0;
+    for i in 0 .. sa.len() {
+        let current_sa_val = sa[i];
+        if current_sa_val % sparseness_factor as i64 == 0 {
+            sa[current_sampled_index] = current_sa_val;
+            current_sampled_index += 1;
+        }
+    }
+    
+    // make shorter
+    sa.resize(current_sampled_index, 0);
 }

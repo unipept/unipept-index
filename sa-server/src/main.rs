@@ -1,6 +1,5 @@
 use std::{
-    error::Error,
-    sync::Arc
+    error::Error, fs::File, io::{BufReader, Read}, sync::Arc
 };
 
 use axum::{
@@ -17,8 +16,9 @@ use axum::{
     Router
 };
 use clap::Parser;
-use sa_builder::binary::load_suffix_array;
+use sa_compression::load_compressed_suffix_array;
 use sa_index::{
+    binary::load_suffix_array,
     peptide_search::{
         analyse_all_peptides,
         search_all_peptides,
@@ -27,7 +27,8 @@ use sa_index::{
         SearchResultWithAnalysis
     },
     sa_searcher::Searcher,
-    suffix_to_protein_index::SparseSuffixToProtein
+    suffix_to_protein_index::SparseSuffixToProtein,
+    SuffixArray
 };
 use sa_mappings::{
     functionality::FunctionAggregator,
@@ -169,7 +170,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     } = args;
 
     eprintln!("Loading suffix array...");
-    let (sparseness_factor, sa) = load_suffix_array(&index_file)?;
+    let (sample_rate, sa) = load_suffix_array_file(&index_file)?;
 
     eprintln!("Loading taxon file...");
     let taxon_id_calculator =
@@ -184,7 +185,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     eprintln!("Creating searcher...");
     let searcher = Arc::new(Searcher::new(
         sa,
-        sparseness_factor,
+        sample_rate,
         suffix_index_to_protein,
         proteins,
         taxon_id_calculator,
@@ -209,4 +210,25 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn load_suffix_array_file(file: &str) -> Result<(u8, SuffixArray), Box<dyn Error>> {
+    // Open the suffix array file
+    let mut sa_file = File::open(file)?;
+
+    // Create a buffer reader for the file
+    let mut reader = BufReader::new(&mut sa_file);
+
+    // Read the flags from the binary file (1 byte)
+    let mut flags_buffer = [0_u8; 1];
+    reader.read_exact(&mut flags_buffer).map_err(|_| "Could not read the flags from the binary file")?;
+    let flags = flags_buffer[0];
+
+    if flags == 0 {
+        let (sample_rate, sa) = load_suffix_array(&mut reader)?;
+        Ok((sample_rate, SuffixArray::Original(sa)))
+    } else {
+        let (sample_rate, sa) = load_compressed_suffix_array(&mut reader)?;
+        Ok((sample_rate, SuffixArray::Compressed(sa)))
+    }
 }
