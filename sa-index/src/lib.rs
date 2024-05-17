@@ -15,9 +15,9 @@ pub enum SuffixArray {
 
 impl SuffixArray {
     /// Returns the length of the suffix array.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The length of the suffix array.
     pub fn len(&self) -> usize {
         match self {
@@ -27,13 +27,13 @@ impl SuffixArray {
     }
 
     /// Returns the suffix array at the given index.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `index` - The index of the suffix array.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The suffix array at the given index.
     pub fn get(&self, index: usize) -> i64 {
         match self {
@@ -43,9 +43,9 @@ impl SuffixArray {
     }
 
     /// Returns whether the suffix array is empty.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// True if the suffix array is empty, false otherwise.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -57,9 +57,9 @@ pub trait Nullable<T> {
     const NULL: T;
 
     /// Returns whether the value is NULL.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// True if the value is NULL, false otherwise.
     fn is_null(&self) -> bool;
 }

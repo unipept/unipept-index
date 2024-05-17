@@ -1,6 +1,11 @@
 //! This module provides utilities for reading and writing the bitarray as binary.
 
-use std::io::{BufRead, Read, Result, Write};
+use std::io::{
+    BufRead,
+    Read,
+    Result,
+    Write
+};
 
 use crate::BitArray;
 
@@ -61,11 +66,12 @@ impl Binary for BitArray {
         self.data.clear();
 
         let mut buffer = vec![0; 8 * 1024];
- 
+
         loop {
             let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer);
-            for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
-                self.data.push(u64::from_le_bytes(buffer_slice.try_into().unwrap()));
+            for buffer_slice in buffer[.. bytes_read].chunks_exact(8) {
+                self.data
+                    .push(u64::from_le_bytes(buffer_slice.try_into().unwrap()));
             }
 
             if finished {
@@ -86,8 +92,8 @@ impl Binary for BitArray {
 ///
 /// # Returns
 ///
-/// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input is reached,
-/// and `bytes_read` is the number of bytes read into the buffer.
+/// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input
+/// is reached, and `bytes_read` is the number of bytes read into the buffer.
 fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
     // Store the buffer size in advance, because rust will complain
     // about the buffer being borrowed mutably while it's borrowed
@@ -109,7 +115,7 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
             // We've read {bytes_read} bytes
             Ok(bytes_read) => {
                 // Shrink the writable buffer slice
-                writable_buffer_space = writable_buffer_space[bytes_read..].as_mut();
+                writable_buffer_space = writable_buffer_space[bytes_read ..].as_mut();
             }
 
             Err(err) => {
@@ -137,7 +143,7 @@ mod tests {
         let mut input = input_str.as_bytes();
 
         let mut buffer = vec![0; 800];
-        
+
         loop {
             let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer);
 
@@ -170,19 +176,20 @@ mod tests {
         let mut buffer = Vec::new();
         bitarray.write_binary(&mut buffer).unwrap();
 
-        assert_eq!(buffer, vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12,
-            0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01,
-            0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
-        ]);
+        assert_eq!(
+            buffer,
+            vec![
+                0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
+                0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
+            ]
+        );
     }
 
     #[test]
     fn test_read_binary() {
         let buffer = vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12,
-            0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01,
-            0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
+            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
+            0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
         ];
 
         let mut bitarray = BitArray::with_capacity(4, 40);

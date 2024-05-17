@@ -73,14 +73,14 @@ pub fn build_ssa(
 }
 
 /// Translate all L's to I's in the given text
-/// 
+///
 /// # Arguments
 /// * `text` - The text in which we want to translate the L's to I's
-/// 
+///
 /// # Returns
-/// 
+///
 /// The text with all L's translated to I's
-fn translate_l_to_i(text: &mut Vec<u8>) {
+fn translate_l_to_i(text: &mut [u8]) {
     for character in text.iter_mut() {
         if *character == b'L' {
             *character = b'I'
@@ -89,13 +89,13 @@ fn translate_l_to_i(text: &mut Vec<u8>) {
 }
 
 /// Sample the suffix array with the given sparseness factor
-/// 
+///
 /// # Arguments
 /// * `sa` - The suffix array that we want to sample
 /// * `sparseness_factor` - The sparseness factor used for sampling
-/// 
+///
 /// # Returns
-/// 
+///
 /// The sampled suffix array
 fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) {
     if sparseness_factor <= 1 {
@@ -110,7 +110,7 @@ fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) {
             current_sampled_index += 1;
         }
     }
-    
+
     // make shorter
     sa.resize(current_sampled_index, 0);
 }

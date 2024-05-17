@@ -19,7 +19,8 @@ use crate::{
         Minimum
     },
     suffix_to_protein_index::SuffixToProteinIndex,
-    Nullable, SuffixArray
+    Nullable,
+    SuffixArray
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -240,7 +241,8 @@ impl Searcher {
         while right - left > 1 {
             let center = (left + right) / 2;
             let skip = min(lcp_left, lcp_right);
-            let (retval, lcp_center) = self.compare(search_string, self.sa.get(center), skip, bound);
+            let (retval, lcp_center) =
+                self.compare(search_string, self.sa.get(center), skip, bound);
 
             found |= lcp_center == search_string.len();
 

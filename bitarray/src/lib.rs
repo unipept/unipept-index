@@ -2,7 +2,10 @@
 
 mod binary;
 
-use std::io::{Result, Write};
+use std::io::{
+    Result,
+    Write
+};
 
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
@@ -10,11 +13,11 @@ pub use binary::Binary;
 /// A fixed-size bit array implementation.
 pub struct BitArray {
     /// The underlying data storage for the bit array.
-    data: Vec<u64>,
+    data:           Vec<u64>,
     /// The mask used to extract the relevant bits from each element in the data vector.
-    mask: u64,
+    mask:           u64,
     /// The length of the bit array.
-    len:  usize,
+    len:            usize,
     /// The number of bits in a single element of the data vector.
     bits_per_value: usize
 }
@@ -34,7 +37,7 @@ impl BitArray {
         Self {
             data: vec![0; capacity * bits_per_value / 64 + 1],
             mask: (1 << bits_per_value) - 1,
-            len:  capacity,
+            len: capacity,
             bits_per_value
         }
     }
@@ -56,7 +59,8 @@ impl BitArray {
         if start_block_offset + self.bits_per_value <= 64 {
             // Shift the value to the right so that the relevant bits are in the least significant
             // position Then mask out the irrelevant bits
-            return self.data[start_block] >> (64 - start_block_offset - self.bits_per_value) & self.mask;
+            return self.data[start_block] >> (64 - start_block_offset - self.bits_per_value)
+                & self.mask;
         }
 
         let end_block = (index + 1) * self.bits_per_value / 64;
@@ -87,7 +91,8 @@ impl BitArray {
         // If the value is contained within a single block
         if start_block_offset + self.bits_per_value <= 64 {
             // Clear the relevant bits in the start block
-            self.data[start_block] &= !(self.mask << (64 - start_block_offset - self.bits_per_value));
+            self.data[start_block] &=
+                !(self.mask << (64 - start_block_offset - self.bits_per_value));
             // Set the relevant bits in the start block
             self.data[start_block] |= value << (64 - start_block_offset - self.bits_per_value);
             return;
@@ -146,13 +151,14 @@ impl BitArray {
 ///
 /// A `Result` indicating whether the write operation was successful or not.
 pub fn data_to_writer(
-    data: Vec<i64>, 
+    data: Vec<i64>,
     bits_per_value: usize,
     max_capacity: usize,
-    writer: &mut impl Write,
+    writer: &mut impl Write
 ) -> Result<()> {
     // Calculate the capacity of the bit array so the data buffer can be stored entirely
-    // This makes the process of writing partial data to the writer easier as bounds checking is not needed
+    // This makes the process of writing partial data to the writer easier as bounds checking is not
+    // needed
     let capacity = max_capacity / (bits_per_value * 64) * bits_per_value * 64;
 
     // If the capacity is 0, we can write the data directly to the writer
@@ -255,11 +261,13 @@ mod tests {
 
         data_to_writer(data, 40, 2, &mut writer).unwrap();
 
-        assert_eq!(writer, vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12,
-            0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01,
-            0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
-        ]);
+        assert_eq!(
+            writer,
+            vec![
+                0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
+                0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
+            ]
+        );
     }
 
     // #[test]

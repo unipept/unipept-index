@@ -1,5 +1,11 @@
 use std::{
-    error::Error, fs::File, io::{BufReader, Read}, sync::Arc
+    error::Error,
+    fs::File,
+    io::{
+        BufReader,
+        Read
+    },
+    sync::Arc
 };
 
 use axum::{
@@ -221,7 +227,9 @@ fn load_suffix_array_file(file: &str) -> Result<(u8, SuffixArray), Box<dyn Error
 
     // Read the bits per value from the binary file (1 byte)
     let mut bits_per_value_buffer = [0_u8; 1];
-    reader.read_exact(&mut bits_per_value_buffer).map_err(|_| "Could not read the flags from the binary file")?;
+    reader
+        .read_exact(&mut bits_per_value_buffer)
+        .map_err(|_| "Could not read the flags from the binary file")?;
     let bits_per_value = bits_per_value_buffer[0];
 
     if bits_per_value == 64 {
