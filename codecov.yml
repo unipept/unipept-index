@@ -4,30 +4,44 @@ coverage:
       default:
         target: 90%
       bitarray:
-        target: 90%
         flags:
           - bitarray
       fa-compression:
-        target: 90%
         flags:
           - fa-compression
+      sa-builder:
+        flags:
+          - sa-builder
+      sa-compression:
+        flags:
+          - sa-compression
+      sa-index:
+        target: 65%
+        flags:
+          - sa-index
       sa-mappings:
-        target: 90%
         flags:
           - sa-mappings
     patch:
       default:
         target: 90%
       bitarray:
-        target: 90%
         flags:
           - bitarray
       fa-compression:
-        target: 90%
         flags:
           - fa-compression
+      sa-builder:
+        flags:
+          - sa-builder
+      sa-compression:
+        flags:
+          - sa-compression
+      sa-index:
+        target: 65%
+        flags:
+          - sa-index
       sa-mappings:
-        target: 90%
         flags:
           - sa-mappings
 
@@ -39,6 +53,18 @@ flags:
   fa-compression:
     paths:
       - fa-compression
+    carryforward: true
+  sa-builder:
+    paths:
+      - sa-builder
+    carryforward: true
+  sa-compression:
+    paths:
+      - sa-compression
+    carryforward: true
+  sa-index:
+    paths:
+      - sa-index
     carryforward: true
   sa-mappings:
     paths:
