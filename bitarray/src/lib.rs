@@ -2,6 +2,8 @@
 
 mod binary;
 
+use std::io::{Write, Result};
+
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
 
@@ -118,6 +120,62 @@ impl<const B: usize> BitArray<B> {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    /// Clears the `BitArray`, setting all bits to 0.
+    pub fn clear(&mut self) {
+        self.data.iter_mut().for_each(|x| *x = 0);
+    }
+}
+
+
+/// Writes the data to a writer in a binary format using a bit array. This function is helpfull
+/// when writing large amounts of data to a writer in chunks. The data is written in chunks of the
+/// specified capacity, so memory usage is minimized.
+///
+/// # Arguments
+///
+/// * `data` - The data to write.
+/// * `writer` - The writer to write the data to.
+/// * `max_capacity` - The maximum amount of elements that may be stored in the bit array.
+///
+/// # Returns
+///
+/// A `Result` indicating whether the write operation was successful or not.
+pub fn data_to_writer<const B: usize>(
+    data: Vec<i64>, 
+    writer: &mut impl Write,
+    max_capacity: usize
+) -> Result<()> {
+    // Calculate the capacity of the bit array so the data buffer can be stored entirely
+    // This makes the process of writing partial data to the writer easier as bounds checking is not needed
+    let capacity = max_capacity % (B * 64) * B * 64;
+
+    // Create a bit array that can store a single chunk of data
+    let mut bitarray = BitArray::<B>::with_capacity(capacity);
+
+    // Write the data to the writer in chunks of the specified capacity
+    let chunks = data.chunks_exact(capacity);
+
+    // Store the remainder before looping over the chunks
+    let remainder = chunks.remainder();
+
+    for chunk in chunks {
+        for (i, &value) in chunk.iter().enumerate() {
+            bitarray.set(i, value as u64);
+        }
+        bitarray.write_binary(writer)?;
+        bitarray.clear();
+    }
+
+    // Create a new bit array with the remainder capacity
+    bitarray = BitArray::<B>::with_capacity(remainder.len());
+
+    for (i, &value) in remainder.iter().enumerate() {
+        bitarray.set(i, value as u64);
+    }
+    bitarray.write_binary(writer)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -171,5 +229,19 @@ mod tests {
     fn test_bitarray_is_not_empty() {
         let bitarray = BitArray::<40>::with_capacity(4);
         assert!(!bitarray.is_empty());
+    }
+
+    #[test]
+    fn test_data_to_writer() {
+        let data = vec![0x1234567890, 0xabcdef0123, 0x4567890abc, 0xdef0123456];
+        let mut writer = Vec::new();
+
+        data_to_writer::<40>(data, &mut writer, 2).unwrap();
+
+        assert_eq!(writer, vec![
+            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12,
+            0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
+        ]);
     }
 }
