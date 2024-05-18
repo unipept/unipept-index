@@ -124,10 +124,10 @@ mod tests {
 
     use crate::{
         suffix_to_protein_index::{
-            SuffixToProteinMappingStyle,
             DenseSuffixToProtein,
             SparseSuffixToProtein,
-            SuffixToProteinIndex
+            SuffixToProteinIndex,
+            SuffixToProteinMappingStyle
         },
         Nullable
     };
@@ -140,8 +140,14 @@ mod tests {
 
     #[test]
     fn test_suffix_to_protein_mapping_style() {
-        assert_eq!(SuffixToProteinMappingStyle::Dense, SuffixToProteinMappingStyle::from_str("dense", false).unwrap());
-        assert_eq!(SuffixToProteinMappingStyle::Sparse, SuffixToProteinMappingStyle::from_str("sparse", false).unwrap());
+        assert_eq!(
+            SuffixToProteinMappingStyle::Dense,
+            SuffixToProteinMappingStyle::from_str("dense", false).unwrap()
+        );
+        assert_eq!(
+            SuffixToProteinMappingStyle::Sparse,
+            SuffixToProteinMappingStyle::from_str("sparse", false).unwrap()
+        );
     }
 
     #[test]

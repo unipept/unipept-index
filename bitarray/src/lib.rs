@@ -2,10 +2,13 @@
 
 mod binary;
 
-use std::{cmp::max, io::{
-    Result,
-    Write
-}};
+use std::{
+    cmp::max,
+    io::{
+        Result,
+        Write
+    }
+};
 
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
@@ -34,7 +37,11 @@ impl BitArray {
     ///
     /// A new `BitArray` with the specified capacity.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
-        let extra = if capacity * bits_per_value % 64 == 0 { 0 } else { 1 };
+        let extra = if capacity * bits_per_value % 64 == 0 {
+            0
+        } else {
+            1
+        };
         Self {
             data: vec![0; capacity * bits_per_value / 64 + extra],
             mask: (1 << bits_per_value) - 1,
@@ -160,9 +167,11 @@ pub fn data_to_writer(
     // Update the max capacity to be a multiple of the greatest common divisor of the bits per value
     // and 64. This is done to ensure that the bit array can store the data entirely
     let greates_common_divisor = gcd(bits_per_value, 64);
-    let capacity = max(greates_common_divisor, max_capacity / greates_common_divisor * greates_common_divisor);
+    let capacity =
+        max(greates_common_divisor, max_capacity / greates_common_divisor * greates_common_divisor);
 
-    // If amount of data is less than the max capacity, write the data to the writer in a single chunk
+    // If amount of data is less than the max capacity, write the data to the writer in a single
+    // chunk
     if data.len() <= capacity {
         let mut bitarray = BitArray::with_capacity(data.len(), bits_per_value);
 
@@ -203,21 +212,21 @@ pub fn data_to_writer(
 }
 
 /// Calculates the greatest common divisor of two numbers.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `a` - The first number.
 /// * `b` - The second number.
-/// 
+///
 /// # Returns
-/// 
+///
 /// The greatest common divisor of the two numbers.
 fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
-      if b < a {
-        std::mem::swap(&mut b, &mut a);
-      }
-      b %= a;
+        if b < a {
+            std::mem::swap(&mut b, &mut a);
+        }
+        b %= a;
     }
     a
 }
@@ -305,7 +314,7 @@ mod tests {
     fn test_data_to_writer_chunks_needed_no_remainder() {
         let data = vec![
             0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777,
-            0x88888888
+            0x88888888,
         ];
         let mut writer = Vec::new();
 
@@ -314,9 +323,9 @@ mod tests {
         assert_eq!(
             writer,
             vec![
-                0x22, 0x22, 0x22, 0x22, 0x11, 0x11, 0x11, 0x11, 0x44, 0x44, 0x44, 0x44, 0x33,
-                0x33, 0x33, 0x33, 0x66, 0x66, 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x88, 0x88,
-                0x88, 0x88, 0x77, 0x77, 0x77, 0x77
+                0x22, 0x22, 0x22, 0x22, 0x11, 0x11, 0x11, 0x11, 0x44, 0x44, 0x44, 0x44, 0x33, 0x33,
+                0x33, 0x33, 0x66, 0x66, 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x88, 0x88, 0x88, 0x88,
+                0x77, 0x77, 0x77, 0x77
             ]
         );
     }
@@ -325,7 +334,7 @@ mod tests {
     fn test_data_to_writer_chunks_needed_plus_remainder() {
         let data = vec![
             0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777,
-            0x88888888, 0x99999999
+            0x88888888, 0x99999999,
         ];
         let mut writer = Vec::new();
 
@@ -334,10 +343,9 @@ mod tests {
         assert_eq!(
             writer,
             vec![
-                0x22, 0x22, 0x22, 0x22, 0x11, 0x11, 0x11, 0x11, 0x44, 0x44, 0x44, 0x44, 0x33,
-                0x33, 0x33, 0x33, 0x66, 0x66, 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x88, 0x88,
-                0x88, 0x88, 0x77, 0x77, 0x77, 0x77, 0x00, 0x00, 0x00, 0x00, 0x99, 0x99, 0x99,
-                0x99
+                0x22, 0x22, 0x22, 0x22, 0x11, 0x11, 0x11, 0x11, 0x44, 0x44, 0x44, 0x44, 0x33, 0x33,
+                0x33, 0x33, 0x66, 0x66, 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x88, 0x88, 0x88, 0x88,
+                0x77, 0x77, 0x77, 0x77, 0x00, 0x00, 0x00, 0x00, 0x99, 0x99, 0x99, 0x99
             ]
         );
     }

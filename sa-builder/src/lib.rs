@@ -122,12 +122,17 @@ mod tests {
     #[test]
     fn test_arguments() {
         let args = Arguments::parse_from(&[
-            "sa-builder", 
-            "--database-file", "database.fa", 
-            "--taxonomy", "taxonomy.tsv", 
-            "--output", "output.fa", 
-            "--sparseness-factor", "2", 
-            "--construction-algorithm", "lib-div-suf-sort", 
+            "sa-builder",
+            "--database-file",
+            "database.fa",
+            "--taxonomy",
+            "taxonomy.tsv",
+            "--output",
+            "output.fa",
+            "--sparseness-factor",
+            "2",
+            "--construction-algorithm",
+            "lib-div-suf-sort",
             "--compress-sa"
         ]);
 
@@ -141,8 +146,14 @@ mod tests {
 
     #[test]
     fn test_sa_construction_algorithm() {
-        assert_eq!(SAConstructionAlgorithm::from_str("lib-div-suf-sort", false), Ok(SAConstructionAlgorithm::LibDivSufSort));
-        assert_eq!(SAConstructionAlgorithm::from_str("lib-sais", false), Ok(SAConstructionAlgorithm::LibSais));
+        assert_eq!(
+            SAConstructionAlgorithm::from_str("lib-div-suf-sort", false),
+            Ok(SAConstructionAlgorithm::LibDivSufSort)
+        );
+        assert_eq!(
+            SAConstructionAlgorithm::from_str("lib-sais", false),
+            Ok(SAConstructionAlgorithm::LibSais)
+        );
     }
 
     #[test]

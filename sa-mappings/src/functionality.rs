@@ -49,15 +49,15 @@ impl FunctionAggregator {
                     Some('E') => {
                         proteins_with_ec.insert(protein.uniprot_id.clone());
                         proteins_with_annotations.insert(protein.uniprot_id.clone());
-                    },
+                    }
                     Some('G') => {
                         proteins_with_go.insert(protein.uniprot_id.clone());
                         proteins_with_annotations.insert(protein.uniprot_id.clone());
-                    },
+                    }
                     Some('I') => {
                         proteins_with_ipr.insert(protein.uniprot_id.clone());
                         proteins_with_annotations.insert(protein.uniprot_id.clone());
-                    },
+                    }
                     _ => {}
                 };
 

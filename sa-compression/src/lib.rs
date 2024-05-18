@@ -196,7 +196,7 @@ mod tests {
             valid_write_count: 3
         };
 
-        dump_compressed_suffix_array(vec![ 1 ], 1, 8, &mut writer).unwrap();
+        dump_compressed_suffix_array(vec![1], 1, 8, &mut writer).unwrap();
     }
 
     #[test]

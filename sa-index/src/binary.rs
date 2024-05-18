@@ -266,7 +266,9 @@ mod tests {
 
     #[test]
     fn test_fill_buffer_read_error() {
-        let mut input = FailingReader { valid_read_count: 0 };
+        let mut input = FailingReader {
+            valid_read_count: 0
+        };
         let mut buffer = vec![0; 800];
 
         assert!(fill_buffer(&mut input, &mut buffer).is_err());
@@ -358,7 +360,7 @@ mod tests {
             valid_write_count: 3
         };
 
-        dump_suffix_array(&vec![ 1 ], 1, &mut writer).unwrap();
+        dump_suffix_array(&vec![1], 1, &mut writer).unwrap();
     }
 
     #[test]
