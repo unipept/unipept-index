@@ -107,6 +107,16 @@ mod tests {
     }
 
     #[test]
+    fn test_suffix_array_is_empty() {
+        let sa = SuffixArray::Original(vec![]);
+        assert_eq!(sa.is_empty(), true);
+
+        let bitarray = BitArray::with_capacity(0, 0);
+        let sa = SuffixArray::Compressed(bitarray);
+        assert_eq!(sa.is_empty(), true);
+    }
+
+    #[test]
     fn test_nullable_is_null() {
         assert_eq!(u32::NULL.is_null(), true);
         assert_eq!(0u32.is_null(), false);

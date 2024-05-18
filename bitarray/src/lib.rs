@@ -2,10 +2,10 @@
 
 mod binary;
 
-use std::io::{
+use std::{cmp::max, io::{
     Result,
     Write
-};
+}};
 
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
@@ -34,8 +34,9 @@ impl BitArray {
     ///
     /// A new `BitArray` with the specified capacity.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
+        let extra = if capacity * bits_per_value % 64 == 0 { 0 } else { 1 };
         Self {
-            data: vec![0; capacity * bits_per_value / 64 + 1],
+            data: vec![0; capacity * bits_per_value / 64 + extra],
             mask: (1 << bits_per_value) - 1,
             len: capacity,
             bits_per_value
@@ -156,13 +157,13 @@ pub fn data_to_writer(
     max_capacity: usize,
     writer: &mut impl Write
 ) -> Result<()> {
-    // Calculate the capacity of the bit array so the data buffer can be stored entirely
-    // This makes the process of writing partial data to the writer easier as bounds checking is not
-    // needed
-    let capacity = max_capacity / (bits_per_value * 64) * bits_per_value * 64;
+    // Update the max capacity to be a multiple of the greatest common divisor of the bits per value
+    // and 64. This is done to ensure that the bit array can store the data entirely
+    let greates_common_divisor = gcd(bits_per_value, 64);
+    let capacity = max(greates_common_divisor, max_capacity / greates_common_divisor * greates_common_divisor);
 
-    // If the capacity is 0, we can write the data directly to the writer
-    if capacity == 0 {
+    // If amount of data is less than the max capacity, write the data to the writer in a single chunk
+    if data.len() <= capacity {
         let mut bitarray = BitArray::with_capacity(data.len(), bits_per_value);
 
         for (i, &value) in data.iter().enumerate() {
@@ -199,6 +200,26 @@ pub fn data_to_writer(
     bitarray.write_binary(writer)?;
 
     Ok(())
+}
+
+/// Calculates the greatest common divisor of two numbers.
+/// 
+/// # Arguments
+/// 
+/// * `a` - The first number.
+/// * `b` - The second number.
+/// 
+/// # Returns
+/// 
+/// The greatest common divisor of the two numbers.
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+      if b < a {
+        std::mem::swap(&mut b, &mut a);
+      }
+      b %= a;
+    }
+    a
 }
 
 #[cfg(test)]
@@ -255,6 +276,16 @@ mod tests {
     }
 
     #[test]
+    fn test_bitarray_clear() {
+        let mut bitarray = BitArray::with_capacity(4, 40);
+        bitarray.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
+
+        bitarray.clear();
+
+        assert_eq!(bitarray.data, vec![0, 0, 0]);
+    }
+
+    #[test]
     fn test_data_to_writer_no_chunks_needed() {
         let data = vec![0x1234567890, 0xabcdef0123, 0x4567890abc, 0xdef0123456];
         let mut writer = Vec::new();
@@ -270,13 +301,52 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn test_data_to_writer_chunks_needed() {
-    //     todo!("Implement test");
-    // }
+    #[test]
+    fn test_data_to_writer_chunks_needed_no_remainder() {
+        let data = vec![
+            0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777,
+            0x88888888
+        ];
+        let mut writer = Vec::new();
 
-    // #[test]
-    // fn test_data_to_writer_chunks_needed_plus_remainder() {
-    //     todo!("Implement test");
-    // }
+        data_to_writer(data, 32, 8, &mut writer).unwrap();
+
+        assert_eq!(
+            writer,
+            vec![
+                0x22, 0x22, 0x22, 0x22, 0x11, 0x11, 0x11, 0x11, 0x44, 0x44, 0x44, 0x44, 0x33,
+                0x33, 0x33, 0x33, 0x66, 0x66, 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x88, 0x88,
+                0x88, 0x88, 0x77, 0x77, 0x77, 0x77
+            ]
+        );
+    }
+
+    #[test]
+    fn test_data_to_writer_chunks_needed_plus_remainder() {
+        let data = vec![
+            0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777,
+            0x88888888, 0x99999999
+        ];
+        let mut writer = Vec::new();
+
+        data_to_writer(data, 32, 8, &mut writer).unwrap();
+
+        assert_eq!(
+            writer,
+            vec![
+                0x22, 0x22, 0x22, 0x22, 0x11, 0x11, 0x11, 0x11, 0x44, 0x44, 0x44, 0x44, 0x33,
+                0x33, 0x33, 0x33, 0x66, 0x66, 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x88, 0x88,
+                0x88, 0x88, 0x77, 0x77, 0x77, 0x77, 0x00, 0x00, 0x00, 0x00, 0x99, 0x99, 0x99,
+                0x99
+            ]
+        );
+    }
+
+    #[test]
+    fn test_gcd() {
+        assert_eq!(gcd(40, 64), 8);
+        assert_eq!(gcd(64, 40), 8);
+        assert_eq!(gcd(64, 64), 64);
+        assert_eq!(gcd(32, 64), 32);
+    }
 }

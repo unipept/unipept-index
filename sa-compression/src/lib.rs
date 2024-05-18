@@ -92,7 +92,53 @@ pub fn load_compressed_suffix_array(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
     use super::*;
+
+    pub struct FailingWriter {
+        /// The number of times the write function can be called before it fails.
+        pub valid_write_count: usize
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
+            if self.valid_write_count == 0 {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Write failed"));
+            }
+
+            self.valid_write_count -= 1;
+            Ok(1)
+        }
+
+        fn flush(&mut self) -> Result<(), std::io::Error> {
+            Ok(())
+        }
+    }
+
+    pub struct FailingReader {
+        /// The number of times the read function can be called before it fails.
+        pub valid_read_count: usize
+    }
+
+    impl Read for FailingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.valid_read_count == 0 {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Read failed"));
+            }
+
+            self.valid_read_count -= 1;
+            Ok(buf.len())
+        }
+    }
+
+    impl BufRead for FailingReader {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Ok(&[])
+        }
+
+        fn consume(&mut self, _: usize) {}
+    }
 
     #[test]
     fn test_dump_compressed_suffix_array() {
@@ -114,6 +160,46 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Could not write the required bits to the writer")]
+    fn test_dump_compressed_suffix_array_fail_required_bits() {
+        let mut writer = FailingWriter {
+            valid_write_count: 0
+        };
+
+        dump_compressed_suffix_array(vec![], 1, 8, &mut writer).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not write the sparseness factor to the writer")]
+    fn test_dump_compressed_suffix_array_fail_sparseness_factor() {
+        let mut writer = FailingWriter {
+            valid_write_count: 1
+        };
+
+        dump_compressed_suffix_array(vec![], 1, 8, &mut writer).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not write the size of the suffix array to the writer")]
+    fn test_dump_compressed_suffix_array_fail_size() {
+        let mut writer = FailingWriter {
+            valid_write_count: 2
+        };
+
+        dump_compressed_suffix_array(vec![], 1, 8, &mut writer).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not write the compressed suffix array to the writer")]
+    fn test_dump_compressed_suffix_array_fail_compressed_suffix_array() {
+        let mut writer = FailingWriter {
+            valid_write_count: 3
+        };
+
+        dump_compressed_suffix_array(vec![ 1 ], 1, 8, &mut writer).unwrap();
+    }
+
+    #[test]
     fn test_load_compressed_suffix_array() {
         let data = vec![
             // sparseness factor
@@ -130,5 +216,35 @@ mod tests {
         for i in 0 .. 10 {
             assert_eq!(compressed_suffix_array.get(i), i as u64 + 1);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not read the sample rate from the binary file")]
+    fn test_load_compressed_suffix_array_fail_sample_rate() {
+        let mut reader = FailingReader {
+            valid_read_count: 0
+        };
+
+        load_compressed_suffix_array(&mut reader, 8).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not read the size of the suffix array from the binary file")]
+    fn test_load_compressed_suffix_array_fail_size() {
+        let mut reader = FailingReader {
+            valid_read_count: 1
+        };
+
+        load_compressed_suffix_array(&mut reader, 8).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not read the compressed suffix array from the binary file")]
+    fn test_load_compressed_suffix_array_fail_compressed_suffix_array() {
+        let mut reader = FailingReader {
+            valid_read_count: 2
+        };
+
+        load_compressed_suffix_array(&mut reader, 8).unwrap();
     }
 }

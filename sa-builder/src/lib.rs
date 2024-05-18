@@ -26,7 +26,7 @@ pub struct Arguments {
     #[arg(short, long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
     pub construction_algorithm: SAConstructionAlgorithm,
     /// If the suffix array should be compressed (default value true)
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = false)]
     pub compress_sa:            bool
 }
 
@@ -118,6 +118,32 @@ fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_arguments() {
+        let args = Arguments::parse_from(&[
+            "sa-builder", 
+            "--database-file", "database.fa", 
+            "--taxonomy", "taxonomy.tsv", 
+            "--output", "output.fa", 
+            "--sparseness-factor", "2", 
+            "--construction-algorithm", "lib-div-suf-sort", 
+            "--compress-sa"
+        ]);
+
+        assert_eq!(args.database_file, "database.fa");
+        assert_eq!(args.taxonomy, "taxonomy.tsv");
+        assert_eq!(args.output, "output.fa");
+        assert_eq!(args.sparseness_factor, 2);
+        assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);
+        assert_eq!(args.compress_sa, true);
+    }
+
+    #[test]
+    fn test_sa_construction_algorithm() {
+        assert_eq!(SAConstructionAlgorithm::from_str("lib-div-suf-sort", false), Ok(SAConstructionAlgorithm::LibDivSufSort));
+        assert_eq!(SAConstructionAlgorithm::from_str("lib-sais", false), Ok(SAConstructionAlgorithm::LibSais));
+    }
 
     #[test]
     fn test_build_ssa_libsais() {

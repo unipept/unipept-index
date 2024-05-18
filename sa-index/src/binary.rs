@@ -66,7 +66,7 @@ impl Binary for Vec<i64> {
         let mut buffer = vec![0; 8 * 1024];
 
         loop {
-            let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer);
+            let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
             for buffer_slice in buffer[.. bytes_read].chunks_exact(8) {
                 self.push(i64::from_le_bytes(buffer_slice.try_into().unwrap()));
             }
@@ -165,7 +165,7 @@ pub fn load_suffix_array(reader: &mut impl BufRead) -> Result<(u8, Vec<i64>), Bo
 ///
 /// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input
 /// is reached, and `bytes_read` is the number of bytes read into the buffer.
-fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
+fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<(bool, usize)> {
     // Store the buffer size in advance, because rust will complain
     // about the buffer being borrowed mutably while it's borrowed
     let buffer_size = buffer.len();
@@ -177,10 +177,10 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
             // No bytes written, which means we've completely filled the buffer
             // or we've reached the end of the file
             Ok(0) => {
-                return (
+                return Ok((
                     !writable_buffer_space.is_empty(),
                     buffer_size - writable_buffer_space.len()
-                );
+                ));
             }
 
             // We've read {bytes_read} bytes
@@ -189,8 +189,9 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
                 writable_buffer_space = writable_buffer_space[bytes_read ..].as_mut();
             }
 
-            Err(err) => {
-                panic!("Error while reading input: {}", err);
+            // An error occurred while reading
+            Err(e) => {
+                return Err(e);
             }
         }
     }
@@ -200,12 +201,48 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
 mod tests {
     use super::*;
 
-    pub struct ErrorInput;
+    pub struct FailingWriter {
+        /// The number of times the write function can be called before it fails.
+        pub valid_write_count: usize
+    }
 
-    impl Read for ErrorInput {
-        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "read error"))
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
+            if self.valid_write_count == 0 {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Write failed"));
+            }
+
+            self.valid_write_count -= 1;
+            Ok(1)
         }
+
+        fn flush(&mut self) -> Result<(), std::io::Error> {
+            Ok(())
+        }
+    }
+
+    pub struct FailingReader {
+        /// The number of times the read function can be called before it fails.
+        pub valid_read_count: usize
+    }
+
+    impl Read for FailingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.valid_read_count == 0 {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Read failed"));
+            }
+
+            self.valid_read_count -= 1;
+            Ok(buf.len())
+        }
+    }
+
+    impl BufRead for FailingReader {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Ok(&[])
+        }
+
+        fn consume(&mut self, _: usize) {}
     }
 
     #[test]
@@ -216,7 +253,7 @@ mod tests {
         let mut buffer = vec![0; 800];
 
         loop {
-            let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer);
+            let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer).unwrap();
 
             if finished {
                 assert!(bytes_read < 800);
@@ -228,12 +265,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error while reading input:")]
     fn test_fill_buffer_read_error() {
-        let mut input = ErrorInput;
+        let mut input = FailingReader { valid_read_count: 0 };
         let mut buffer = vec![0; 800];
 
-        fill_buffer(&mut input, &mut buffer);
+        assert!(fill_buffer(&mut input, &mut buffer).is_err());
     }
 
     #[test]
@@ -286,6 +322,46 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Could not write the required bits to the writer")]
+    fn test_dump_suffix_array_fail_required_bits() {
+        let mut writer = FailingWriter {
+            valid_write_count: 0
+        };
+
+        dump_suffix_array(&vec![], 1, &mut writer).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not write the sparseness factor to the writer")]
+    fn test_dump_suffix_array_fail_sparseness_factor() {
+        let mut writer = FailingWriter {
+            valid_write_count: 1
+        };
+
+        dump_suffix_array(&vec![], 1, &mut writer).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not write the size of the suffix array to the writer")]
+    fn test_dump_suffix_array_fail_size() {
+        let mut writer = FailingWriter {
+            valid_write_count: 2
+        };
+
+        dump_suffix_array(&vec![], 1, &mut writer).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not write the suffix array to the writer")]
+    fn test_dump_suffix_array_fail_suffix_array() {
+        let mut writer = FailingWriter {
+            valid_write_count: 3
+        };
+
+        dump_suffix_array(&vec![ 1 ], 1, &mut writer).unwrap();
+    }
+
+    #[test]
     fn test_load_suffix_array() {
         let buffer = vec![
             // Sample rate
@@ -300,5 +376,35 @@ mod tests {
 
         assert_eq!(sample_rate, 1);
         assert_eq!(sa, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not read the sample rate from the binary file")]
+    fn test_load_suffix_array_fail_sample_rate() {
+        let mut reader = FailingReader {
+            valid_read_count: 0
+        };
+
+        load_suffix_array(&mut reader).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not read the size of the suffix array from the binary file")]
+    fn test_load_suffix_array_fail_size() {
+        let mut reader = FailingReader {
+            valid_read_count: 1
+        };
+
+        load_suffix_array(&mut reader).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Could not read the suffix array from the binary file")]
+    fn test_load_suffix_array_fail_suffix_array() {
+        let mut reader = FailingReader {
+            valid_read_count: 2
+        };
+
+        load_suffix_array(&mut reader).unwrap();
     }
 }

@@ -68,7 +68,7 @@ impl Binary for BitArray {
         let mut buffer = vec![0; 8 * 1024];
 
         loop {
-            let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer);
+            let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
             for buffer_slice in buffer[.. bytes_read].chunks_exact(8) {
                 self.data
                     .push(u64::from_le_bytes(buffer_slice.try_into().unwrap()));
@@ -94,7 +94,7 @@ impl Binary for BitArray {
 ///
 /// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input
 /// is reached, and `bytes_read` is the number of bytes read into the buffer.
-fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
+fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<(bool, usize)> {
     // Store the buffer size in advance, because rust will complain
     // about the buffer being borrowed mutably while it's borrowed
     let buffer_size = buffer.len();
@@ -106,10 +106,10 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
             // No bytes written, which means we've completely filled the buffer
             // or we've reached the end of the file
             Ok(0) => {
-                return (
+                return Ok((
                     !writable_buffer_space.is_empty(),
                     buffer_size - writable_buffer_space.len()
-                );
+                ));
             }
 
             // We've read {bytes_read} bytes
@@ -118,8 +118,9 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> (bool, usize) {
                 writable_buffer_space = writable_buffer_space[bytes_read ..].as_mut();
             }
 
-            Err(err) => {
-                panic!("Error while reading input: {}", err);
+            // An error occurred while reading
+            Err(e) => {
+                return Err(e);
             }
         }
     }
@@ -145,7 +146,7 @@ mod tests {
         let mut buffer = vec![0; 800];
 
         loop {
-            let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer);
+            let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer).unwrap();
 
             if finished {
                 assert!(bytes_read < 800);
@@ -157,12 +158,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error while reading input:")]
     fn test_fill_buffer_read_error() {
         let mut input = ErrorInput;
         let mut buffer = vec![0; 800];
 
-        fill_buffer(&mut input, &mut buffer);
+        assert!(fill_buffer(&mut input, &mut buffer).is_err());
     }
 
     #[test]
