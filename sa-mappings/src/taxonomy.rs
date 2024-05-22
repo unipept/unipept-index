@@ -14,14 +14,18 @@ use umgap::{
         mix::MixCalculator
     },
     taxon::{
-        read_taxa_file, Taxon, TaxonId, TaxonList, TaxonTree
+        read_taxa_file,
+        Taxon,
+        TaxonId,
+        TaxonList,
+        TaxonTree
     }
 };
 
 /// A struct that represents a taxon aggregator.
 pub struct TaxonAggregator {
     /// A vector that contains the snapped taxon IDs.
-    snapping: Vec<Option<TaxonId>>,
+    snapping:   Vec<Option<TaxonId>>,
     /// The aggregator used to aggregate taxon IDs.
     aggregator: Box<dyn MultiThreadSafeAggregator>,
     /// The taxon list.
@@ -211,7 +215,7 @@ mod tests {
                 Taxon::new(18, "Pelobacter".to_string(), Rank::Genus, 17, true),
                 Taxon::new(19, "Syntrophotalea carbinolica".to_string(), Rank::Species, 17, true),
                 Taxon::new(20, "Phenylobacterium".to_string(), Rank::Genus, 19, true),
-                Taxon::new(21, "Invalid".to_string(), Rank::Species, 19, false)
+                Taxon::new(21, "Invalid".to_string(), Rank::Species, 19, false),
             ],
             AggregationMethod::Lca
         );

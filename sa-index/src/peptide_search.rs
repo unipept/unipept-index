@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn test_serialize_output_data() {
         let output_data = OutputData {
-            result: vec![ 1, 2, 3 ]
+            result: vec![1, 2, 3]
         };
 
         let generated_json = serde_json::to_string(&output_data).unwrap();
@@ -322,8 +322,8 @@ mod tests {
     #[test]
     fn test_serialize_protein_info() {
         let protein_info = ProteinInfo {
-            taxon: 1,
-            uniprot_accession: "P12345".to_string(),
+            taxon:                  1,
+            uniprot_accession:      "P12345".to_string(),
             functional_annotations: vec!["GO:0001234".to_string(), "GO:0005678".to_string()]
         };
 
@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn test_serialize_search_only_result() {
         let search_result = SearchOnlyResult {
-            sequence: "MSKIAALLPSV".to_string(),
-            proteins: vec![],
+            sequence:    "MSKIAALLPSV".to_string(),
+            proteins:    vec![],
             cutoff_used: true
         };
 
