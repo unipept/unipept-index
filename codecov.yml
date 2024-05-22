@@ -49,3 +49,6 @@ flags:
     paths:
       - sa-mappings
     carryforward: true
+
+ignore:
+  - "**/main.rs" # Ignore main.rs files
