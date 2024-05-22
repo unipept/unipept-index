@@ -5,6 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[dev-dependencies]
+tempdir = "0.3.7"
+
 [dependencies]
 clap = { version = "4.4.8", features = ["derive"] }
 umgap = "1.1.0"
