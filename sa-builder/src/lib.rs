@@ -5,28 +5,28 @@ use clap::{
     ValueEnum
 };
 
-/// Enum that represents all possible commandline arguments
+/// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
 pub struct Arguments {
     /// File with the proteins used to build the suffix tree. All the proteins are expected to be
-    /// concatenated using a `#`.
+    /// concatenated using a hashtag `#`.
     #[arg(short, long)]
     pub database_file:          String,
     /// The taxonomy to be used as a tsv file. This is a preprocessed version of the NCBI taxonomy.
     #[arg(short, long)]
     pub taxonomy:               String,
-    /// Output file to store the built index.
+    /// Output location where to store the suffix array
     #[arg(short, long)]
     pub output:                 String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
     /// the SA is used)
-    #[arg(long, default_value_t = 1)]
+    #[arg(short, long, default_value_t = 1)]
     pub sparseness_factor:      u8,
     /// The algorithm used to construct the suffix array (default value LibSais)
-    #[arg(short, long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
+    #[arg(short('a'), long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
     pub construction_algorithm: SAConstructionAlgorithm,
     /// If the suffix array should be compressed (default value true)
-    #[arg(long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false)]
     pub compress_sa:            bool
 }
 
