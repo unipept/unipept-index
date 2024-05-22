@@ -1421,6 +1421,7 @@ dependencies = [
  "sa-mappings",
  "serde",
  "serde_json",
+ "tempdir",
  "umgap",
 ]
 
