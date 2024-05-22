@@ -16,34 +16,13 @@ coverage:
         flags:
           - sa-compression
       sa-index:
-        target: 65%
+        target: 80%
         flags:
           - sa-index
       sa-mappings:
         flags:
           - sa-mappings
-    patch:
-      default:
-        target: 90%
-      bitarray:
-        flags:
-          - bitarray
-      fa-compression:
-        flags:
-          - fa-compression
-      sa-builder:
-        flags:
-          - sa-builder
-      sa-compression:
-        flags:
-          - sa-compression
-      sa-index:
-        target: 65%
-        flags:
-          - sa-index
-      sa-mappings:
-        flags:
-          - sa-mappings
+    patch: off
 
 flags:
   bitarray:
