@@ -247,4 +247,24 @@ mod tests {
 
         load_compressed_suffix_array(&mut reader, 8).unwrap();
     }
+
+    #[test]
+    fn test_failing_writer() {
+        let mut writer = FailingWriter {
+            valid_write_count: 0
+        };
+        assert!(writer.flush().is_ok());
+        assert!(writer.write(&[0]).is_err());
+    }
+
+    #[test]
+    fn test_failing_reader() {
+        let mut reader = FailingReader {
+            valid_read_count: 0
+        };
+        assert_eq!(reader.fill_buf().unwrap(), &[]);
+        assert_eq!(reader.consume(0), ());
+        let mut buffer = [0_u8; 1];
+        assert!(reader.read(&mut buffer).is_err());
+    }
 }
