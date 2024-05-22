@@ -1430,10 +1430,12 @@ version = "0.1.0"
 dependencies = [
  "bitarray",
  "clap 4.5.4",
+ "fa-compression",
  "rayon",
  "sa-mappings",
  "serde",
  "serde_json",
+ "tempdir",
  "umgap",
 ]
 

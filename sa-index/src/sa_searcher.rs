@@ -17,10 +17,7 @@ use crate::{
     sa_searcher::BoundSearch::{
         Maximum,
         Minimum
-    },
-    suffix_to_protein_index::SuffixToProteinIndex,
-    Nullable,
-    SuffixArray
+    }, suffix_to_protein_index::SuffixToProteinIndex, Nullable, SuffixArray
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -101,12 +98,12 @@ impl PartialEq for SearchAllSuffixesResult {
 /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
-    sa: SuffixArray,
+    pub sa: SuffixArray,
     pub sparseness_factor: u8,
-    suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
-    proteins: Proteins,
-    taxon_id_calculator: TaxonAggregator,
-    function_aggregator: FunctionAggregator
+    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
+    pub proteins: Proteins,
+    pub taxon_id_calculator: TaxonAggregator,
+    pub function_aggregator: FunctionAggregator
 }
 
 impl Searcher {
@@ -546,5 +543,30 @@ impl Searcher {
     pub fn get_all_functional_annotations(&self, proteins: &[&Protein]) -> Vec<Vec<String>> {
         self.function_aggregator
             .get_all_functional_annotations(proteins)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_partial_eq_search_all_suffixes_result() {
+        let search_all_suffixes_result_1 = SearchAllSuffixesResult::SearchResult(vec![1, 2, 3]);
+        let search_all_suffixes_result_2 = SearchAllSuffixesResult::SearchResult(vec![3, 2, 1]);
+        let search_all_suffixes_result_3 = SearchAllSuffixesResult::SearchResult(vec![1, 2, 4]);
+        let search_all_suffixes_result_4 = SearchAllSuffixesResult::MaxMatches(vec![1, 2, 3]);
+        let search_all_suffixes_result_5 = SearchAllSuffixesResult::MaxMatches(vec![3, 2, 1]);
+        let search_all_suffixes_result_6 = SearchAllSuffixesResult::MaxMatches(vec![1, 2, 4]);
+        let search_all_suffixes_result_7 = SearchAllSuffixesResult::NoMatches;
+        let search_all_suffixes_result_8 = SearchAllSuffixesResult::NoMatches;
+
+        assert_eq!(search_all_suffixes_result_1, search_all_suffixes_result_2);
+        assert_ne!(search_all_suffixes_result_1, search_all_suffixes_result_3);
+        assert_eq!(search_all_suffixes_result_4, search_all_suffixes_result_5);
+        assert_ne!(search_all_suffixes_result_4, search_all_suffixes_result_6);
+        assert_eq!(search_all_suffixes_result_7, search_all_suffixes_result_8);
+        assert_ne!(search_all_suffixes_result_1, search_all_suffixes_result_7);
+        assert_ne!(search_all_suffixes_result_4, search_all_suffixes_result_7);
     }
 }

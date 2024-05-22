@@ -1,0 +1,1515 @@
+#![feature(prelude_import)]
+#[prelude_import]
+use std::prelude::rust_2021::*;
+#[macro_use]
+extern crate std;
+use bitarray::BitArray;
+pub mod binary {
+    use std::{error::Error, io::{BufRead, Read, Write}};
+    /// The `Binary` trait provides methods for reading and writing a struct as binary.
+    pub trait Binary {
+        /// Writes the struct as binary to the given writer.
+        ///
+        /// # Arguments
+        ///
+        /// * `writer` - The writer to write the binary data to.
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok(())` if the write operation is successful, or an `Err` if an error occurs.
+        fn write_binary<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
+        /// Reads binary data into a struct from the given reader.
+        ///
+        /// # Arguments
+        ///
+        /// * `reader` - The reader to read the binary data from.
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok(())` if the read operation is successful, or an `Err` if an error occurs.
+        fn read_binary<R: BufRead>(&mut self, reader: R) -> std::io::Result<()>;
+    }
+    /// Implements the `Binary` trait for `Vec<i64>`.
+    impl Binary for Vec<i64> {
+        /// Writes the elements of the vector to a binary file.
+        ///
+        /// # Arguments
+        ///
+        /// * `writer` - The writer to which the binary data will be written.
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok(())` if the write operation is successful, or an `std::io::Error` otherwise.
+        fn write_binary<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+            for value in self {
+                writer.write_all(&value.to_le_bytes())?;
+            }
+            Ok(())
+        }
+        /// Reads binary data from a reader and populates the vector with the read values.
+        ///
+        /// # Arguments
+        ///
+        /// * `reader` - The reader from which the binary data will be read.
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok(())` if the read operation is successful, or an `std::io::Error` otherwise.
+        fn read_binary<R: BufRead>(&mut self, mut reader: R) -> std::io::Result<()> {
+            self.clear();
+            let mut buffer = ::alloc::vec::from_elem(0, 8 * 1024);
+            loop {
+                let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
+                for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
+                    self.push(i64::from_le_bytes(buffer_slice.try_into().unwrap()));
+                }
+                if finished {
+                    break;
+                }
+            }
+            Ok(())
+        }
+    }
+    /// Writes the suffix array to a binary file.
+    ///
+    /// # Arguments
+    ///
+    /// * `sa` - The suffix array to dump.
+    /// * `sparseness_factor` - The sparseness factor to write to the file.
+    /// * `writer` - The writer to write the binary data to.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the write operation is successful, or an `Err` if an error occurs.
+    pub fn dump_suffix_array(
+        sa: &Vec<i64>,
+        sparseness_factor: u8,
+        writer: &mut impl Write,
+    ) -> Result<(), Box<dyn Error>> {
+        writer
+            .write(&[64_u8])
+            .map_err(|_| "Could not write the required bits to the writer")?;
+        writer
+            .write(&[sparseness_factor])
+            .map_err(|_| "Could not write the sparseness factor to the writer")?;
+        let sa_len = sa.len();
+        writer
+            .write(&(sa_len).to_le_bytes())
+            .map_err(|_| "Could not write the size of the suffix array to the writer")?;
+        sa.write_binary(writer)
+            .map_err(|_| "Could not write the suffix array to the writer")?;
+        Ok(())
+    }
+    /// Loads the suffix array from the file with the given `filename`
+    ///
+    /// # Arguments
+    /// * `filename` - The filename of the file where the suffix array is stored
+    ///
+    /// # Returns
+    ///
+    /// Returns the sample rate of the suffix array, together with the suffix array
+    ///
+    /// # Errors
+    ///
+    /// Returns any error from opening the file or reading the file
+    pub fn load_suffix_array(
+        reader: &mut impl BufRead,
+    ) -> Result<(u8, Vec<i64>), Box<dyn Error>> {
+        let mut sample_rate_buffer = [0_u8; 1];
+        reader
+            .read_exact(&mut sample_rate_buffer)
+            .map_err(|_| "Could not read the sample rate from the binary file")?;
+        let sample_rate = sample_rate_buffer[0];
+        let mut size_buffer = [0_u8; 8];
+        reader
+            .read_exact(&mut size_buffer)
+            .map_err(|_| {
+                "Could not read the size of the suffix array from the binary file"
+            })?;
+        let size = u64::from_le_bytes(size_buffer) as usize;
+        let mut sa = Vec::with_capacity(size);
+        sa.read_binary(reader)
+            .map_err(|_| "Could not read the suffix array from the binary file")?;
+        Ok((sample_rate, sa))
+    }
+    /// Fills the buffer with data read from the input.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The input source to read data from.
+    /// * `buffer` - The buffer to fill with data.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input
+    /// is reached, and `bytes_read` is the number of bytes read into the buffer.
+    fn fill_buffer<T: Read>(
+        input: &mut T,
+        buffer: &mut Vec<u8>,
+    ) -> std::io::Result<(bool, usize)> {
+        let buffer_size = buffer.len();
+        let mut writable_buffer_space = buffer.as_mut();
+        loop {
+            match input.read(writable_buffer_space) {
+                Ok(0) => {
+                    return Ok((
+                        !writable_buffer_space.is_empty(),
+                        buffer_size - writable_buffer_space.len(),
+                    ));
+                }
+                Ok(bytes_read) => {
+                    writable_buffer_space = writable_buffer_space[bytes_read..].as_mut();
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+pub mod peptide_search {
+    use rayon::prelude::*;
+    use sa_mappings::{functionality::FunctionalAggregation, proteins::Protein};
+    use serde::Serialize;
+    use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
+    /// Struct representing a collection of `SearchResultWithAnalysis` or `SearchOnlyResult` results
+    pub struct OutputData<T: Serialize> {
+        result: Vec<T>,
+    }
+    #[automatically_derived]
+    impl<T: ::core::fmt::Debug + Serialize> ::core::fmt::Debug for OutputData<T> {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::debug_struct_field1_finish(
+                f,
+                "OutputData",
+                "result",
+                &&self.result,
+            )
+        }
+    }
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
+    const _: () = {
+        #[allow(unused_extern_crates, clippy::useless_attribute)]
+        extern crate serde as _serde;
+        #[automatically_derived]
+        impl<T: Serialize> _serde::Serialize for OutputData<T>
+        where
+            T: _serde::Serialize,
+        {
+            fn serialize<__S>(
+                &self,
+                __serializer: __S,
+            ) -> _serde::__private::Result<__S::Ok, __S::Error>
+            where
+                __S: _serde::Serializer,
+            {
+                let mut __serde_state = _serde::Serializer::serialize_struct(
+                    __serializer,
+                    "OutputData",
+                    false as usize + 1,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "result",
+                    &self.result,
+                )?;
+                _serde::ser::SerializeStruct::end(__serde_state)
+            }
+        }
+    };
+    /// Struct representing the search result of the `sequence` in the index, including the analyses
+    pub struct SearchResultWithAnalysis {
+        sequence: String,
+        lca: Option<usize>,
+        taxa: Vec<usize>,
+        uniprot_accession_numbers: Vec<String>,
+        fa: Option<FunctionalAggregation>,
+        cutoff_used: bool,
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for SearchResultWithAnalysis {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            let names: &'static _ = &[
+                "sequence",
+                "lca",
+                "taxa",
+                "uniprot_accession_numbers",
+                "fa",
+                "cutoff_used",
+            ];
+            let values: &[&dyn ::core::fmt::Debug] = &[
+                &self.sequence,
+                &self.lca,
+                &self.taxa,
+                &self.uniprot_accession_numbers,
+                &self.fa,
+                &&self.cutoff_used,
+            ];
+            ::core::fmt::Formatter::debug_struct_fields_finish(
+                f,
+                "SearchResultWithAnalysis",
+                names,
+                values,
+            )
+        }
+    }
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
+    const _: () = {
+        #[allow(unused_extern_crates, clippy::useless_attribute)]
+        extern crate serde as _serde;
+        #[automatically_derived]
+        impl _serde::Serialize for SearchResultWithAnalysis {
+            fn serialize<__S>(
+                &self,
+                __serializer: __S,
+            ) -> _serde::__private::Result<__S::Ok, __S::Error>
+            where
+                __S: _serde::Serializer,
+            {
+                let mut __serde_state = _serde::Serializer::serialize_struct(
+                    __serializer,
+                    "SearchResultWithAnalysis",
+                    false as usize + 1 + 1 + 1 + 1 + 1 + 1,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "sequence",
+                    &self.sequence,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "lca",
+                    &self.lca,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "taxa",
+                    &self.taxa,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "uniprot_accession_numbers",
+                    &self.uniprot_accession_numbers,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "fa",
+                    &self.fa,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "cutoff_used",
+                    &self.cutoff_used,
+                )?;
+                _serde::ser::SerializeStruct::end(__serde_state)
+            }
+        }
+    };
+    /// Struct representing the search result of the `sequence` in the index (without the analyses)
+    pub struct SearchOnlyResult {
+        sequence: String,
+        proteins: Vec<ProteinInfo>,
+        cutoff_used: bool,
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for SearchOnlyResult {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::debug_struct_field3_finish(
+                f,
+                "SearchOnlyResult",
+                "sequence",
+                &self.sequence,
+                "proteins",
+                &self.proteins,
+                "cutoff_used",
+                &&self.cutoff_used,
+            )
+        }
+    }
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
+    const _: () = {
+        #[allow(unused_extern_crates, clippy::useless_attribute)]
+        extern crate serde as _serde;
+        #[automatically_derived]
+        impl _serde::Serialize for SearchOnlyResult {
+            fn serialize<__S>(
+                &self,
+                __serializer: __S,
+            ) -> _serde::__private::Result<__S::Ok, __S::Error>
+            where
+                __S: _serde::Serializer,
+            {
+                let mut __serde_state = _serde::Serializer::serialize_struct(
+                    __serializer,
+                    "SearchOnlyResult",
+                    false as usize + 1 + 1 + 1,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "sequence",
+                    &self.sequence,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "proteins",
+                    &self.proteins,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "cutoff_used",
+                    &self.cutoff_used,
+                )?;
+                _serde::ser::SerializeStruct::end(__serde_state)
+            }
+        }
+    };
+    /// Struct that represents all information known about a certain protein in our database
+    pub struct ProteinInfo {
+        taxon: usize,
+        uniprot_accession: String,
+        functional_annotations: Vec<String>,
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for ProteinInfo {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::debug_struct_field3_finish(
+                f,
+                "ProteinInfo",
+                "taxon",
+                &self.taxon,
+                "uniprot_accession",
+                &self.uniprot_accession,
+                "functional_annotations",
+                &&self.functional_annotations,
+            )
+        }
+    }
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
+    const _: () = {
+        #[allow(unused_extern_crates, clippy::useless_attribute)]
+        extern crate serde as _serde;
+        #[automatically_derived]
+        impl _serde::Serialize for ProteinInfo {
+            fn serialize<__S>(
+                &self,
+                __serializer: __S,
+            ) -> _serde::__private::Result<__S::Ok, __S::Error>
+            where
+                __S: _serde::Serializer,
+            {
+                let mut __serde_state = _serde::Serializer::serialize_struct(
+                    __serializer,
+                    "ProteinInfo",
+                    false as usize + 1 + 1 + 1,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "taxon",
+                    &self.taxon,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "uniprot_accession",
+                    &self.uniprot_accession,
+                )?;
+                _serde::ser::SerializeStruct::serialize_field(
+                    &mut __serde_state,
+                    "functional_annotations",
+                    &self.functional_annotations,
+                )?;
+                _serde::ser::SerializeStruct::end(__serde_state)
+            }
+        }
+    };
+    /// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
+    ///
+    /// # Arguments
+    /// * `searcher` - The Searcher which contains the protein database
+    /// * `peptide` - The peptide that is being searched in the index
+    /// * `cutoff` - The maximum amount of matches we want to process from the index
+    /// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+    /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
+    ///   taxonomy
+    ///
+    /// # Returns
+    ///
+    /// Returns Some if matches are found.
+    /// The first argument is true if the cutoff is used, otherwise false
+    /// The second argument is a list of all matching proteins for the peptide
+    /// Returns None if the peptides does not have any matches, or if the peptide is shorter than the
+    /// sparseness factor k used in the index
+    pub fn search_proteins_for_peptide<'a>(
+        searcher: &'a Searcher,
+        peptide: &str,
+        cutoff: usize,
+        equalize_i_and_l: bool,
+        clean_taxa: bool,
+    ) -> Option<(bool, Vec<&'a Protein>)> {
+        let peptide = peptide.strip_suffix('\n').unwrap_or(peptide).to_uppercase();
+        if peptide.len() < searcher.sparseness_factor as usize {
+            return None;
+        }
+        let suffix_search = searcher
+            .search_matching_suffixes(peptide.as_bytes(), cutoff, equalize_i_and_l);
+        let mut cutoff_used = false;
+        let suffixes = match suffix_search {
+            SearchAllSuffixesResult::MaxMatches(matched_suffixes) => {
+                cutoff_used = true;
+                matched_suffixes
+            }
+            SearchAllSuffixesResult::SearchResult(matched_suffixes) => matched_suffixes,
+            SearchAllSuffixesResult::NoMatches => {
+                return None;
+            }
+        };
+        let mut proteins = searcher.retrieve_proteins(&suffixes);
+        if clean_taxa {
+            proteins.retain(|protein| searcher.taxon_valid(protein))
+        }
+        Some((cutoff_used, proteins))
+    }
+    /// Searches the `peptide` in the index multithreaded and retrieves the protein information from the
+    /// database This does NOT perform any of the analyses, it only retrieves the functional and
+    /// taxonomic annotations
+    ///
+    /// # Arguments
+    /// * `searcher` - The Searcher which contains the protein database
+    /// * `peptide` - The peptide that is being searched in the index
+    /// * `cutoff` - The maximum amount of matches we want to process from the index
+    /// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+    /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
+    ///   taxonomy
+    ///
+    /// # Returns
+    ///
+    /// Returns Some(SearchOnlyResult) if the peptide has matches
+    /// Returns None if the peptides does not have any matches, or if the peptide is shorter than the
+    /// sparseness factor k used in the index
+    pub fn search_peptide_retrieve_annotations(
+        searcher: &Searcher,
+        peptide: &str,
+        cutoff: usize,
+        equalize_i_and_l: bool,
+        clean_taxa: bool,
+    ) -> Option<SearchOnlyResult> {
+        let (cutoff_used, proteins) = search_proteins_for_peptide(
+            searcher,
+            peptide,
+            cutoff,
+            equalize_i_and_l,
+            clean_taxa,
+        )?;
+        let annotations = searcher.get_all_functional_annotations(&proteins);
+        let mut protein_info: Vec<ProteinInfo> = ::alloc::vec::Vec::new();
+        for (&protein, annotations) in proteins.iter().zip(annotations) {
+            protein_info
+                .push(ProteinInfo {
+                    taxon: protein.taxon_id,
+                    uniprot_accession: protein.uniprot_id.clone(),
+                    functional_annotations: annotations,
+                })
+        }
+        Some(SearchOnlyResult {
+            sequence: peptide.to_string(),
+            proteins: protein_info,
+            cutoff_used,
+        })
+    }
+    /// Searches the `peptide` in the index multithreaded and performs the taxonomic and functional
+    /// analyses
+    ///
+    /// # Arguments
+    /// * `searcher` - The Searcher which contains the protein database
+    /// * `peptide` - The peptide that is being searched in the index
+    /// * `cutoff` - The maximum amount of matches we want to process from the index
+    /// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+    /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
+    ///   taxonomy
+    ///
+    /// # Returns
+    ///
+    /// Returns Some(SearchResultWithAnalysis) if the peptide has matches
+    /// Returns None if the peptides does not have any matches, or if the peptide is shorter than the
+    /// sparseness factor k used in the index
+    pub fn analyse_peptide(
+        searcher: &Searcher,
+        peptide: &str,
+        cutoff: usize,
+        equalize_i_and_l: bool,
+        clean_taxa: bool,
+    ) -> Option<SearchResultWithAnalysis> {
+        let (cutoff_used, mut proteins) = search_proteins_for_peptide(
+            searcher,
+            peptide,
+            cutoff,
+            equalize_i_and_l,
+            clean_taxa,
+        )?;
+        if clean_taxa {
+            proteins.retain(|protein| searcher.taxon_valid(protein))
+        }
+        let lca = if cutoff_used { Some(1) } else { searcher.retrieve_lca(&proteins) };
+        lca?;
+        let mut uniprot_accession_numbers = ::alloc::vec::Vec::new();
+        let mut taxa = ::alloc::vec::Vec::new();
+        for protein in &proteins {
+            taxa.push(protein.taxon_id);
+            uniprot_accession_numbers.push(protein.uniprot_id.clone());
+        }
+        let fa = searcher.retrieve_function(&proteins);
+        Some(SearchResultWithAnalysis {
+            sequence: peptide.to_string(),
+            lca,
+            cutoff_used,
+            uniprot_accession_numbers,
+            taxa,
+            fa,
+        })
+    }
+    /// Searches the list of `peptides` in the index multithreaded and performs the functional and
+    /// taxonomic analyses
+    ///
+    /// # Arguments
+    /// * `searcher` - The Searcher which contains the protein database
+    /// * `peptides` - List of peptides we want to search in the index
+    /// * `cutoff` - The maximum amount of matches we want to process from the index
+    /// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+    /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
+    ///   taxonomy
+    ///
+    /// # Returns
+    ///
+    /// Returns an `OutputData<SearchResultWithAnalysis>` object with the search and analyses results
+    /// for the peptides
+    pub fn analyse_all_peptides(
+        searcher: &Searcher,
+        peptides: &Vec<String>,
+        cutoff: usize,
+        equalize_i_and_l: bool,
+        clean_taxa: bool,
+    ) -> OutputData<SearchResultWithAnalysis> {
+        let res: Vec<SearchResultWithAnalysis> = peptides
+            .par_iter()
+            .map(|peptide| analyse_peptide(
+                searcher,
+                peptide,
+                cutoff,
+                equalize_i_and_l,
+                clean_taxa,
+            ))
+            .filter_map(|search_result| search_result)
+            .collect();
+        OutputData { result: res }
+    }
+    /// Searches the list of `peptides` in the index and retrieves all related information about the
+    /// found proteins This does NOT perform any of the analyses
+    ///
+    /// # Arguments
+    /// * `searcher` - The Searcher which contains the protein database
+    /// * `peptides` - List of peptides we want to search in the index
+    /// * `cutoff` - The maximum amount of matches we want to process from the index
+    /// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+    /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
+    ///   taxonomy
+    ///
+    /// # Returns
+    ///
+    /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
+    pub fn search_all_peptides(
+        searcher: &Searcher,
+        peptides: &Vec<String>,
+        cutoff: usize,
+        equalize_i_and_l: bool,
+        clean_taxa: bool,
+    ) -> OutputData<SearchOnlyResult> {
+        let res: Vec<SearchOnlyResult> = peptides
+            .par_iter()
+            .map(|peptide| {
+                search_peptide_retrieve_annotations(
+                    searcher,
+                    peptide,
+                    cutoff,
+                    equalize_i_and_l,
+                    clean_taxa,
+                )
+            })
+            .filter_map(|search_result| search_result)
+            .collect();
+        OutputData { result: res }
+    }
+}
+pub mod sa_searcher {
+    use std::cmp::min;
+    use sa_mappings::{
+        functionality::{FunctionAggregator, FunctionalAggregation},
+        proteins::{Protein, Proteins},
+        taxonomy::TaxonAggregator,
+    };
+    use umgap::taxon::TaxonId;
+    use crate::{
+        define_struct, sa_searcher::BoundSearch::{Maximum, Minimum},
+        suffix_to_protein_index::SuffixToProteinIndex, Nullable, SuffixArray,
+    };
+    /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
+    enum BoundSearch {
+        Minimum,
+        Maximum,
+    }
+    #[automatically_derived]
+    impl ::core::clone::Clone for BoundSearch {
+        #[inline]
+        fn clone(&self) -> BoundSearch {
+            *self
+        }
+    }
+    #[automatically_derived]
+    impl ::core::marker::Copy for BoundSearch {}
+    #[automatically_derived]
+    impl ::core::marker::StructuralPartialEq for BoundSearch {}
+    #[automatically_derived]
+    impl ::core::cmp::PartialEq for BoundSearch {
+        #[inline]
+        fn eq(&self, other: &BoundSearch) -> bool {
+            let __self_tag = ::core::intrinsics::discriminant_value(self);
+            let __arg1_tag = ::core::intrinsics::discriminant_value(other);
+            __self_tag == __arg1_tag
+        }
+    }
+    /// Enum representing the minimum and maximum bound of the found matches in the suffix array
+    pub enum BoundSearchResult {
+        NoMatches,
+        SearchResult((usize, usize)),
+    }
+    #[automatically_derived]
+    impl ::core::marker::StructuralPartialEq for BoundSearchResult {}
+    #[automatically_derived]
+    impl ::core::cmp::PartialEq for BoundSearchResult {
+        #[inline]
+        fn eq(&self, other: &BoundSearchResult) -> bool {
+            let __self_tag = ::core::intrinsics::discriminant_value(self);
+            let __arg1_tag = ::core::intrinsics::discriminant_value(other);
+            __self_tag == __arg1_tag
+                && match (self, other) {
+                    (
+                        BoundSearchResult::SearchResult(__self_0),
+                        BoundSearchResult::SearchResult(__arg1_0),
+                    ) => *__self_0 == *__arg1_0,
+                    _ => true,
+                }
+        }
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for BoundSearchResult {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            match self {
+                BoundSearchResult::NoMatches => {
+                    ::core::fmt::Formatter::write_str(f, "NoMatches")
+                }
+                BoundSearchResult::SearchResult(__self_0) => {
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(
+                        f,
+                        "SearchResult",
+                        &__self_0,
+                    )
+                }
+            }
+        }
+    }
+    /// Enum representing the matching suffixes after searching a peptide in the suffix array
+    /// Both the MaxMatches and SearchResult indicate found suffixes, but MaxMatches is used when the
+    /// cutoff is reached.
+    pub enum SearchAllSuffixesResult {
+        NoMatches,
+        MaxMatches(Vec<i64>),
+        SearchResult(Vec<i64>),
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for SearchAllSuffixesResult {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            match self {
+                SearchAllSuffixesResult::NoMatches => {
+                    ::core::fmt::Formatter::write_str(f, "NoMatches")
+                }
+                SearchAllSuffixesResult::MaxMatches(__self_0) => {
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(
+                        f,
+                        "MaxMatches",
+                        &__self_0,
+                    )
+                }
+                SearchAllSuffixesResult::SearchResult(__self_0) => {
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(
+                        f,
+                        "SearchResult",
+                        &__self_0,
+                    )
+                }
+            }
+        }
+    }
+    /// Custom implementation of partialEq for SearchAllSuffixesResult
+    /// We consider 2 SearchAllSuffixesResult equal if they exist of the same key, and the Vec contains
+    /// the same values, but the order can be different
+    impl PartialEq for SearchAllSuffixesResult {
+        fn eq(&self, other: &Self) -> bool {
+            /// Returns true if `arr1` and `arr2` contains the same elements, the order of the elements
+            /// is ignored
+            ///
+            /// # Arguments
+            /// * `arr1` - The first array used in the comparison
+            /// * `arr2` - The second array used in the comparison
+            ///
+            /// # Returns
+            ///
+            /// Returns true if arr1 and arr2 contains the same elements, the order of the elements is
+            /// ignored
+            fn array_eq_unordered(arr1: &[i64], arr2: &[i64]) -> bool {
+                let mut arr1_copy = arr1.to_owned();
+                let mut arr2_copy = arr2.to_owned();
+                arr1_copy.sort();
+                arr2_copy.sort();
+                arr1_copy == arr2_copy
+            }
+            match (self, other) {
+                (
+                    SearchAllSuffixesResult::MaxMatches(arr1),
+                    SearchAllSuffixesResult::MaxMatches(arr2),
+                ) => array_eq_unordered(arr1, arr2),
+                (
+                    SearchAllSuffixesResult::SearchResult(arr1),
+                    SearchAllSuffixesResult::SearchResult(arr2),
+                ) => array_eq_unordered(arr1, arr2),
+                (
+                    SearchAllSuffixesResult::NoMatches,
+                    SearchAllSuffixesResult::NoMatches,
+                ) => true,
+                _ => false,
+            }
+        }
+    }
+    /// Struct that contains all the elements needed to search a peptide in the suffix array
+    /// This struct also contains all the functions used for search
+    ///
+    /// # Arguments
+    /// * `sa` - The sparse suffix array representing the protein database
+    /// * `sparseness_factor` - The sparseness factor used by the suffix array
+    /// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix is
+    ///   part of
+    /// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the
+    ///   taxonomic analysis provided by Unipept
+    /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
+    ///   the functional analysis provided by Unipept
+    pub struct Searcher {}
+    impl Searcher {
+        /// Creates a new Searcher object
+        ///
+        /// # Arguments
+        /// * `sa` - The sparse suffix array representing the protein database
+        /// * `sparseness_factor` - The sparseness factor used by the suffix array
+        /// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix
+        ///   is part of
+        /// * `proteins` - List of all the proteins where the suffix array is build on
+        /// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the
+        ///   taxonomic analysis provided by Unipept
+        /// * `function_aggregator` - Object used to retrieve the functional annotations and to
+        ///   calculate the functional analysis provided by Unipept
+        ///
+        /// # Returns
+        ///
+        /// Returns a new Searcher object
+        pub fn new(
+            sa: SuffixArray,
+            sparseness_factor: u8,
+            suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
+            proteins: Proteins,
+            taxon_id_calculator: TaxonAggregator,
+            function_aggregator: FunctionAggregator,
+        ) -> Self {
+            Self {
+                sa,
+                sparseness_factor,
+                suffix_index_to_protein,
+                proteins,
+                taxon_id_calculator,
+                function_aggregator,
+            }
+        }
+        /// Compares the `search_string` to the `suffix`
+        /// During search this function performs extra logic since the suffix array is build with I ==
+        /// L, while ` self.proteins.input_string` is the original text where I != L
+        ///
+        /// # Arguments
+        /// * `search_string` - The string/peptide being searched in the suffix array
+        /// * `suffix` - The current suffix from the suffix array we are comparing with in the binary
+        ///   search
+        /// * `skip` - How many characters we can skip in the comparison because we already know these
+        ///   match
+        /// * `bound` - Indicates if we are searching for the min of max bound
+        ///
+        /// # Returns
+        ///
+        /// The first argument is true if `bound` == `Minimum` and `search_string` <= `suffix` or if
+        /// `bound` == `Maximum` and `search_string` >= `suffix` The second argument indicates how
+        /// far the `suffix` and `search_string` matched
+        fn compare(
+            &self,
+            search_string: &[u8],
+            suffix: i64,
+            skip: usize,
+            bound: BoundSearch,
+        ) -> (bool, usize) {
+            let mut index_in_suffix = (suffix as usize) + skip;
+            let mut index_in_search_string = skip;
+            let mut is_cond_or_equal = false;
+            let condition_check = match bound {
+                Minimum => |a: u8, b: u8| a < b,
+                Maximum => |a: u8, b: u8| a > b,
+            };
+            while index_in_search_string < search_string.len()
+                && index_in_suffix < self.proteins.input_string.len()
+                && (search_string[index_in_search_string]
+                    == self.proteins.input_string[index_in_suffix]
+                    || (search_string[index_in_search_string] == b'L'
+                        && self.proteins.input_string[index_in_suffix] == b'I')
+                    || (search_string[index_in_search_string] == b'I'
+                        && self.proteins.input_string[index_in_suffix] == b'L'))
+            {
+                index_in_suffix += 1;
+                index_in_search_string += 1;
+            }
+            if !search_string.is_empty() {
+                if index_in_search_string == search_string.len() {
+                    is_cond_or_equal = true
+                } else if index_in_suffix < self.proteins.input_string.len() {
+                    let peptide_char = if search_string[index_in_search_string] == b'L' {
+                        b'I'
+                    } else {
+                        search_string[index_in_search_string]
+                    };
+                    let protein_char = if self.proteins.input_string[index_in_suffix]
+                        == b'L'
+                    {
+                        b'I'
+                    } else {
+                        self.proteins.input_string[index_in_suffix]
+                    };
+                    is_cond_or_equal = condition_check(peptide_char, protein_char);
+                }
+            }
+            (is_cond_or_equal, index_in_search_string)
+        }
+        /// Searches for the minimum or maximum bound for a string in the suffix array
+        ///
+        /// # Arguments
+        /// * `bound` - Indicates if we are searching the minimum or maximum bound
+        /// * `search_string` - The string/peptide we are searching in the suffix array
+        ///
+        /// # Returns
+        ///
+        /// The first argument is true if a match was found
+        /// The second argument indicates the index of the minimum or maximum bound for the match
+        /// (depending on `bound`)
+        fn binary_search_bound(
+            &self,
+            bound: BoundSearch,
+            search_string: &[u8],
+        ) -> (bool, usize) {
+            let mut left: usize = 0;
+            let mut right: usize = self.sa.len();
+            let mut lcp_left: usize = 0;
+            let mut lcp_right: usize = 0;
+            let mut found = false;
+            while right - left > 1 {
+                let center = (left + right) / 2;
+                let skip = min(lcp_left, lcp_right);
+                let (retval, lcp_center) = self
+                    .compare(search_string, self.sa.get(center), skip, bound);
+                found |= lcp_center == search_string.len();
+                if retval && bound == Minimum || !retval && bound == Maximum {
+                    right = center;
+                    lcp_right = lcp_center;
+                } else {
+                    left = center;
+                    lcp_left = lcp_center;
+                }
+            }
+            if right == 1 && left == 0 {
+                let (retval, lcp_center) = self
+                    .compare(
+                        search_string,
+                        self.sa.get(0),
+                        min(lcp_left, lcp_right),
+                        bound,
+                    );
+                found |= lcp_center == search_string.len();
+                if bound == Minimum && retval {
+                    right = 0;
+                }
+            }
+            match bound {
+                Minimum => (found, right),
+                Maximum => (found, left),
+            }
+        }
+        /// Searches for the minimum and maximum bound for a string in the suffix array
+        ///
+        /// # Arguments
+        /// * `search_string` - The string/peptide we are searching in the suffix array
+        ///
+        /// # Returns
+        ///
+        /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
+        /// no matches were found
+        pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
+            let (found_min, min_bound) = self
+                .binary_search_bound(Minimum, search_string);
+            if !found_min {
+                return BoundSearchResult::NoMatches;
+            }
+            let (_, max_bound) = self.binary_search_bound(Maximum, search_string);
+            BoundSearchResult::SearchResult((min_bound, max_bound + 1))
+        }
+        /// Searches for the suffixes matching a search string
+        /// During search I and L can be equated
+        ///
+        /// # Arguments
+        /// * `search_string` - The string/peptide we are searching in the suffix array
+        /// * `max_matches` - The maximum amount of matches processed, if more matches are found we
+        ///   don't process them
+        /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
+        ///
+        /// # Returns
+        ///
+        /// Returns all the matching suffixes
+        #[inline]
+        pub fn search_matching_suffixes(
+            &self,
+            search_string: &[u8],
+            max_matches: usize,
+            equalize_i_and_l: bool,
+        ) -> SearchAllSuffixesResult {
+            let mut matching_suffixes: Vec<i64> = ::alloc::vec::Vec::new();
+            let mut il_locations = ::alloc::vec::Vec::new();
+            for (i, &character) in search_string.iter().enumerate() {
+                if character == b'I' || character == b'L' {
+                    il_locations.push(i);
+                }
+            }
+            let mut skip: usize = 0;
+            while skip < self.sparseness_factor as usize {
+                let mut il_locations_start = 0;
+                while il_locations_start < il_locations.len()
+                    && il_locations[il_locations_start] < skip
+                {
+                    il_locations_start += 1;
+                }
+                let il_locations_current_suffix = &il_locations[il_locations_start..];
+                let current_search_string_prefix = &search_string[..skip];
+                let current_search_string_suffix = &search_string[skip..];
+                let search_bound_result = self.search_bounds(&search_string[skip..]);
+                if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
+                    let mut sa_index = min_bound;
+                    while sa_index < max_bound {
+                        let suffix = self.sa.get(sa_index) as usize;
+                        if suffix >= skip
+                            && ((skip == 0
+                                || Self::check_prefix(
+                                    current_search_string_prefix,
+                                    &self.proteins.input_string[suffix - skip..suffix],
+                                    equalize_i_and_l,
+                                ))
+                                && Self::check_suffix(
+                                    skip,
+                                    il_locations_current_suffix,
+                                    current_search_string_suffix,
+                                    &self
+                                        .proteins
+                                        .input_string[suffix..suffix + search_string.len() - skip],
+                                    equalize_i_and_l,
+                                ))
+                        {
+                            matching_suffixes.push((suffix - skip) as i64);
+                            if matching_suffixes.len() >= max_matches {
+                                return SearchAllSuffixesResult::MaxMatches(
+                                    matching_suffixes,
+                                );
+                            }
+                        }
+                        sa_index += 1;
+                    }
+                }
+                skip += 1;
+            }
+            if matching_suffixes.is_empty() {
+                SearchAllSuffixesResult::NoMatches
+            } else {
+                SearchAllSuffixesResult::SearchResult(matching_suffixes)
+            }
+        }
+        /// Returns true of the prefixes are the same
+        /// if `equalize_i_and_l` is set to true, L and I are considered the same
+        ///
+        /// # Arguments
+        /// * `search_string_prefix` - The unchecked prefix of the string/peptide that is searched
+        /// * `index_prefix` - The unchecked prefix from the protein from the suffix array
+        /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
+        ///
+        /// # Returns
+        ///
+        /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise
+        /// false
+        #[inline]
+        fn check_prefix(
+            search_string_prefix: &[u8],
+            index_prefix: &[u8],
+            equalize_i_and_l: bool,
+        ) -> bool {
+            if equalize_i_and_l {
+                search_string_prefix
+                    .iter()
+                    .zip(index_prefix)
+                    .all(|(&search_character, &index_character)| {
+                        search_character == index_character
+                            || (search_character == b'I' && index_character == b'L')
+                            || (search_character == b'L' && index_character == b'I')
+                    })
+            } else {
+                search_string_prefix == index_prefix
+            }
+        }
+        /// Returns true of the search_string and index_string are equal
+        /// This is automatically true if `equalize_i_and_l` is set to true, since there matched during
+        /// search where I = L If `equalize_i_and_l` is set to false, we need to check if the I and
+        /// L locations have the same character
+        ///
+        /// # Arguments
+        /// * `skip` - The used skip factor during the search iteration
+        /// * `il_locations` - The locations of the I's and L's in the **original** peptide
+        /// * `search_string` - The peptide that is being searched, but already with the skipped prefix
+        ///   removed from it
+        /// * `index_string` - The suffix that search_string matches with when I and L were equalized
+        ///   during search
+        /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
+        ///
+        /// # Returns
+        ///
+        /// Returns true if `search_string` and `index_string` are considered the same, otherwise false
+        fn check_suffix(
+            skip: usize,
+            il_locations: &[usize],
+            search_string: &[u8],
+            index_string: &[u8],
+            equalize_i_and_l: bool,
+        ) -> bool {
+            if equalize_i_and_l {
+                true
+            } else {
+                for &il_location in il_locations {
+                    let index = il_location - skip;
+                    if search_string[index] != index_string[index] {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+        /// Returns all the proteins that correspond with the provided suffixes
+        ///
+        /// # Arguments
+        /// * `suffixes` - List of suffix indices
+        ///
+        /// # Returns
+        ///
+        /// Returns the proteins that every suffix is a part of
+        #[inline]
+        pub fn retrieve_proteins(&self, suffixes: &Vec<i64>) -> Vec<&Protein> {
+            let mut res = ::alloc::vec::Vec::new();
+            for &suffix in suffixes {
+                let protein_index = self
+                    .suffix_index_to_protein
+                    .suffix_to_protein(suffix);
+                if !protein_index.is_null() {
+                    res.push(&self.proteins[protein_index as usize]);
+                }
+            }
+            res
+        }
+        /// Searches all the matching proteins for a search_string/peptide in the suffix array
+        ///
+        /// # Arguments
+        /// * `search_string` - The string/peptide being searched
+        /// * `equalize_i_and_l` - If set to true, I and L are equalized during search
+        ///
+        /// # Returns
+        ///
+        /// Returns the matching proteins for the search_string
+        pub fn search_proteins_for_peptide(
+            &self,
+            search_string: &[u8],
+            equalize_i_and_l: bool,
+        ) -> Vec<&Protein> {
+            let mut matching_suffixes = ::alloc::vec::Vec::new();
+            if let SearchAllSuffixesResult::SearchResult(suffixes) = self
+                .search_matching_suffixes(search_string, usize::MAX, equalize_i_and_l)
+            {
+                matching_suffixes = suffixes;
+            }
+            self.retrieve_proteins(&matching_suffixes)
+        }
+        /// Retrieves the taxonomic analysis for a collection of proteins
+        ///
+        /// # Arguments
+        /// * `proteins` - A collection of proteins
+        ///
+        /// # Returns
+        ///
+        /// Returns the taxonomic analysis result for the given list of proteins
+        #[inline]
+        pub fn retrieve_lca(&self, proteins: &[&Protein]) -> Option<TaxonId> {
+            let taxon_ids: Vec<TaxonId> = proteins
+                .iter()
+                .map(|prot| prot.taxon_id)
+                .collect();
+            self.taxon_id_calculator
+                .aggregate(taxon_ids)
+                .map(|id| self.taxon_id_calculator.snap_taxon(id))
+        }
+        /// Returns true if the protein is considered valid by the provided taxonomy file
+        ///
+        /// # Arguments
+        /// * `protein` - A protein of which we want to check the validity
+        ///
+        /// # Returns
+        ///
+        ///  Returns true if the protein is considered valid by the provided taxonomy file
+        pub fn taxon_valid(&self, protein: &Protein) -> bool {
+            self.taxon_id_calculator.taxon_valid(protein.taxon_id)
+        }
+        /// Retrieves the functional analysis for a collection of proteins
+        ///
+        /// # Arguments
+        /// * `proteins` - A collection of proteins
+        ///
+        /// # Returns
+        ///
+        /// Returns the functional analysis result for the given list of proteins
+        pub fn retrieve_function(
+            &self,
+            proteins: &[&Protein],
+        ) -> Option<FunctionalAggregation> {
+            let res = self.function_aggregator.aggregate(proteins.to_vec());
+            Some(res)
+        }
+        /// Retrieves the all the functional annotations for a collection of proteins
+        ///
+        /// # Arguments
+        /// * `proteins` - A collection of proteins
+        ///
+        /// # Returns
+        ///
+        /// Returns all functional annotations for a collection of proteins
+        pub fn get_all_functional_annotations(
+            &self,
+            proteins: &[&Protein],
+        ) -> Vec<Vec<String>> {
+            self.function_aggregator.get_all_functional_annotations(proteins)
+        }
+    }
+}
+pub mod suffix_to_protein_index {
+    use clap::ValueEnum;
+    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+    use crate::Nullable;
+    /// Enum used to define the commandline arguments and choose which index style is used
+    pub enum SuffixToProteinMappingStyle {
+        Dense,
+        Sparse,
+    }
+    #[allow(
+        dead_code,
+        unreachable_code,
+        unused_variables,
+        unused_braces,
+        unused_qualifications,
+    )]
+    #[allow(
+        clippy::style,
+        clippy::complexity,
+        clippy::pedantic,
+        clippy::restriction,
+        clippy::perf,
+        clippy::deprecated,
+        clippy::nursery,
+        clippy::cargo,
+        clippy::suspicious_else_formatting,
+        clippy::almost_swapped,
+        clippy::redundant_locals,
+    )]
+    #[automatically_derived]
+    impl clap::ValueEnum for SuffixToProteinMappingStyle {
+        fn value_variants<'a>() -> &'a [Self] {
+            &[Self::Dense, Self::Sparse]
+        }
+        fn to_possible_value<'a>(
+            &self,
+        ) -> ::std::option::Option<clap::builder::PossibleValue> {
+            match self {
+                Self::Dense => Some({ clap::builder::PossibleValue::new("dense") }),
+                Self::Sparse => Some({ clap::builder::PossibleValue::new("sparse") }),
+                _ => None,
+            }
+        }
+    }
+    #[automatically_derived]
+    impl ::core::clone::Clone for SuffixToProteinMappingStyle {
+        #[inline]
+        fn clone(&self) -> SuffixToProteinMappingStyle {
+            match self {
+                SuffixToProteinMappingStyle::Dense => SuffixToProteinMappingStyle::Dense,
+                SuffixToProteinMappingStyle::Sparse => {
+                    SuffixToProteinMappingStyle::Sparse
+                }
+            }
+        }
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for SuffixToProteinMappingStyle {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::write_str(
+                f,
+                match self {
+                    SuffixToProteinMappingStyle::Dense => "Dense",
+                    SuffixToProteinMappingStyle::Sparse => "Sparse",
+                },
+            )
+        }
+    }
+    #[automatically_derived]
+    impl ::core::marker::StructuralPartialEq for SuffixToProteinMappingStyle {}
+    #[automatically_derived]
+    impl ::core::cmp::PartialEq for SuffixToProteinMappingStyle {
+        #[inline]
+        fn eq(&self, other: &SuffixToProteinMappingStyle) -> bool {
+            let __self_tag = ::core::intrinsics::discriminant_value(self);
+            let __arg1_tag = ::core::intrinsics::discriminant_value(other);
+            __self_tag == __arg1_tag
+        }
+    }
+    /// Trait implemented by the SuffixToProtein mappings
+    pub trait SuffixToProteinIndex: Send + Sync {
+        /// Returns the index of the protein in the protein list for the given suffix
+        ///
+        /// # Arguments
+        /// * `suffix` - The suffix of which we want to know of which protein it is a part
+        ///
+        /// # Returns
+        ///
+        /// Returns the index of the protein in the proteins list of which the suffix is a part
+        fn suffix_to_protein(&self, suffix: i64) -> u32;
+    }
+    /// Mapping that uses O(n) memory with n the size of the input text, but retrieval of the protein is
+    /// in O(1)
+    pub struct DenseSuffixToProtein {
+        mapping: Vec<u32>,
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for DenseSuffixToProtein {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::debug_struct_field1_finish(
+                f,
+                "DenseSuffixToProtein",
+                "mapping",
+                &&self.mapping,
+            )
+        }
+    }
+    #[automatically_derived]
+    impl ::core::marker::StructuralPartialEq for DenseSuffixToProtein {}
+    #[automatically_derived]
+    impl ::core::cmp::PartialEq for DenseSuffixToProtein {
+        #[inline]
+        fn eq(&self, other: &DenseSuffixToProtein) -> bool {
+            self.mapping == other.mapping
+        }
+    }
+    /// Mapping that uses O(m) memory with m the number of proteins, but retrieval of the protein is
+    /// O(log m)
+    pub struct SparseSuffixToProtein {
+        mapping: Vec<i64>,
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for SparseSuffixToProtein {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::debug_struct_field1_finish(
+                f,
+                "SparseSuffixToProtein",
+                "mapping",
+                &&self.mapping,
+            )
+        }
+    }
+    #[automatically_derived]
+    impl ::core::marker::StructuralPartialEq for SparseSuffixToProtein {}
+    #[automatically_derived]
+    impl ::core::cmp::PartialEq for SparseSuffixToProtein {
+        #[inline]
+        fn eq(&self, other: &SparseSuffixToProtein) -> bool {
+            self.mapping == other.mapping
+        }
+    }
+    impl SuffixToProteinIndex for DenseSuffixToProtein {
+        fn suffix_to_protein(&self, suffix: i64) -> u32 {
+            self.mapping[suffix as usize]
+        }
+    }
+    impl SuffixToProteinIndex for SparseSuffixToProtein {
+        fn suffix_to_protein(&self, suffix: i64) -> u32 {
+            let protein_index = self
+                .mapping
+                .binary_search(&suffix)
+                .unwrap_or_else(|index| index - 1);
+            if self.mapping[protein_index + 1] == suffix + 1 {
+                return u32::NULL;
+            }
+            protein_index as u32
+        }
+    }
+    impl DenseSuffixToProtein {
+        /// Creates a new DenseSuffixToProtein mapping
+        ///
+        /// # Arguments
+        /// * `text` - The text over which we want to create the mapping
+        ///
+        /// # Returns
+        ///
+        /// Returns a new DenseSuffixToProtein build over the provided text
+        pub fn new(text: &[u8]) -> Self {
+            let mut current_protein_index: u32 = 0;
+            let mut suffix_index_to_protein: Vec<u32> = ::alloc::vec::Vec::new();
+            for &char in text.iter() {
+                if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
+                    current_protein_index += 1;
+                    suffix_index_to_protein.push(u32::NULL);
+                } else {
+                    match (&current_protein_index, &u32::NULL) {
+                        (left_val, right_val) => {
+                            if *left_val == *right_val {
+                                let kind = ::core::panicking::AssertKind::Ne;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                    suffix_index_to_protein.push(current_protein_index);
+                }
+            }
+            suffix_index_to_protein.shrink_to_fit();
+            DenseSuffixToProtein {
+                mapping: suffix_index_to_protein,
+            }
+        }
+    }
+    impl SparseSuffixToProtein {
+        /// Creates a new SparseSuffixToProtein mapping
+        ///
+        /// # Arguments
+        /// * `text` - The text over which we want to create the mapping
+        ///
+        /// # Returns
+        ///
+        /// Returns a new SparseSuffixToProtein build over the provided text
+        pub fn new(text: &[u8]) -> Self {
+            let mut suffix_index_to_protein: Vec<i64> = <[_]>::into_vec(
+                #[rustc_box]
+                ::alloc::boxed::Box::new([0]),
+            );
+            for (index, &char) in text.iter().enumerate() {
+                if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
+                    suffix_index_to_protein.push(index as i64 + 1);
+                }
+            }
+            suffix_index_to_protein.shrink_to_fit();
+            SparseSuffixToProtein {
+                mapping: suffix_index_to_protein,
+            }
+        }
+    }
+}
+/// Represents a suffix array.
+pub enum SuffixArray {
+    /// The original suffix array.
+    Original(Vec<i64>),
+    /// The compressed suffix array.
+    Compressed(BitArray),
+}
+impl SuffixArray {
+    /// Returns the length of the suffix array.
+    ///
+    /// # Returns
+    ///
+    /// The length of the suffix array.
+    pub fn len(&self) -> usize {
+        match self {
+            SuffixArray::Original(sa) => sa.len(),
+            SuffixArray::Compressed(sa) => sa.len(),
+        }
+    }
+    /// Returns the suffix array at the given index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the suffix array.
+    ///
+    /// # Returns
+    ///
+    /// The suffix array at the given index.
+    pub fn get(&self, index: usize) -> i64 {
+        match self {
+            SuffixArray::Original(sa) => sa[index],
+            SuffixArray::Compressed(sa) => sa.get(index) as i64,
+        }
+    }
+    /// Returns whether the suffix array is empty.
+    ///
+    /// # Returns
+    ///
+    /// True if the suffix array is empty, false otherwise.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+/// Custom trait implemented by types that have a value that represents NULL
+pub trait Nullable<T> {
+    const NULL: T;
+    /// Returns whether the value is NULL.
+    ///
+    /// # Returns
+    ///
+    /// True if the value is NULL, false otherwise.
+    fn is_null(&self) -> bool;
+}
+/// Implementation of the `Nullable` trait for the `u32` type.
+impl Nullable<u32> for u32 {
+    const NULL: u32 = u32::MAX;
+    fn is_null(&self) -> bool {
+        *self == Self::NULL
+    }
+}
+pub(crate) use define_struct;
