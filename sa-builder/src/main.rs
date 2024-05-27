@@ -44,12 +44,18 @@ fn main() {
     let sa = build_ssa(&mut data, &construction_algorithm, sparseness_factor)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
+    eprintln!("Suffix array constructed successfully.");
+    eprintln!("sa length: {}", sa.len());
+
     // open the output file
     let mut file =
         open_file(&output).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     if compress_sa {
         let bits_per_value = (data.len() as f64).log2().ceil() as usize;
+
+        eprintln!("Compressing suffix array with {} bits per value.", bits_per_value);
+
         if let Err(err) =
             dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file)
         {
