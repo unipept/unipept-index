@@ -82,23 +82,23 @@ mod tests {
 
     #[test]
     fn test_decode_single_ec() {
-        assert_eq!(decode(&[44, 44, 44, 189, 208]), "EC:1.1.1.-")
+        assert_eq!(decode(&[44, 44, 44, 190, 224]), "EC:1.1.1.-")
     }
 
     #[test]
     fn test_decode_single_go() {
-        assert_eq!(decode(&[209, 17, 163, 138, 208]), "GO:0009279")
+        assert_eq!(decode(&[225, 17, 163, 138, 224]), "GO:0009279")
     }
 
     #[test]
     fn test_decode_single_ipr() {
-        assert_eq!(decode(&[221, 18, 116, 117]), "IPR:IPR016364")
+        assert_eq!(decode(&[238, 18, 116, 117]), "IPR:IPR016364")
     }
 
     #[test]
     fn test_decode_no_ec() {
         assert_eq!(
-            decode(&[209, 17, 163, 138, 209, 39, 71, 94, 17, 153, 39]),
+            decode(&[225, 17, 163, 138, 225, 39, 71, 95, 17, 153, 39]),
             "GO:0009279;IPR:IPR016364;IPR:IPR008816"
         )
     }
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn test_decode_no_go() {
         assert_eq!(
-            decode(&[44, 44, 44, 190, 44, 60, 44, 141, 209, 39, 71, 80]),
+            decode(&[44, 44, 44, 191, 44, 60, 44, 142, 225, 39, 71, 80]),
             "EC:1.1.1.-;EC:1.2.1.7;IPR:IPR016364"
         )
     }
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn test_decode_no_ipr() {
         assert_eq!(
-            decode(&[44, 44, 44, 189, 17, 26, 56, 174, 17, 26, 56, 173]),
+            decode(&[44, 44, 44, 190, 17, 26, 56, 175, 17, 26, 56, 174]),
             "EC:1.1.1.-;GO:0009279;GO:0009279"
         )
     }
@@ -123,7 +123,7 @@ mod tests {
     fn test_decode_all() {
         assert_eq!(
             decode(&[
-                44, 44, 44, 189, 17, 26, 56, 173, 18, 116, 117, 225, 67, 116, 110, 17, 153, 39
+                44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117, 241, 67, 116, 111, 17, 153, 39
             ]),
             "EC:1.1.1.-;GO:0009279;IPR:IPR016364;IPR:IPR032635;IPR:IPR008816"
         )

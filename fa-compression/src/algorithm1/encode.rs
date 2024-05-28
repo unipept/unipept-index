@@ -94,24 +94,24 @@ mod tests {
 
     #[test]
     fn test_encode_single_ec() {
-        assert_eq!(encode("EC:1.1.1.-"), vec![44, 44, 44, 189, 208])
+        assert_eq!(encode("EC:1.1.1.-"), vec![44, 44, 44, 190, 224])
     }
 
     #[test]
     fn test_encode_single_go() {
-        assert_eq!(encode("GO:0009279"), vec![209, 17, 163, 138, 208])
+        assert_eq!(encode("GO:0009279"), vec![225, 17, 163, 138, 224])
     }
 
     #[test]
     fn test_encode_single_ipr() {
-        assert_eq!(encode("IPR:IPR016364"), vec![221, 18, 116, 117])
+        assert_eq!(encode("IPR:IPR016364"), vec![238, 18, 116, 117])
     }
 
     #[test]
     fn test_encode_no_ec() {
         assert_eq!(
             encode("IPR:IPR016364;GO:0009279;IPR:IPR008816"),
-            vec![209, 17, 163, 138, 209, 39, 71, 94, 17, 153, 39]
+            vec![225, 17, 163, 138, 225, 39, 71, 95, 17, 153, 39]
         )
     }
 
@@ -119,7 +119,7 @@ mod tests {
     fn test_encode_no_go() {
         assert_eq!(
             encode("IPR:IPR016364;EC:1.1.1.-;EC:1.2.1.7"),
-            vec![44, 44, 44, 190, 44, 60, 44, 141, 209, 39, 71, 80]
+            vec![44, 44, 44, 191, 44, 60, 44, 142, 225, 39, 71, 80]
         )
     }
 
@@ -127,7 +127,7 @@ mod tests {
     fn test_encode_no_ipr() {
         assert_eq!(
             encode("EC:1.1.1.-;GO:0009279;GO:0009279"),
-            vec![44, 44, 44, 189, 17, 26, 56, 174, 17, 26, 56, 173]
+            vec![44, 44, 44, 190, 17, 26, 56, 175, 17, 26, 56, 174]
         )
     }
 
@@ -135,7 +135,7 @@ mod tests {
     fn test_encode_all() {
         assert_eq!(
             encode("IPR:IPR016364;EC:1.1.1.-;IPR:IPR032635;GO:0009279;IPR:IPR008816"),
-            vec![44, 44, 44, 189, 17, 26, 56, 173, 18, 116, 117, 225, 67, 116, 110, 17, 153, 39]
+            vec![44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117, 241, 67, 116, 111, 17, 153, 39]
         )
     }
 }

@@ -73,6 +73,7 @@ enum CharacterSet {
     /// Special Enzyme Commission characters
     Dash,
     Point,
+    Preliminary,
 
     /// Different annotation type separator
     Comma,
@@ -106,6 +107,7 @@ impl Encode for CharacterSet {
             b'9' => CharacterSet::Nine,
             b'-' => CharacterSet::Dash,
             b'.' => CharacterSet::Point,
+            b'n' => CharacterSet::Preliminary,
             b',' => CharacterSet::Comma,
             b';' => CharacterSet::Semicolon,
             _ => panic!("Invalid character")
@@ -138,8 +140,9 @@ impl Decode for CharacterSet {
             10 => '9',
             11 => '-',
             12 => '.',
-            13 => ',',
-            14 => ';',
+            13 => 'n',
+            14 => ',',
+            15 => ';',
             _ => panic!("Invalid character")
         }
     }
@@ -167,10 +170,10 @@ impl BitOr for CharacterSet {
 mod tests {
     use super::*;
 
-    static CHARACTERS: [u8; 15] =
-        [b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b',', b';'];
+    static CHARACTERS: [u8; 16] =
+        [b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b'n', b',', b';'];
 
-    static CHARACTER_SETS: [CharacterSet; 15] = [
+    static CHARACTER_SETS: [CharacterSet; 16] = [
         CharacterSet::Empty,
         CharacterSet::Zero,
         CharacterSet::One,
@@ -184,6 +187,7 @@ mod tests {
         CharacterSet::Nine,
         CharacterSet::Dash,
         CharacterSet::Point,
+        CharacterSet::Preliminary,
         CharacterSet::Comma,
         CharacterSet::Semicolon
     ];
@@ -233,13 +237,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_decode_invalid() {
-        CharacterSet::decode(15);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_decode_pair_invalid() {
-        CharacterSet::decode_pair(0b11111111);
+        CharacterSet::decode(16);
     }
 
     #[test]
