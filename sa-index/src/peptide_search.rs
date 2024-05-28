@@ -70,7 +70,7 @@ pub fn search_proteins_for_peptide<'a>(
     let peptide = peptide.strip_suffix('\n').unwrap_or(peptide).to_uppercase();
 
     // words that are shorter than the sample rate are not searchable
-    if peptide.len() < searcher.sparseness_factor as usize {
+    if peptide.len() < searcher.sa.sample_rate() as usize {
         return None;
     }
 

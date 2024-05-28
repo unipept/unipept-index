@@ -7,6 +7,8 @@ use std::{
     }
 };
 
+use crate::SuffixArray;
+
 /// The `Binary` trait provides methods for reading and writing a struct as binary.
 pub trait Binary {
     /// Writes the struct as binary to the given writer.
@@ -132,7 +134,7 @@ pub fn dump_suffix_array(
 /// # Errors
 ///
 /// Returns any error from opening the file or reading the file
-pub fn load_suffix_array(reader: &mut impl BufRead) -> Result<(u8, Vec<i64>), Box<dyn Error>> {
+pub fn load_suffix_array(reader: &mut impl BufRead) -> Result<SuffixArray, Box<dyn Error>> {
     // Read the sample rate from the binary file (1 byte)
     let mut sample_rate_buffer = [0_u8; 1];
     reader
@@ -151,7 +153,7 @@ pub fn load_suffix_array(reader: &mut impl BufRead) -> Result<(u8, Vec<i64>), Bo
     sa.read_binary(reader)
         .map_err(|_| "Could not read the suffix array from the binary file")?;
 
-    Ok((sample_rate, sa))
+    Ok(SuffixArray::Original(sa, sample_rate))
 }
 
 /// Fills the buffer with data read from the input.
@@ -374,10 +376,12 @@ mod tests {
         ];
 
         let mut reader = buffer.as_slice();
-        let (sample_rate, sa) = load_suffix_array(&mut reader).unwrap();
+        let sa = load_suffix_array(&mut reader).unwrap();
 
-        assert_eq!(sample_rate, 1);
-        assert_eq!(sa, vec![1, 2, 3, 4, 5]);
+        assert_eq!(sa.sample_rate(), 1);
+        for i in 0 .. 5 {
+            assert_eq!(sa.get(i), i as i64 + 1);
+        }
     }
 
     #[test]

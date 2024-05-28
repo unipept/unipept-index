@@ -170,8 +170,10 @@ impl BitOr for CharacterSet {
 mod tests {
     use super::*;
 
-    static CHARACTERS: [u8; 16] =
-        [b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b'n', b',', b';'];
+    static CHARACTERS: [u8; 16] = [
+        b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b'n', b',',
+        b';'
+    ];
 
     static CHARACTER_SETS: [CharacterSet; 16] = [
         CharacterSet::Empty,

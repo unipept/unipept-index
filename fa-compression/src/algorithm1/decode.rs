@@ -28,9 +28,9 @@ static PREFIXES: [&str; 3] = ["EC:", "GO:", "IPR:IPR"];
 /// ```
 /// use fa_compression::algorithm1::decode;
 ///
-/// let input = &[ 44, 44, 44, 189, 17, 26, 56, 173, 18, 116, 117, 225, 67, 116, 110, 17, 153, 39 ];
+/// let input = &[ 44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117 ];
 /// let result = decode(input);
-/// assert_eq!(result, "EC:1.1.1.-;GO:0009279;IPR:IPR016364;IPR:IPR032635;IPR:IPR008816");
+/// assert_eq!(result, "EC:1.1.1.-;GO:0009279;IPR:IPR016364");
 /// ```
 pub fn decode(input: &[u8]) -> String {
     if input.is_empty() {

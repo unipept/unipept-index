@@ -8,9 +8,9 @@ pub mod suffix_to_protein_index;
 /// Represents a suffix array.
 pub enum SuffixArray {
     /// The original suffix array.
-    Original(Vec<i64>),
+    Original(Vec<i64>, u8),
     /// The compressed suffix array.
-    Compressed(BitArray)
+    Compressed(BitArray, u8)
 }
 
 impl SuffixArray {
@@ -21,12 +21,36 @@ impl SuffixArray {
     /// The length of the suffix array.
     pub fn len(&self) -> usize {
         match self {
-            SuffixArray::Original(sa) => sa.len(),
-            SuffixArray::Compressed(sa) => sa.len()
+            SuffixArray::Original(sa, _) => sa.len(),
+            SuffixArray::Compressed(sa, _) => sa.len()
         }
     }
 
-    /// Returns the suffix array at the given index.
+    /// Returns the number of bits per value in the suffix array.
+    ///
+    /// # Returns
+    ///
+    /// The number of bits per value in the suffix array.
+    pub fn bits_per_value(&self) -> usize {
+        match self {
+            SuffixArray::Original(_, _) => 64,
+            SuffixArray::Compressed(sa, _) => sa.bits_per_value()
+        }
+    }
+
+    /// Returns the sample rate used for the suffix array.
+    ///
+    /// # Returns
+    ///
+    /// The sample rate used for the suffix array.
+    pub fn sample_rate(&self) -> u8 {
+        match self {
+            SuffixArray::Original(_, sample_rate) => *sample_rate,
+            SuffixArray::Compressed(_, sample_rate) => *sample_rate
+        }
+    }
+
+    /// Returns the suffix array value at the given index.
     ///
     /// # Arguments
     ///
@@ -37,8 +61,8 @@ impl SuffixArray {
     /// The suffix array at the given index.
     pub fn get(&self, index: usize) -> i64 {
         match self {
-            SuffixArray::Original(sa) => sa[index],
-            SuffixArray::Compressed(sa) => sa.get(index) as i64
+            SuffixArray::Original(sa, _) => sa[index],
+            SuffixArray::Compressed(sa, _) => sa.get(index) as i64
         }
     }
 
@@ -46,7 +70,7 @@ impl SuffixArray {
     ///
     /// # Returns
     ///
-    /// True if the suffix array is empty, false otherwise.
+    /// Returns `true` if the suffix array is empty, `false` otherwise.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -79,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_suffix_array_original() {
-        let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5]);
+        let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
         assert_eq!(sa.len(), 5);
         assert_eq!(sa.get(0), 1);
         assert_eq!(sa.get(1), 2);
@@ -97,7 +121,7 @@ mod tests {
         bitarray.set(3, 4);
         bitarray.set(4, 5);
 
-        let sa = SuffixArray::Compressed(bitarray);
+        let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.len(), 5);
         assert_eq!(sa.get(0), 1);
         assert_eq!(sa.get(1), 2);
@@ -107,12 +131,42 @@ mod tests {
     }
 
     #[test]
+    fn test_suffix_array_len() {
+        let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
+        assert_eq!(sa.len(), 5);
+
+        let bitarray = BitArray::with_capacity(5, 40);
+        let sa = SuffixArray::Compressed(bitarray, 1);
+        assert_eq!(sa.len(), 5);
+    }
+
+    #[test]
+    fn test_suffix_array_bits_per_value() {
+        let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
+        assert_eq!(sa.bits_per_value(), 64);
+
+        let bitarray = BitArray::with_capacity(5, 40);
+        let sa = SuffixArray::Compressed(bitarray, 1);
+        assert_eq!(sa.bits_per_value(), 40);
+    }
+
+    #[test]
+    fn test_suffix_array_sample_rate() {
+        let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
+        assert_eq!(sa.sample_rate(), 1);
+
+        let bitarray = BitArray::with_capacity(5, 40);
+        let sa = SuffixArray::Compressed(bitarray, 1);
+        assert_eq!(sa.sample_rate(), 1);
+    }
+
+    #[test]
     fn test_suffix_array_is_empty() {
-        let sa = SuffixArray::Original(vec![]);
+        let sa = SuffixArray::Original(vec![], 1);
         assert_eq!(sa.is_empty(), true);
 
         let bitarray = BitArray::with_capacity(0, 0);
-        let sa = SuffixArray::Compressed(bitarray);
+        let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.is_empty(), true);
     }
 

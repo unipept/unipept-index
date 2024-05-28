@@ -11,6 +11,7 @@ use bitarray::{
     Binary,
     BitArray
 };
+use sa_index::SuffixArray;
 
 /// Writes the compressed suffix array to a writer.
 ///
@@ -66,7 +67,7 @@ pub fn dump_compressed_suffix_array(
 pub fn load_compressed_suffix_array(
     reader: &mut impl BufRead,
     bits_per_value: usize
-) -> Result<(u8, BitArray), Box<dyn Error>> {
+) -> Result<SuffixArray, Box<dyn Error>> {
     // Read the sample rate from the binary file (1 byte)
     let mut sample_rate_buffer = [0_u8; 1];
     reader
@@ -87,7 +88,7 @@ pub fn load_compressed_suffix_array(
         .read_binary(reader)
         .map_err(|_| "Could not read the compressed suffix array from the binary file")?;
 
-    Ok((sample_rate, compressed_suffix_array))
+    Ok(SuffixArray::Compressed(compressed_suffix_array, sample_rate))
 }
 
 #[cfg(test)]
@@ -209,12 +210,11 @@ mod tests {
         ];
 
         let mut reader = std::io::BufReader::new(&data[..]);
-        let (sample_rate, compressed_suffix_array) =
-            load_compressed_suffix_array(&mut reader, 8).unwrap();
+        let compressed_suffix_array = load_compressed_suffix_array(&mut reader, 8).unwrap();
 
-        assert_eq!(sample_rate, 1);
+        assert_eq!(compressed_suffix_array.sample_rate(), 1);
         for i in 0 .. 10 {
-            assert_eq!(compressed_suffix_array.get(i), i as u64 + 1);
+            assert_eq!(compressed_suffix_array.get(i), i as i64 + 1);
         }
     }
 
@@ -262,7 +262,8 @@ mod tests {
         let mut reader = FailingReader {
             valid_read_count: 0
         };
-        assert_eq!(reader.fill_buf().unwrap(), &[]);
+        let right_buffer: [u8; 0] = [];
+        assert_eq!(reader.fill_buf().unwrap(), &right_buffer);
         assert_eq!(reader.consume(0), ());
         let mut buffer = [0_u8; 1];
         assert!(reader.read(&mut buffer).is_err());

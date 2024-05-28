@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 bitarray = { path = "../bitarray" }
+sa-index = { path = "../sa-index" }

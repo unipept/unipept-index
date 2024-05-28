@@ -1422,6 +1422,7 @@ name = "sa-compression"
 version = "0.1.0"
 dependencies = [
  "bitarray",
+ "sa-index",
 ]
 
 [[package]]

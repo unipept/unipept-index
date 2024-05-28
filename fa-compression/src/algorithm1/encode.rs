@@ -28,7 +28,7 @@ use super::{
 /// let input = "IPR:IPR016364;EC:1.1.1.-;GO:0009279";
 /// let encoded = encode(input);
 ///
-/// assert_eq!(encoded, vec![ 44, 44, 44, 189, 17, 26, 56, 173, 18, 116, 117 ]);
+/// assert_eq!(encoded, vec![ 44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117 ]);
 /// ```
 pub fn encode(input: &str) -> Vec<u8> {
     if input.is_empty() {

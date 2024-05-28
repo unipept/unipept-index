@@ -175,23 +175,34 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         taxonomy
     } = args;
 
-    eprintln!("Loading suffix array...");
-    let (sample_rate, sa) = load_suffix_array_file(&index_file)?;
+    eprintln!();
+    eprintln!("📋 Started loading the suffix array...");
+    let sa = load_suffix_array_file(&index_file)?;
+    eprintln!("✅ Successfully loaded the suffix array!");
+    eprintln!("\tAmount of items: {}", sa.len());
+    eprintln!("\tAmount of bits per item: {}", sa.bits_per_value());
+    eprintln!("\tSample rate: {}", sa.sample_rate());
 
-    eprintln!("Loading taxon file...");
+    eprintln!();
+    eprintln!("📋 Started loading the taxon file...");
     let taxon_id_calculator =
         TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)?;
+    eprintln!("✅ Successfully loaded the taxon file!");
+    eprintln!("\tAggregation method: LCA*");
 
+    eprintln!();
+    eprintln!("📋 Started creating the function aggregator...");
     let function_aggregator = FunctionAggregator {};
+    eprintln!("✅ Successfully created the function aggregator!");
 
-    eprintln!("Loading proteins...");
+    eprintln!();
+    eprintln!("📋 Started loading the proteins...");
     let proteins = Proteins::try_from_database_file(&database_file, &taxon_id_calculator)?;
     let suffix_index_to_protein = Box::new(SparseSuffixToProtein::new(&proteins.input_string));
+    eprintln!("✅ Successfully loaded the proteins!");
 
-    eprintln!("Creating searcher...");
     let searcher = Arc::new(Searcher::new(
         sa,
-        sample_rate,
         suffix_index_to_protein,
         proteins,
         taxon_id_calculator,
@@ -212,13 +223,15 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         .with_state(searcher);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    println!("server is ready...");
+
+    eprintln!();
+    eprintln!("🚀 Server is ready...");
     axum::serve(listener, app).await?;
 
     Ok(())
 }
 
-fn load_suffix_array_file(file: &str) -> Result<(u8, SuffixArray), Box<dyn Error>> {
+fn load_suffix_array_file(file: &str) -> Result<SuffixArray, Box<dyn Error>> {
     // Open the suffix array file
     let mut sa_file = File::open(file)?;
 
@@ -233,10 +246,8 @@ fn load_suffix_array_file(file: &str) -> Result<(u8, SuffixArray), Box<dyn Error
     let bits_per_value = bits_per_value_buffer[0];
 
     if bits_per_value == 64 {
-        let (sample_rate, sa) = load_suffix_array(&mut reader)?;
-        Ok((sample_rate, SuffixArray::Original(sa)))
+        load_suffix_array(&mut reader)
     } else {
-        let (sample_rate, sa) = load_compressed_suffix_array(&mut reader, bits_per_value as usize)?;
-        Ok((sample_rate, SuffixArray::Compressed(sa)))
+        load_compressed_suffix_array(&mut reader, bits_per_value as usize)
     }
 }

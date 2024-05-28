@@ -102,7 +102,6 @@ impl PartialEq for SearchAllSuffixesResult {
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
     pub sa: SuffixArray,
-    pub sparseness_factor: u8,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     pub proteins: Proteins,
     pub taxon_id_calculator: TaxonAggregator,
@@ -128,7 +127,6 @@ impl Searcher {
     /// Returns a new Searcher object
     pub fn new(
         sa: SuffixArray,
-        sparseness_factor: u8,
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
         proteins: Proteins,
         taxon_id_calculator: TaxonAggregator,
@@ -136,7 +134,6 @@ impl Searcher {
     ) -> Self {
         Self {
             sa,
-            sparseness_factor,
             suffix_index_to_protein,
             proteins,
             taxon_id_calculator,
@@ -324,7 +321,7 @@ impl Searcher {
         }
 
         let mut skip: usize = 0;
-        while skip < self.sparseness_factor as usize {
+        while skip < self.sa.sample_rate() as usize {
             let mut il_locations_start = 0;
             while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip
             {
@@ -654,16 +651,16 @@ mod tests {
     #[test]
     fn test_search_simple() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![
-            19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18,
-        ]);
+        let sa = SuffixArray::Original(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        );
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -690,14 +687,13 @@ mod tests {
     #[test]
     fn test_search_sparse() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18]);
+        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            3,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -721,16 +717,16 @@ mod tests {
     #[test]
     fn test_il_equality() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![
-            19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18,
-        ]);
+        let sa = SuffixArray::Original(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        );
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -752,14 +748,13 @@ mod tests {
     #[test]
     fn test_il_equality_sparse() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18]);
+        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            3,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -798,10 +793,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = SuffixArray::Original(vec![0, 2, 4]);
+        let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
         let searcher = Searcher::new(
             sparse_sa,
-            2,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -833,10 +827,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2]);
+        let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
         let searcher = Searcher::new(
             sparse_sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -867,10 +860,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0]);
+        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let searcher = Searcher::new(
             sparse_sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -901,10 +893,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0]);
+        let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
         let searcher = Searcher::new(
             sparse_sa,
-            2,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(
@@ -937,10 +928,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0]);
+        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let searcher = Searcher::new(
             sparse_sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
             TaxonAggregator::try_from_taxonomy_file(

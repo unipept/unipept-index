@@ -31,38 +31,54 @@ fn main() {
         compress_sa
     } = Arguments::parse();
 
+    eprintln!();
+    eprintln!("📋 Started loading the taxon file...");
     let taxon_id_calculator =
         TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    eprintln!("✅ Successfully loaded the taxon file!");
+    eprintln!("\tAggregation method: LCA*");
 
-    // read input
+    eprintln!();
+    eprintln!("📋 Started loading the proteins...");
     let mut data =
         Proteins::try_from_database_file_without_annotations(&database_file, &taxon_id_calculator)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    eprintln!("✅ Successfully loaded the proteins!");
 
-    // calculate sparse suffix array
+    eprintln!();
+    eprintln!("📋 Started building the suffix array...");
     let sa = build_ssa(&mut data, &construction_algorithm, sparseness_factor)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-
-    eprintln!("Suffix array constructed successfully.");
-    eprintln!("sa length: {}", sa.len());
+    eprintln!("✅ Successfully built the suffix array!");
+    eprintln!("\tAmount of items: {}", sa.len());
+    eprintln!("\tSample rate: {}", sparseness_factor);
 
     // open the output file
     let mut file =
         open_file(&output).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
+    eprintln!();
+    eprintln!("📋 Started dumping the suffix array...");
+
     if compress_sa {
         let bits_per_value = (data.len() as f64).log2().ceil() as usize;
-
-        eprintln!("Compressing suffix array with {} bits per value.", bits_per_value);
 
         if let Err(err) =
             dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file)
         {
             eprint_and_exit(err.to_string().as_str());
         };
-    } else if let Err(err) = dump_suffix_array(&sa, sparseness_factor, &mut file) {
-        eprint_and_exit(err.to_string().as_str());
+
+        eprintln!("✅ Successfully dumped the suffix array!");
+        eprintln!("\tAmount of bits per item: {}", bits_per_value);
+    } else {
+        if let Err(err) = dump_suffix_array(&sa, sparseness_factor, &mut file) {
+            eprint_and_exit(err.to_string().as_str());
+        }
+
+        eprintln!("✅ Successfully dumped the suffix array!");
+        eprintln!("\tAmount of bits per item: 64");
     }
 }
 

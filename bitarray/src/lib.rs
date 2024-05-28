@@ -120,6 +120,15 @@ impl BitArray {
         self.data[end_block] |= value << (64 - end_block_offset);
     }
 
+    /// Returns the number of bits in a single value.
+    ///
+    /// # Returns
+    ///
+    /// The number of bits in a single value.
+    pub fn bits_per_value(&self) -> usize {
+        self.bits_per_value
+    }
+
     /// Returns the length of the `BitArray`.
     ///
     /// # Returns
@@ -264,6 +273,12 @@ mod tests {
         bitarray.set(3, 0b0000100010010001010001001110101110011100);
 
         assert_eq!(bitarray.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
+    }
+
+    #[test]
+    fn test_bitarray_bits_per_value() {
+        let bitarray = BitArray::with_capacity(4, 40);
+        assert_eq!(bitarray.bits_per_value(), 40);
     }
 
     #[test]
