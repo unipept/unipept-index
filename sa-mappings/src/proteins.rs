@@ -10,7 +10,7 @@ use std::{
 };
 
 use bytelines::ByteLines;
-use fa_compression::algorithm1::decode;
+use fa_compression::algorithm1::{decode, encode};
 use umgap::taxon::TaxonId;
 
 use crate::taxonomy::TaxonAggregator;
@@ -84,7 +84,7 @@ impl Proteins {
             let uniprot_id = from_utf8(fields.next().unwrap())?;
             let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
             let sequence = from_utf8(fields.next().unwrap())?;
-            let functional_annotations: Vec<u8> = fields.next().unwrap().to_vec();
+            let functional_annotations: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
 
             if !taxon_aggregator.taxon_exists(taxon_id) {
                 continue;
