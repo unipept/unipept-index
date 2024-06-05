@@ -19,7 +19,8 @@ use crate::{
         Minimum
     },
     suffix_to_protein_index::SuffixToProteinIndex,
-    Nullable
+    Nullable,
+    SuffixArray
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -100,12 +101,11 @@ impl PartialEq for SearchAllSuffixesResult {
 /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
-    sa: Vec<i64>,
-    pub sparseness_factor: u8,
-    suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
-    proteins: Proteins,
-    taxon_id_calculator: TaxonAggregator,
-    function_aggregator: FunctionAggregator
+    pub sa: SuffixArray,
+    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
+    pub proteins: Proteins,
+    pub taxon_id_calculator: TaxonAggregator,
+    pub function_aggregator: FunctionAggregator
 }
 
 impl Searcher {
@@ -126,8 +126,7 @@ impl Searcher {
     ///
     /// Returns a new Searcher object
     pub fn new(
-        sa: Vec<i64>,
-        sparseness_factor: u8,
+        sa: SuffixArray,
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
         proteins: Proteins,
         taxon_id_calculator: TaxonAggregator,
@@ -135,7 +134,6 @@ impl Searcher {
     ) -> Self {
         Self {
             sa,
-            sparseness_factor,
             suffix_index_to_protein,
             proteins,
             taxon_id_calculator,
@@ -240,7 +238,8 @@ impl Searcher {
         while right - left > 1 {
             let center = (left + right) / 2;
             let skip = min(lcp_left, lcp_right);
-            let (retval, lcp_center) = self.compare(search_string, self.sa[center], skip, bound);
+            let (retval, lcp_center) =
+                self.compare(search_string, self.sa.get(center), skip, bound);
 
             found |= lcp_center == search_string.len();
 
@@ -258,7 +257,7 @@ impl Searcher {
         // handle edge case to search at index 0
         if right == 1 && left == 0 {
             let (retval, lcp_center) =
-                self.compare(search_string, self.sa[0], min(lcp_left, lcp_right), bound);
+                self.compare(search_string, self.sa.get(0), min(lcp_left, lcp_right), bound);
 
             found |= lcp_center == search_string.len();
 
@@ -322,7 +321,7 @@ impl Searcher {
         }
 
         let mut skip: usize = 0;
-        while skip < self.sparseness_factor as usize {
+        while skip < self.sa.sample_rate() as usize {
             let mut il_locations_start = 0;
             while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip
             {
@@ -339,7 +338,7 @@ impl Searcher {
                 // array (stop when our max number of matches is reached)
                 let mut sa_index = min_bound;
                 while sa_index < max_bound {
-                    let suffix = self.sa[sa_index] as usize;
+                    let suffix = self.sa.get(sa_index) as usize;
                     // filter away matches where I was wrongfully equalized to L, and check the
                     // unmatched prefix when I and L equalized, we only need to
                     // check the prefix, not the whole match, when the prefix is 0, we don't need to
@@ -549,19 +548,54 @@ impl Searcher {
 
 #[cfg(test)]
 mod tests {
-    use sa_mappings::functionality::FunctionAggregator;
-    use sa_mappings::proteins::{Protein, Proteins};
-    use sa_mappings::taxonomy::{AggregationMethod, TaxonAggregator};
-    use crate::sa_searcher::{
-        BoundSearchResult, SearchAllSuffixesResult, Searcher,
-    };
-    use crate::suffix_to_protein_index::SparseSuffixToProtein;
-    use tempdir::TempDir;
     use std::{
         fs::File,
         io::Write,
         path::PathBuf
     };
+
+    use sa_mappings::{
+        functionality::FunctionAggregator,
+        proteins::{
+            Protein,
+            Proteins
+        },
+        taxonomy::{
+            AggregationMethod,
+            TaxonAggregator
+        }
+    };
+    use tempdir::TempDir;
+
+    use crate::{
+        sa_searcher::{
+            BoundSearchResult,
+            SearchAllSuffixesResult,
+            Searcher
+        },
+        suffix_to_protein_index::SparseSuffixToProtein,
+        SuffixArray
+    };
+
+    #[test]
+    fn test_partial_eq_search_all_suffixes_result() {
+        let search_all_suffixes_result_1 = SearchAllSuffixesResult::SearchResult(vec![1, 2, 3]);
+        let search_all_suffixes_result_2 = SearchAllSuffixesResult::SearchResult(vec![3, 2, 1]);
+        let search_all_suffixes_result_3 = SearchAllSuffixesResult::SearchResult(vec![1, 2, 4]);
+        let search_all_suffixes_result_4 = SearchAllSuffixesResult::MaxMatches(vec![1, 2, 3]);
+        let search_all_suffixes_result_5 = SearchAllSuffixesResult::MaxMatches(vec![3, 2, 1]);
+        let search_all_suffixes_result_6 = SearchAllSuffixesResult::MaxMatches(vec![1, 2, 4]);
+        let search_all_suffixes_result_7 = SearchAllSuffixesResult::NoMatches;
+        let search_all_suffixes_result_8 = SearchAllSuffixesResult::NoMatches;
+
+        assert_eq!(search_all_suffixes_result_1, search_all_suffixes_result_2);
+        assert_ne!(search_all_suffixes_result_1, search_all_suffixes_result_3);
+        assert_eq!(search_all_suffixes_result_4, search_all_suffixes_result_5);
+        assert_ne!(search_all_suffixes_result_4, search_all_suffixes_result_6);
+        assert_eq!(search_all_suffixes_result_7, search_all_suffixes_result_8);
+        assert_ne!(search_all_suffixes_result_1, search_all_suffixes_result_7);
+        assert_ne!(search_all_suffixes_result_4, search_all_suffixes_result_7);
+    }
 
     fn create_taxonomy_file(tmp_dir: &TempDir) -> PathBuf {
         let taxonomy_file = tmp_dir.path().join("taxonomy.tsv");
@@ -585,52 +619,55 @@ mod tests {
         taxonomy_file
     }
 
-
     fn get_example_proteins() -> Proteins {
         let text = "AI-BLACVAA-AC-KCRLZ$".to_string().into_bytes();
         Proteins {
             input_string: text,
-            proteins: vec![
+            proteins:     vec![
                 Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![],
+                    uniprot_id:             String::new(),
+                    taxon_id:               0,
+                    functional_annotations: vec![]
                 },
                 Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![],
+                    uniprot_id:             String::new(),
+                    taxon_id:               0,
+                    functional_annotations: vec![]
                 },
                 Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![],
+                    uniprot_id:             String::new(),
+                    taxon_id:               0,
+                    functional_annotations: vec![]
                 },
                 Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![],
+                    uniprot_id:             String::new(),
+                    taxon_id:               0,
+                    functional_annotations: vec![]
                 },
-            ],
+            ]
         }
     }
 
     #[test]
     fn test_search_simple() {
         let proteins = get_example_proteins();
-        let sa = vec![
-            19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18,
-        ];
+        let sa = SuffixArray::Original(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        );
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -650,52 +687,53 @@ mod tests {
     #[test]
     fn test_search_sparse() {
         let proteins = get_example_proteins();
-        let sa = vec![9, 0, 3, 12, 15, 6, 18];
+        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            3,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         // search suffix 'VAA'
         let found_suffixes =
             searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![7])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
 
         // search suffix 'AC'
         let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![5, 11])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![5, 11]));
     }
 
     #[test]
     fn test_il_equality() {
         let proteins = get_example_proteins();
-        let sa = vec![
-            19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18,
-        ];
+        let sa = SuffixArray::Original(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        );
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -710,27 +748,27 @@ mod tests {
     #[test]
     fn test_il_equality_sparse() {
         let proteins = get_example_proteins();
-        let sa = vec![9, 0, 3, 12, 15, 6, 18];
+        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
         let searcher = Searcher::new(
             sa,
-            3,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         // search bounds 'RIZ' with equal I and L
         let found_suffixes =
             searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![16])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
         // search bounds 'RIZ' without equal I and L
         let found_suffixes =
@@ -745,32 +783,32 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+            proteins:     vec![Protein {
+                uniprot_id:             String::new(),
+                taxon_id:               0,
+                functional_annotations: vec![]
+            }]
         };
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = vec![0, 2, 4];
+        let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
         let searcher = Searcher::new(
             sparse_sa,
-            2,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'M'], usize::MAX, true);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![0])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0]));
     }
 
     #[test]
@@ -779,31 +817,31 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+            proteins:     vec![Protein {
+                uniprot_id:             String::new(),
+                taxon_id:               0,
+                functional_annotations: vec![]
+            }]
         };
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = vec![6, 0, 1, 5, 4, 3, 2];
+        let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
         let searcher = Searcher::new(
             sparse_sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
     }
 
     #[test]
@@ -812,31 +850,31 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+            proteins:     vec![Protein {
+                uniprot_id:             String::new(),
+                taxon_id:               0,
+                functional_annotations: vec![]
+            }]
         };
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = vec![6, 5, 4, 3, 2, 1, 0];
+        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let searcher = Searcher::new(
             sparse_sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
 
     #[test]
@@ -845,33 +883,33 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+            proteins:     vec![Protein {
+                uniprot_id:             String::new(),
+                taxon_id:               0,
+                functional_annotations: vec![]
+            }]
         };
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = vec![6, 4, 2, 0];
+        let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
         let searcher = Searcher::new(
             sparse_sa,
-            2,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, false);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![0, 1, 2])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2]));
     }
 
     #[test]
@@ -880,31 +918,31 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+            proteins:     vec![Protein {
+                uniprot_id:             String::new(),
+                taxon_id:               0,
+                functional_annotations: vec![]
+            }]
         };
 
         let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
         let taxonomy_file = create_taxonomy_file(&tmp_dir);
 
-        let sparse_sa = vec![6, 5, 4, 3, 2, 1, 0];
+        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let searcher = Searcher::new(
             sparse_sa,
-            1,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(taxonomy_file.to_str().unwrap(), AggregationMethod::LcaStar).unwrap(),
+            TaxonAggregator::try_from_taxonomy_file(
+                taxonomy_file.to_str().unwrap(),
+                AggregationMethod::LcaStar
+            )
+            .unwrap(),
             FunctionAggregator {}
         );
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
-        assert_eq!(
-            found_suffixes,
-            SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4])
-        );
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
 }

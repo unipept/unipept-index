@@ -70,7 +70,7 @@ pub fn search_proteins_for_peptide<'a>(
     let peptide = peptide.strip_suffix('\n').unwrap_or(peptide).to_uppercase();
 
     // words that are shorter than the sample rate are not searchable
-    if peptide.len() < searcher.sparseness_factor as usize {
+    if peptide.len() < searcher.sa.sample_rate() as usize {
         return None;
     }
 
@@ -84,6 +84,7 @@ pub fn search_proteins_for_peptide<'a>(
         }
         SearchAllSuffixesResult::SearchResult(matched_suffixes) => matched_suffixes,
         SearchAllSuffixesResult::NoMatches => {
+            eprintln!("No matches found for peptide: {}", peptide);
             return None;
         }
     };
@@ -275,5 +276,74 @@ pub fn search_all_peptides(
 
     OutputData {
         result: res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_json_eq(generated_json: &str, expected_json: &str) {
+        assert_eq!(
+            generated_json.parse::<serde_json::Value>().unwrap(),
+            expected_json.parse::<serde_json::Value>().unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_serialize_output_data() {
+        let output_data = OutputData {
+            result: vec![1, 2, 3]
+        };
+
+        let generated_json = serde_json::to_string(&output_data).unwrap();
+        let expected_json = "{\"result\":[1,2,3]}";
+
+        assert_json_eq(&generated_json, expected_json);
+    }
+
+    #[test]
+    fn test_serialize_search_result_with_analysis() {
+        let search_result = SearchResultWithAnalysis {
+            sequence: "MSKIAALLPSV".to_string(),
+            lca: Some(1),
+            taxa: vec![1, 2, 3],
+            uniprot_accession_numbers: vec!["P12345".to_string(), "P23456".to_string()],
+            fa: None,
+            cutoff_used: true
+        };
+
+        let generated_json = serde_json::to_string(&search_result).unwrap();
+        let expected_json = "{\"sequence\":\"MSKIAALLPSV\",\"lca\":1,\"taxa\":[1,2,3],\"uniprot_accession_numbers\":[\"P12345\",\"P23456\"],\"fa\":null,\"cutoff_used\":true}";
+
+        assert_json_eq(&generated_json, expected_json);
+    }
+
+    #[test]
+    fn test_serialize_protein_info() {
+        let protein_info = ProteinInfo {
+            taxon:                  1,
+            uniprot_accession:      "P12345".to_string(),
+            functional_annotations: vec!["GO:0001234".to_string(), "GO:0005678".to_string()]
+        };
+
+        let generated_json = serde_json::to_string(&protein_info).unwrap();
+        let expected_json = "{\"taxon\":1,\"uniprot_accession\":\"P12345\",\"functional_annotations\":[\"GO:0001234\",\"GO:0005678\"]}";
+
+        assert_json_eq(&generated_json, expected_json);
+    }
+
+    #[test]
+    fn test_serialize_search_only_result() {
+        let search_result = SearchOnlyResult {
+            sequence:    "MSKIAALLPSV".to_string(),
+            proteins:    vec![],
+            cutoff_used: true
+        };
+
+        let generated_json = serde_json::to_string(&search_result).unwrap();
+        let expected_json = "{\"sequence\":\"MSKIAALLPSV\",\"proteins\":[],\"cutoff_used\":true}";
+
+        assert_json_eq(&generated_json, expected_json);
     }
 }

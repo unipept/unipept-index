@@ -15,6 +15,7 @@ use umgap::{
     },
     taxon::{
         read_taxa_file,
+        Taxon,
         TaxonId,
         TaxonList,
         TaxonTree
@@ -24,11 +25,9 @@ use umgap::{
 /// A struct that represents a taxon aggregator.
 pub struct TaxonAggregator {
     /// A vector that contains the snapped taxon IDs.
-    snapping: Vec<Option<TaxonId>>,
-
+    snapping:   Vec<Option<TaxonId>>,
     /// The aggregator used to aggregate taxon IDs.
     aggregator: Box<dyn MultiThreadSafeAggregator>,
-
     /// The taxon list.
     taxon_list: TaxonList
 }
@@ -43,6 +42,33 @@ pub enum AggregationMethod {
 }
 
 impl TaxonAggregator {
+    /// Creates a new `TaxonAggregator` with the given taxa and aggregation method.
+    ///
+    /// # Arguments
+    ///
+    /// * `taxa` - A vector of `Taxon` objects representing the taxa.
+    /// * `method` - An `AggregationMethod` enum specifying the aggregation method to use.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `TaxonAggregator` instance.
+    pub fn new(taxa: Vec<Taxon>, method: AggregationMethod) -> Self {
+        let taxon_tree = TaxonTree::new(&taxa);
+        let taxon_list = TaxonList::new(taxa);
+        let snapping = taxon_tree.snapping(&taxon_list, true);
+
+        let aggregator: Box<dyn MultiThreadSafeAggregator> = match method {
+            AggregationMethod::Lca => Box::new(MixCalculator::new(taxon_tree, 1.0)),
+            AggregationMethod::LcaStar => Box::new(LCACalculator::new(taxon_tree))
+        };
+
+        Self {
+            snapping,
+            aggregator,
+            taxon_list
+        }
+    }
+
     /// Creates a new `TaxonAggregator` from a taxonomy file and an aggregation method.
     ///
     /// # Arguments
@@ -62,20 +88,7 @@ impl TaxonAggregator {
         method: AggregationMethod
     ) -> Result<Self, Box<dyn Error>> {
         let taxons = read_taxa_file(file)?;
-        let taxon_tree = TaxonTree::new(&taxons);
-        let taxon_list = TaxonList::new(taxons);
-        let snapping = taxon_tree.snapping(&taxon_list, true);
-
-        let aggregator: Box<dyn MultiThreadSafeAggregator> = match method {
-            AggregationMethod::Lca => Box::new(MixCalculator::new(taxon_tree, 1.0)),
-            AggregationMethod::LcaStar => Box::new(LCACalculator::new(taxon_tree))
-        };
-
-        Ok(Self {
-            snapping,
-            aggregator,
-            taxon_list
-        })
+        Ok(Self::new(taxons, method))
     }
 
     /// Checks if a taxon exists in the taxon list.
@@ -157,6 +170,7 @@ mod tests {
     };
 
     use tempdir::TempDir;
+    use umgap::rank::Rank;
 
     use super::*;
 
@@ -181,6 +195,30 @@ mod tests {
         writeln!(file, "21\tInvalid\tspecies\t19\t\x00").unwrap();
 
         taxonomy_file
+    }
+
+    #[test]
+    fn test_new() {
+        TaxonAggregator::new(
+            vec![
+                Taxon::new(1, "root".to_string(), Rank::NoRank, 1, true),
+                Taxon::new(2, "Bacteria".to_string(), Rank::Superkingdom, 1, true),
+                Taxon::new(6, "Azorhizobium".to_string(), Rank::Genus, 1, true),
+                Taxon::new(7, "Azorhizobium caulinodans".to_string(), Rank::Species, 6, true),
+                Taxon::new(9, "Buchnera aphidicola".to_string(), Rank::Species, 6, true),
+                Taxon::new(10, "Cellvibrio".to_string(), Rank::Genus, 6, true),
+                Taxon::new(11, "Cellulomonas gilvus".to_string(), Rank::Species, 10, true),
+                Taxon::new(13, "Dictyoglomus".to_string(), Rank::Genus, 11, true),
+                Taxon::new(14, "Dictyoglomus thermophilum".to_string(), Rank::Species, 10, true),
+                Taxon::new(16, "Methylophilus".to_string(), Rank::Genus, 14, true),
+                Taxon::new(17, "Methylophilus methylotrophus".to_string(), Rank::Species, 16, true),
+                Taxon::new(18, "Pelobacter".to_string(), Rank::Genus, 17, true),
+                Taxon::new(19, "Syntrophotalea carbinolica".to_string(), Rank::Species, 17, true),
+                Taxon::new(20, "Phenylobacterium".to_string(), Rank::Genus, 19, true),
+                Taxon::new(21, "Invalid".to_string(), Rank::Species, 19, false),
+            ],
+            AggregationMethod::Lca
+        );
     }
 
     #[test]

@@ -13,3 +13,4 @@ sa-index = { path = "../sa-index" }
 clap = { version = "4.5.1", features = ["derive"] }
 sa-builder = { path = "../sa-builder" }
 sa-mappings = { path = "../sa-mappings" }
+sa-compression = { path = "../sa-compression" }

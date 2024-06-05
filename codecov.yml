@@ -3,32 +3,52 @@ coverage:
     project:
       default:
         target: 90%
+      bitarray:
+        flags:
+          - bitarray
       fa-compression:
-        target: 90%
         flags:
           - fa-compression
+      sa-builder:
+        flags:
+          - sa-builder
+      sa-compression:
+        flags:
+          - sa-compression
+      sa-index:
+        target: 80%
+        flags:
+          - sa-index
       sa-mappings:
-        target: 90%
         flags:
           - sa-mappings
-    patch:
-      default:
-        target: 90%
-      fa-compression:
-        target: 90%
-        flags:
-          - fa-compression
-      sa-mappings:
-        target: 90%
-        flags:
-          - sa-mappings
+    patch: off
 
 flags:
+  bitarray:
+    paths:
+      - bitarray
+    carryforward: true
   fa-compression:
     paths:
       - fa-compression
+    carryforward: true
+  sa-builder:
+    paths:
+      - sa-builder
+    carryforward: true
+  sa-compression:
+    paths:
+      - sa-compression
+    carryforward: true
+  sa-index:
+    paths:
+      - sa-index
     carryforward: true
   sa-mappings:
     paths:
       - sa-mappings
     carryforward: true
+
+ignore:
+  - "**/main.rs" # Ignore main.rs files

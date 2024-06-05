@@ -14,9 +14,9 @@ use crate::proteins::Protein;
 #[derive(Debug, Serialize)]
 pub struct FunctionalAggregation {
     /// A HashMap representing how many GO, EC and IPR terms were found
-    pub counts: HashMap<String, usize>,
+    counts: HashMap<String, usize>,
     /// A HashMap representing how often a certain functional annotation was found
-    pub data:   HashMap<String, u32>
+    data:   HashMap<String, u32>
 }
 
 /// A struct that represents a function aggregator
@@ -32,6 +32,9 @@ impl FunctionAggregator {
     ///
     /// Returns a JSON string containing the aggregated functional annotations
     pub fn aggregate(&self, proteins: Vec<&Protein>) -> FunctionalAggregation {
+        // Keep track of the proteins that have any annotation
+        let mut proteins_with_annotations: HashSet<String> = HashSet::new();
+
         // Keep track of the proteins that have a certain annotation
         let mut proteins_with_ec: HashSet<String> = HashSet::new();
         let mut proteins_with_go: HashSet<String> = HashSet::new();
@@ -43,10 +46,19 @@ impl FunctionAggregator {
         for protein in proteins.iter() {
             for annotation in protein.get_functional_annotations().split(';') {
                 match annotation.chars().next() {
-                    Some('E') => proteins_with_ec.insert(protein.uniprot_id.clone()),
-                    Some('G') => proteins_with_go.insert(protein.uniprot_id.clone()),
-                    Some('I') => proteins_with_ipr.insert(protein.uniprot_id.clone()),
-                    _ => false
+                    Some('E') => {
+                        proteins_with_ec.insert(protein.uniprot_id.clone());
+                        proteins_with_annotations.insert(protein.uniprot_id.clone());
+                    }
+                    Some('G') => {
+                        proteins_with_go.insert(protein.uniprot_id.clone());
+                        proteins_with_annotations.insert(protein.uniprot_id.clone());
+                    }
+                    Some('I') => {
+                        proteins_with_ipr.insert(protein.uniprot_id.clone());
+                        proteins_with_annotations.insert(protein.uniprot_id.clone());
+                    }
+                    _ => {}
                 };
 
                 data.entry(annotation.to_string())
@@ -56,7 +68,7 @@ impl FunctionAggregator {
         }
 
         let mut counts: HashMap<String, usize> = HashMap::new();
-        counts.insert("all".to_string(), proteins.len());
+        counts.insert("all".to_string(), proteins_with_annotations.len());
         counts.insert("EC".to_string(), proteins_with_ec.len());
         counts.insert("GO".to_string(), proteins_with_go.len());
         counts.insert("IPR".to_string(), proteins_with_ipr.len());
@@ -100,30 +112,51 @@ mod tests {
     #[test]
     fn test_aggregate() {
         let mut proteins: Vec<Protein> = Vec::new();
-        proteins.push(Protein {
+
+        let protein1 = Protein {
             uniprot_id:             "P12345".to_string(),
             taxon_id:               9606,
             functional_annotations: encode("GO:0001234;GO:0005678")
-        });
-        proteins.push(Protein {
+        };
+        let protein2 = Protein {
             uniprot_id:             "P23456".to_string(),
             taxon_id:               9606,
             functional_annotations: encode("EC:1.1.1.-")
-        });
+        };
+        let protein3 = Protein {
+            uniprot_id:             "P23876".to_string(),
+            taxon_id:               9606,
+            functional_annotations: encode("IPR:IPR123456;EC:1.1.1.-")
+        };
+        let protein4 = Protein {
+            uniprot_id:             "P23877".to_string(),
+            taxon_id:               9606,
+            functional_annotations: encode("2345")
+        };
+
+        proteins.push(protein1);
+        proteins.push(protein2);
+        proteins.push(protein3);
+        proteins.push(protein4);
 
         let function_aggregator = FunctionAggregator {};
 
         let result = function_aggregator.aggregate(proteins.iter().collect());
 
-        assert_eq!(result.counts.get("all"), Some(&2));
-        assert_eq!(result.counts.get("EC"), Some(&1));
+        assert_eq!(result.counts.get("all"), Some(&3));
+        assert_eq!(result.counts.get("EC"), Some(&2));
         assert_eq!(result.counts.get("GO"), Some(&1));
-        assert_eq!(result.counts.get("IPR"), Some(&0));
+        assert_eq!(result.counts.get("IPR"), Some(&1));
         assert_eq!(result.counts.get("NOTHING"), None);
 
-        assert_eq!(result.data.get("GO:0001234"), Some(&1));
-        assert_eq!(result.data.get("GO:0005678"), Some(&1));
-        assert_eq!(result.data.get("EC:1.1.1.-"), Some(&1));
+        assert_eq!(result.data, {
+            let mut map = HashMap::new();
+            map.insert("GO:0001234".to_string(), 1);
+            map.insert("GO:0005678".to_string(), 1);
+            map.insert("EC:1.1.1.-".to_string(), 2);
+            map.insert("IPR:IPR123456".to_string(), 1);
+            map
+        });
         assert_eq!(result.data.get("EC:1.1.2.-"), None);
     }
 
@@ -141,17 +174,24 @@ mod tests {
             taxon_id:               9606,
             functional_annotations: encode("EC:1.1.1.-")
         };
+        let protein3 = Protein {
+            uniprot_id:             "P23876".to_string(),
+            taxon_id:               9606,
+            functional_annotations: encode("IPR:IPR123456;EC:1.1.1.-")
+        };
 
         proteins.push(&protein1);
         proteins.push(&protein2);
+        proteins.push(&protein3);
 
         let function_aggregator = FunctionAggregator {};
 
         let result = function_aggregator.get_all_functional_annotations(proteins.as_slice());
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 3);
         assert_eq!(result[0].len(), 2);
         assert_eq!(result[1].len(), 1);
+        assert_eq!(result[2].len(), 2);
     }
 
     #[test]

@@ -10,7 +10,10 @@ use std::{
 };
 
 use bytelines::ByteLines;
-use fa_compression::algorithm1::decode;
+use fa_compression::algorithm1::{
+    decode,
+    encode
+};
 use umgap::taxon::TaxonId;
 
 use crate::taxonomy::TaxonAggregator;
@@ -84,7 +87,7 @@ impl Proteins {
             let uniprot_id = from_utf8(fields.next().unwrap())?;
             let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
             let sequence = from_utf8(fields.next().unwrap())?;
-            let functional_annotations: Vec<u8> = fields.next().unwrap().to_vec();
+            let functional_annotations: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
 
             if !taxon_aggregator.taxon_exists(taxon_id) {
                 continue;
@@ -185,26 +188,21 @@ mod tests {
         let database_file = tmp_dir.path().join("database.tsv");
         let mut file = File::create(&database_file).unwrap();
 
-        file.write("P12345\t1\tMLPGLALLLLAAWTARALEV\t".as_bytes())
+        file.write(
+            "P12345\t1\tMLPGLALLLLAAWTARALEV\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()
+        )
+        .unwrap();
+        file.write(
+            "P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n"
+                .as_bytes()
+        )
+        .unwrap();
+        file.write(
+            "P67890\t6\tKWDSDPSGTKTCIDT\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()
+        )
+        .unwrap();
+        file.write("P13579\t17\tKEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
             .unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
-            .unwrap();
-        file.write("\n".as_bytes()).unwrap();
-        file.write("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\t".as_bytes())
-            .unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
-            .unwrap();
-        file.write("\n".as_bytes()).unwrap();
-        file.write("P67890\t6\tKWDSDPSGTKTCIDT\t".as_bytes())
-            .unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
-            .unwrap();
-        file.write("\n".as_bytes()).unwrap();
-        file.write("P13579\t17\tKEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH\t".as_bytes())
-            .unwrap();
-        file.write_all(&[0xD1, 0x11, 0xA3, 0x8A, 0xD1, 0x27, 0x47, 0x5E, 0x11, 0x99, 0x27])
-            .unwrap();
-        file.write("\n".as_bytes()).unwrap();
 
         database_file
     }

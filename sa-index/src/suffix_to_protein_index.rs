@@ -116,6 +116,7 @@ impl SparseSuffixToProtein {
 
 #[cfg(test)]
 mod tests {
+    use clap::ValueEnum;
     use sa_mappings::proteins::{
         SEPARATION_CHARACTER,
         TERMINATION_CHARACTER
@@ -125,7 +126,8 @@ mod tests {
         suffix_to_protein_index::{
             DenseSuffixToProtein,
             SparseSuffixToProtein,
-            SuffixToProteinIndex
+            SuffixToProteinIndex,
+            SuffixToProteinMappingStyle
         },
         Nullable
     };
@@ -134,6 +136,18 @@ mod tests {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
         text.push(TERMINATION_CHARACTER as char);
         text.into_bytes()
+    }
+
+    #[test]
+    fn test_suffix_to_protein_mapping_style() {
+        assert_eq!(
+            SuffixToProteinMappingStyle::Dense,
+            SuffixToProteinMappingStyle::from_str("dense", false).unwrap()
+        );
+        assert_eq!(
+            SuffixToProteinMappingStyle::Sparse,
+            SuffixToProteinMappingStyle::from_str("sparse", false).unwrap()
+        );
     }
 
     #[test]

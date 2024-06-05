@@ -1,5 +1,10 @@
 use std::{
     error::Error,
+    fs::File,
+    io::{
+        BufReader,
+        Read
+    },
     sync::Arc
 };
 
@@ -17,8 +22,9 @@ use axum::{
     Router
 };
 use clap::Parser;
-use sa_builder::binary::load_suffix_array;
+use sa_compression::load_compressed_suffix_array;
 use sa_index::{
+    binary::load_suffix_array,
     peptide_search::{
         analyse_all_peptides,
         search_all_peptides,
@@ -27,7 +33,8 @@ use sa_index::{
         SearchResultWithAnalysis
     },
     sa_searcher::Searcher,
-    suffix_to_protein_index::SparseSuffixToProtein
+    suffix_to_protein_index::SparseSuffixToProtein,
+    SuffixArray
 };
 use sa_mappings::{
     functionality::FunctionAggregator,
@@ -168,23 +175,34 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         taxonomy
     } = args;
 
-    eprintln!("Loading suffix array...");
-    let (sparseness_factor, sa) = load_suffix_array(&index_file)?;
+    eprintln!();
+    eprintln!("📋 Started loading the suffix array...");
+    let sa = load_suffix_array_file(&index_file)?;
+    eprintln!("✅ Successfully loaded the suffix array!");
+    eprintln!("\tAmount of items: {}", sa.len());
+    eprintln!("\tAmount of bits per item: {}", sa.bits_per_value());
+    eprintln!("\tSample rate: {}", sa.sample_rate());
 
-    eprintln!("Loading taxon file...");
+    eprintln!();
+    eprintln!("📋 Started loading the taxon file...");
     let taxon_id_calculator =
         TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)?;
+    eprintln!("✅ Successfully loaded the taxon file!");
+    eprintln!("\tAggregation method: LCA*");
 
+    eprintln!();
+    eprintln!("📋 Started creating the function aggregator...");
     let function_aggregator = FunctionAggregator {};
+    eprintln!("✅ Successfully created the function aggregator!");
 
-    eprintln!("Loading proteins...");
+    eprintln!();
+    eprintln!("📋 Started loading the proteins...");
     let proteins = Proteins::try_from_database_file(&database_file, &taxon_id_calculator)?;
     let suffix_index_to_protein = Box::new(SparseSuffixToProtein::new(&proteins.input_string));
+    eprintln!("✅ Successfully loaded the proteins!");
 
-    eprintln!("Creating searcher...");
     let searcher = Arc::new(Searcher::new(
         sa,
-        sparseness_factor,
         suffix_index_to_protein,
         proteins,
         taxon_id_calculator,
@@ -205,8 +223,31 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         .with_state(searcher);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    println!("server is ready...");
+
+    eprintln!();
+    eprintln!("🚀 Server is ready...");
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn load_suffix_array_file(file: &str) -> Result<SuffixArray, Box<dyn Error>> {
+    // Open the suffix array file
+    let mut sa_file = File::open(file)?;
+
+    // Create a buffer reader for the file
+    let mut reader = BufReader::new(&mut sa_file);
+
+    // Read the bits per value from the binary file (1 byte)
+    let mut bits_per_value_buffer = [0_u8; 1];
+    reader
+        .read_exact(&mut bits_per_value_buffer)
+        .map_err(|_| "Could not read the flags from the binary file")?;
+    let bits_per_value = bits_per_value_buffer[0];
+
+    if bits_per_value == 64 {
+        load_suffix_array(&mut reader)
+    } else {
+        load_compressed_suffix_array(&mut reader, bits_per_value as usize)
+    }
 }
