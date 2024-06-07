@@ -1,9 +1,11 @@
 [workspace]
 resolver = "2"
 
-members = [ 
+members = [ "bitarray",
     "fa-compression",
-    "sa-builder",
+    "libsais64-rs",
+    "sa-builder", "sa-compression",
     "sa-index",
-    "sa-mappings"
-, "sa-server"]
+    "sa-mappings",
+    "sa-server"
+]
