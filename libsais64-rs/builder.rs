@@ -57,6 +57,15 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // remove the old libsais folder
+    Command::new("rm").args(["-rf", "libsais"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
+
+    // clone the c library
+    Command::new("git")
+        .args(["clone", "https://github.com/IlyaGrebnov/libsais.git", "--depth=1"])
+        .status()
+        .expect("Failed to clone the libsais repository");
+
     // compile the c library
     Command::new("rm")
         .args(["libsais/CMakeCache.txt"])

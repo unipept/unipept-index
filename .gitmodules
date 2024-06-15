@@ -1,4 +1,0 @@
-[submodule "libsais64-rs/libsais"]
-	path = libsais64-rs/libsais
-	url = https://github.com/IlyaGrebnov/libsais.git
-	ignore = untracked

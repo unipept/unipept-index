@@ -1,4 +1,6 @@
 target/
 data/
 
+libsais64-rs/libsais
+
 .DS_Store
