@@ -5,7 +5,7 @@ use std::{
         Display,
         Formatter
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{
         Command,
         ExitStatus
@@ -80,7 +80,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit_status_to_result("make", Command::new("make").args(["-C", "libsais"]).status()?)?;
 
     // link the c libsais library to rust
-    println!("cargo:rustc-link-search=native=libsais64-rs/libsais");
+    let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais").display());
     println!("cargo:rustc-link-lib=static=libsais");
 
     // The bindgen::Builder is the main entry point
