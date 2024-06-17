@@ -14,9 +14,9 @@ use crate::proteins::Protein;
 #[derive(Debug, Serialize)]
 pub struct FunctionalAggregation {
     /// A HashMap representing how many GO, EC and IPR terms were found
-    counts: HashMap<String, usize>,
+    pub counts: HashMap<String, usize>,
     /// A HashMap representing how often a certain functional annotation was found
-    data:   HashMap<String, u32>
+    pub data:   HashMap<String, u32>
 }
 
 /// A struct that represents a function aggregator
