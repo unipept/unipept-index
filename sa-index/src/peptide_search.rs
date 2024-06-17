@@ -13,34 +13,34 @@ use crate::sa_searcher::{
 /// Struct representing a collection of `SearchResultWithAnalysis` or `SearchOnlyResult` results
 #[derive(Debug, Serialize)]
 pub struct OutputData<T: Serialize> {
-    result: Vec<T>
+    pub result: Vec<T>
 }
 
 /// Struct representing the search result of the `sequence` in the index, including the analyses
 #[derive(Debug, Serialize)]
 pub struct SearchResultWithAnalysis {
-    sequence: String,
-    lca: Option<usize>,
-    taxa: Vec<usize>,
-    uniprot_accession_numbers: Vec<String>,
-    fa: Option<FunctionalAggregation>,
-    cutoff_used: bool
+    pub sequence: String,
+    pub lca: Option<usize>,
+    pub taxa: Vec<usize>,
+    pub uniprot_accession_numbers: Vec<String>,
+    pub fa: Option<FunctionalAggregation>,
+    pub cutoff_used: bool
 }
 
 /// Struct representing the search result of the `sequence` in the index (without the analyses)
 #[derive(Debug, Serialize)]
 pub struct SearchOnlyResult {
-    sequence:    String,
-    proteins:    Vec<ProteinInfo>,
-    cutoff_used: bool
+    pub sequence:    String,
+    pub proteins:    Vec<ProteinInfo>,
+    pub cutoff_used: bool
 }
 
 /// Struct that represents all information known about a certain protein in our database
 #[derive(Debug, Serialize)]
 pub struct ProteinInfo {
-    taxon:                  usize,
-    uniprot_accession:      String,
-    functional_annotations: Vec<String>
+    pub taxon:                  usize,
+    pub uniprot_accession:      String,
+    pub functional_annotations: Vec<String>
 }
 
 /// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
