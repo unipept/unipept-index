@@ -24,7 +24,7 @@ module swap cluster/gallade
 #PBS -o stdout.$PBS_JOBID
 #PBS -e stderr.$PBS_JOBID
 
-prefix="$VSC_DATA_VO/bram/"
+prefix="/kyukon/data/gent/vo/000/gvo00038/suffix-array"
 
 # load Rust
 module load Rust/1.75.0-GCCcore-12.3.0
@@ -38,4 +38,4 @@ cd $PBS_O_WORKDIR
 cargo build --release
 
 # execute
-./target/release/suffixarray_builder -d "$prefix"uniprot_protein_database_minimal.tsv -t "$prefix"taxons.tsv --sparseness-factor 3 --construction-algorithm lib-div-suf-sort -o "$prefix"uniprot_suffix_array_sparse3.bin
+./target/release/sa-builder -d "$prefix"/proteins.tsv -t "$prefix"/taxons.tsv -o "$prefix"/sa_sparse3_compressed.bin -s 3 -a lib-div-suf-sort -c
