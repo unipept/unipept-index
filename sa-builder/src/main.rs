@@ -3,7 +3,7 @@ use std::{
         File,
         OpenOptions
     },
-    io::Result
+    io::{BufWriter, Result}
 };
 
 use clap::Parser;
@@ -56,7 +56,7 @@ fn main() {
 
     // open the output file
     let mut file =
-        open_file(&output).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        open_file_buffer(&output, 100 * 1024 * 1024).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     eprintln!();
     eprintln!("📋 Started dumping the suffix array...");
@@ -82,12 +82,14 @@ fn main() {
     }
 }
 
-fn open_file(file: &str) -> Result<File> {
-    OpenOptions::new()
+fn open_file_buffer(file: &str, buffer_size: usize) -> Result<BufWriter<File>> {
+    let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true) // if the file already exists, empty the file
-        .open(file)
+        .open(file)?;
+
+    Ok(BufWriter::with_capacity(buffer_size, file))
 }
 
 fn eprint_and_exit(err: &str) -> ! {
