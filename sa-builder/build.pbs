@@ -6,7 +6,7 @@
 ### how to use:                                                                                       ###
 ### 1) Swap to the high-memory gallade cluster by executing `module swap cluster/gallade`             ###
 ### 2) Navigate the to root of the project                                                            ###
-### 3) Submit the job to the queue with `qsub suffixarray/build_suffix_array.pbs`                     ###
+### 3) Submit the job to the queue with `qsub sa-builder/build.pbs`                                   ###
 #########################################################################################################
 
 # go to cluster with high memory
@@ -17,7 +17,7 @@ module swap cluster/gallade
 #PBS -l walltime=10:00:00
 #PBS -l mem=750gb
 # ask for 1 node, 1 cpu (not more needed since we don't have parallelism)
-#PBS -l nodes=1:ppn=1
+#PBS -l nodes=1:ppn=all
 #PBS -N suffix_array_construction_uniprot
 
 # define output and error files
