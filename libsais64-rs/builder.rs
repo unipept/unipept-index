@@ -5,7 +5,10 @@ use std::{
         Display,
         Formatter
     },
-    path::{Path, PathBuf},
+    path::{
+        Path,
+        PathBuf
+    },
     process::{
         Command,
         ExitStatus
@@ -58,7 +61,10 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
 
 fn main() -> Result<(), Box<dyn Error>> {
     // remove the old libsais folder
-    Command::new("rm").args(["-rf", "libsais"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
+    Command::new("rm")
+        .args(["-rf", "libsais"])
+        .status()
+        .unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
 
     // clone the c library
     Command::new("git")

@@ -3,7 +3,12 @@ use std::{
         File,
         OpenOptions
     },
-    io::BufWriter, time::{SystemTime, SystemTimeError, UNIX_EPOCH}
+    io::BufWriter,
+    time::{
+        SystemTime,
+        SystemTimeError,
+        UNIX_EPOCH
+    }
 };
 
 use clap::Parser;
@@ -37,7 +42,10 @@ fn main() {
     let taxon_id_calculator =
         TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-    eprintln!("✅ Successfully loaded the taxon file in {} seconds!", (get_time_ms().unwrap() - start_taxon_time) / 1000.0);
+    eprintln!(
+        "✅ Successfully loaded the taxon file in {} seconds!",
+        (get_time_ms().unwrap() - start_taxon_time) / 1000.0
+    );
     eprintln!("\tAggregation method: LCA*");
 
     eprintln!();
@@ -46,20 +54,26 @@ fn main() {
     let mut data =
         Proteins::try_from_database_file_without_annotations(&database_file, &taxon_id_calculator)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-    eprintln!("✅ Successfully loaded the proteins in {} seconds!", (get_time_ms().unwrap() - start_proteins_time) / 1000.0);
+    eprintln!(
+        "✅ Successfully loaded the proteins in {} seconds!",
+        (get_time_ms().unwrap() - start_proteins_time) / 1000.0
+    );
 
     eprintln!();
     eprintln!("📋 Started building the suffix array...");
     let start_ssa_time = get_time_ms().unwrap();
     let sa = build_ssa(&mut data, &construction_algorithm, sparseness_factor)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-    eprintln!("✅ Successfully built the suffix array in {} seconds!", (get_time_ms().unwrap() - start_ssa_time) / 1000.0);
+    eprintln!(
+        "✅ Successfully built the suffix array in {} seconds!",
+        (get_time_ms().unwrap() - start_ssa_time) / 1000.0
+    );
     eprintln!("\tAmount of items: {}", sa.len());
     eprintln!("\tSample rate: {}", sparseness_factor);
 
     // open the output file
-    let mut file =
-        open_file_buffer(&output, 100 * 1024 * 1024).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    let mut file = open_file_buffer(&output, 100 * 1024 * 1024)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     eprintln!();
     eprintln!("📋 Started dumping the suffix array...");
@@ -74,14 +88,20 @@ fn main() {
             eprint_and_exit(err.to_string().as_str());
         };
 
-        eprintln!("✅ Successfully dumped the suffix array in {} seconds!", (get_time_ms().unwrap() - start_dump_time) / 1000.0);
+        eprintln!(
+            "✅ Successfully dumped the suffix array in {} seconds!",
+            (get_time_ms().unwrap() - start_dump_time) / 1000.0
+        );
         eprintln!("\tAmount of bits per item: {}", bits_per_value);
     } else {
         if let Err(err) = dump_suffix_array(&sa, sparseness_factor, &mut file) {
             eprint_and_exit(err.to_string().as_str());
         }
 
-        eprintln!("✅ Successfully dumped the suffix array in {} seconds!", (get_time_ms().unwrap() - start_dump_time) / 1000.0);
+        eprintln!(
+            "✅ Successfully dumped the suffix array in {} seconds!",
+            (get_time_ms().unwrap() - start_dump_time) / 1000.0
+        );
         eprintln!("\tAmount of bits per item: 64");
     }
 }
