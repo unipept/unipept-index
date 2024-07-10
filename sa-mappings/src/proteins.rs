@@ -14,9 +14,6 @@ use fa_compression::algorithm1::{
     decode,
     encode
 };
-use umgap::taxon::TaxonId;
-
-use crate::taxonomy::TaxonAggregator;
 
 /// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
@@ -31,7 +28,7 @@ pub struct Protein {
     pub uniprot_id: String,
 
     /// the taxon id of the protein
-    pub taxon_id: TaxonId,
+    pub taxon_id: u32,
 
     /// The encoded functional annotations of the protein
     pub functional_annotations: Vec<u8>
@@ -68,8 +65,7 @@ impl Proteins {
     ///
     /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
     pub fn try_from_database_file(
-        file: &str,
-        taxon_aggregator: &TaxonAggregator
+        file: &str
     ) -> Result<Self, Box<dyn Error>> {
         let mut input_string: String = String::new();
         let mut proteins: Vec<Protein> = Vec::new();
@@ -85,13 +81,9 @@ impl Proteins {
 
             // uniprot_id, taxon_id and sequence should always contain valid utf8
             let uniprot_id = from_utf8(fields.next().unwrap())?;
-            let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
+            let taxon_id = from_utf8(fields.next().unwrap())?.parse()?;
             let sequence = from_utf8(fields.next().unwrap())?;
             let functional_annotations: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
-
-            if !taxon_aggregator.taxon_exists(taxon_id) {
-                continue;
-            }
 
             input_string.push_str(&sequence.to_uppercase());
             input_string.push(SEPARATION_CHARACTER.into());
@@ -127,8 +119,7 @@ impl Proteins {
     ///
     /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
     pub fn try_from_database_file_without_annotations(
-        database_file: &str,
-        taxon_aggregator: &TaxonAggregator
+        database_file: &str
     ) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut input_string: String = String::new();
 
@@ -142,14 +133,7 @@ impl Proteins {
             let mut fields = line.split(|b| *b == b'\t');
 
             // only get the taxon id and sequence from each line, we don't need the other parts
-            fields.next();
-            let taxon_id = from_utf8(fields.next().unwrap())?.parse::<TaxonId>()?;
-            let sequence = from_utf8(fields.next().unwrap())?;
-            fields.next();
-
-            if !taxon_aggregator.taxon_exists(taxon_id) {
-                continue;
-            }
+            let sequence = from_utf8(fields.nth(2).unwrap())?;
 
             input_string.push_str(&sequence.to_uppercase());
             input_string.push(SEPARATION_CHARACTER.into());
@@ -182,7 +166,6 @@ mod tests {
     use tempdir::TempDir;
 
     use super::*;
-    use crate::taxonomy::AggregationMethod;
 
     fn create_database_file(tmp_dir: &TempDir) -> PathBuf {
         let database_file = tmp_dir.path().join("database.tsv");
@@ -205,28 +188,6 @@ mod tests {
             .unwrap();
 
         database_file
-    }
-
-    fn create_taxonomy_file(tmp_dir: &TempDir) -> PathBuf {
-        let taxonomy_file = tmp_dir.path().join("taxonomy.tsv");
-        let mut file = File::create(&taxonomy_file).unwrap();
-
-        writeln!(file, "1\troot\tno rank\t1\t\x01").unwrap();
-        writeln!(file, "2\tBacteria\tsuperkingdom\t1\t\x01").unwrap();
-        writeln!(file, "6\tAzorhizobium\tgenus\t1\t\x01").unwrap();
-        writeln!(file, "7\tAzorhizobium caulinodans\tspecies\t6\t\x01").unwrap();
-        writeln!(file, "9\tBuchnera aphidicola\tspecies\t6\t\x01").unwrap();
-        writeln!(file, "10\tCellvibrio\tgenus\t6\t\x01").unwrap();
-        writeln!(file, "11\tCellulomonas gilvus\tspecies\t10\t\x01").unwrap();
-        writeln!(file, "13\tDictyoglomus\tgenus\t11\t\x01").unwrap();
-        writeln!(file, "14\tDictyoglomus thermophilum\tspecies\t10\t\x01").unwrap();
-        writeln!(file, "16\tMethylophilus\tgenus\t14\t\x01").unwrap();
-        writeln!(file, "17\tMethylophilus methylotrophus\tspecies\t16\t\x01").unwrap();
-        writeln!(file, "18\tPelobacter\tgenus\t17\t\x01").unwrap();
-        writeln!(file, "19\tSyntrophotalea carbinolica\tspecies\t17\t\x01").unwrap();
-        writeln!(file, "20\tPhenylobacterium\tgenus\t19\t\x01").unwrap();
-
-        taxonomy_file
     }
 
     #[test]
@@ -281,17 +242,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_get_taxon").unwrap();
 
         let database_file = create_database_file(&tmp_dir);
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
-        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
-            taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
-        )
-        .unwrap();
 
         let proteins =
-            Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
-                .unwrap();
+            Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
         let taxa = vec![1, 2, 6, 17];
         for (i, protein) in proteins.proteins.iter().enumerate() {
@@ -305,17 +258,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_get_fa").unwrap();
 
         let database_file = create_database_file(&tmp_dir);
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
-        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
-            taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
-        )
-        .unwrap();
 
         let proteins =
-            Proteins::try_from_database_file(database_file.to_str().unwrap(), &taxon_aggregator)
-                .unwrap();
+            Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
         for protein in proteins.proteins.iter() {
             assert_eq!(
@@ -331,17 +276,9 @@ mod tests {
         let tmp_dir = TempDir::new("test_get_fa").unwrap();
 
         let database_file = create_database_file(&tmp_dir);
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
-        let taxon_aggregator = TaxonAggregator::try_from_taxonomy_file(
-            taxonomy_file.to_str().unwrap(),
-            AggregationMethod::Lca
-        )
-        .unwrap();
 
         let proteins = Proteins::try_from_database_file_without_annotations(
-            database_file.to_str().unwrap(),
-            &taxon_aggregator
+            database_file.to_str().unwrap()
         )
         .unwrap();
 

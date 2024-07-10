@@ -8,10 +8,8 @@ use sa_mappings::{
     proteins::{
         Protein,
         Proteins
-    },
-    taxonomy::TaxonAggregator
+    }
 };
-use umgap::taxon::TaxonId;
 
 use crate::{
     sa_searcher::BoundSearch::{
@@ -104,7 +102,6 @@ pub struct Searcher {
     pub sa: SuffixArray,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     pub proteins: Proteins,
-    pub taxon_id_calculator: TaxonAggregator,
     pub function_aggregator: FunctionAggregator
 }
 
@@ -129,14 +126,12 @@ impl Searcher {
         sa: SuffixArray,
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
         proteins: Proteins,
-        taxon_id_calculator: TaxonAggregator,
         function_aggregator: FunctionAggregator
     ) -> Self {
         Self {
             sa,
             suffix_index_to_protein,
             proteins,
-            taxon_id_calculator,
             function_aggregator
         }
     }
@@ -490,35 +485,6 @@ impl Searcher {
         self.retrieve_proteins(&matching_suffixes)
     }
 
-    /// Retrieves the taxonomic analysis for a collection of proteins
-    ///
-    /// # Arguments
-    /// * `proteins` - A collection of proteins
-    ///
-    /// # Returns
-    ///
-    /// Returns the taxonomic analysis result for the given list of proteins
-    #[inline]
-    pub fn retrieve_lca(&self, proteins: &[&Protein]) -> Option<TaxonId> {
-        let taxon_ids: Vec<TaxonId> = proteins.iter().map(|prot| prot.taxon_id).collect();
-
-        self.taxon_id_calculator
-            .aggregate(taxon_ids)
-            .map(|id| self.taxon_id_calculator.snap_taxon(id))
-    }
-
-    /// Returns true if the protein is considered valid by the provided taxonomy file
-    ///
-    /// # Arguments
-    /// * `protein` - A protein of which we want to check the validity
-    ///
-    /// # Returns
-    ///
-    ///  Returns true if the protein is considered valid by the provided taxonomy file
-    pub fn taxon_valid(&self, protein: &Protein) -> bool {
-        self.taxon_id_calculator.taxon_valid(protein.taxon_id)
-    }
-
     /// Retrieves the functional analysis for a collection of proteins
     ///
     /// # Arguments
@@ -548,24 +514,13 @@ impl Searcher {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs::File,
-        io::Write,
-        path::PathBuf
-    };
-
     use sa_mappings::{
         functionality::FunctionAggregator,
         proteins::{
             Protein,
             Proteins
-        },
-        taxonomy::{
-            AggregationMethod,
-            TaxonAggregator
         }
     };
-    use tempdir::TempDir;
 
     use crate::{
         sa_searcher::{
@@ -595,28 +550,6 @@ mod tests {
         assert_eq!(search_all_suffixes_result_7, search_all_suffixes_result_8);
         assert_ne!(search_all_suffixes_result_1, search_all_suffixes_result_7);
         assert_ne!(search_all_suffixes_result_4, search_all_suffixes_result_7);
-    }
-
-    fn create_taxonomy_file(tmp_dir: &TempDir) -> PathBuf {
-        let taxonomy_file = tmp_dir.path().join("taxonomy.tsv");
-        let mut file = File::create(&taxonomy_file).unwrap();
-
-        writeln!(file, "1\troot\tno rank\t1\t\x01").unwrap();
-        writeln!(file, "2\tBacteria\tsuperkingdom\t1\t\x01").unwrap();
-        writeln!(file, "6\tAzorhizobium\tgenus\t1\t\x01").unwrap();
-        writeln!(file, "7\tAzorhizobium caulinodans\tspecies\t6\t\x01").unwrap();
-        writeln!(file, "9\tBuchnera aphidicola\tspecies\t6\t\x01").unwrap();
-        writeln!(file, "10\tCellvibrio\tgenus\t6\t\x01").unwrap();
-        writeln!(file, "11\tCellulomonas gilvus\tspecies\t10\t\x01").unwrap();
-        writeln!(file, "13\tDictyoglomus\tgenus\t11\t\x01").unwrap();
-        writeln!(file, "14\tDictyoglomus thermophilum\tspecies\t10\t\x01").unwrap();
-        writeln!(file, "16\tMethylophilus\tgenus\t14\t\x01").unwrap();
-        writeln!(file, "17\tMethylophilus methylotrophus\tspecies\t16\t\x01").unwrap();
-        writeln!(file, "18\tPelobacter\tgenus\t17\t\x01").unwrap();
-        writeln!(file, "19\tSyntrophotalea carbinolica\tspecies\t17\t\x01").unwrap();
-        writeln!(file, "20\tPhenylobacterium\tgenus\t19\t\x01").unwrap();
-
-        taxonomy_file
     }
 
     fn get_example_proteins() -> Proteins {
@@ -656,18 +589,10 @@ mod tests {
             1
         );
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -689,18 +614,10 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -722,18 +639,10 @@ mod tests {
             1
         );
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -750,18 +659,10 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -790,19 +691,11 @@ mod tests {
             }]
         };
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -824,19 +717,11 @@ mod tests {
             }]
         };
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -857,19 +742,11 @@ mod tests {
             }]
         };
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -890,19 +767,11 @@ mod tests {
             }]
         };
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 
@@ -925,19 +794,11 @@ mod tests {
             }]
         };
 
-        let tmp_dir = TempDir::new("test_try_from_taxonomy_file").unwrap();
-        let taxonomy_file = create_taxonomy_file(&tmp_dir);
-
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
             proteins,
-            TaxonAggregator::try_from_taxonomy_file(
-                taxonomy_file.to_str().unwrap(),
-                AggregationMethod::LcaStar
-            )
-            .unwrap(),
             FunctionAggregator {}
         );
 

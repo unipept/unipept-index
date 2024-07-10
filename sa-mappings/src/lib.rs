@@ -5,4 +5,3 @@
 
 pub mod functionality;
 pub mod proteins;
-pub mod taxonomy;

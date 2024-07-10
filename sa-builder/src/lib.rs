@@ -12,9 +12,6 @@ pub struct Arguments {
     /// concatenated using a hashtag `#`.
     #[arg(short, long)]
     pub database_file:          String,
-    /// The taxonomy to be used as a tsv file. This is a preprocessed version of the NCBI taxonomy.
-    #[arg(short, long)]
-    pub taxonomy:               String,
     /// Output location where to store the suffix array
     #[arg(short, long)]
     pub output:                 String,
@@ -125,8 +122,6 @@ mod tests {
             "sa-builder",
             "--database-file",
             "database.fa",
-            "--taxonomy",
-            "taxonomy.tsv",
             "--output",
             "output.fa",
             "--sparseness-factor",
@@ -137,7 +132,6 @@ mod tests {
         ]);
 
         assert_eq!(args.database_file, "database.fa");
-        assert_eq!(args.taxonomy, "taxonomy.tsv");
         assert_eq!(args.output, "output.fa");
         assert_eq!(args.sparseness_factor, 2);
         assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);

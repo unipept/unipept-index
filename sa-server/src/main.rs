@@ -38,11 +38,7 @@ use sa_index::{
 };
 use sa_mappings::{
     functionality::FunctionAggregator,
-    proteins::Proteins,
-    taxonomy::{
-        AggregationMethod,
-        TaxonAggregator
-    }
+    proteins::Proteins
 };
 use serde::{
     Deserialize,
@@ -57,10 +53,7 @@ pub struct Arguments {
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file:    String,
-    #[arg(short, long)]
-    /// The taxonomy to be used as a tsv file. This is a preprocessed version of the NCBI taxonomy.
-    taxonomy:      String
+    index_file:    String
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -167,8 +160,7 @@ async fn search(
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let Arguments {
         database_file,
-        index_file,
-        taxonomy
+        index_file
     } = args;
 
     eprintln!();
@@ -180,20 +172,13 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     eprintln!("\tSample rate: {}", sa.sample_rate());
 
     eprintln!();
-    eprintln!("📋 Started loading the taxon file...");
-    let taxon_id_calculator =
-        TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)?;
-    eprintln!("✅ Successfully loaded the taxon file!");
-    eprintln!("\tAggregation method: LCA*");
-
-    eprintln!();
     eprintln!("📋 Started creating the function aggregator...");
     let function_aggregator = FunctionAggregator {};
     eprintln!("✅ Successfully created the function aggregator!");
 
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
-    let proteins = Proteins::try_from_database_file(&database_file, &taxon_id_calculator)?;
+    let proteins = Proteins::try_from_database_file(&database_file)?;
     let suffix_index_to_protein = Box::new(SparseSuffixToProtein::new(&proteins.input_string));
     eprintln!("✅ Successfully loaded the proteins!");
 
@@ -201,7 +186,6 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         sa,
         suffix_index_to_protein,
         proteins,
-        taxon_id_calculator,
         function_aggregator
     ));
 
