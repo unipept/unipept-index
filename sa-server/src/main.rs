@@ -30,10 +30,7 @@ use sa_index::{
     suffix_to_protein_index::SparseSuffixToProtein,
     SuffixArray
 };
-use sa_mappings::{
-    functionality::FunctionAggregator,
-    proteins::Proteins
-};
+use sa_mappings::proteins::Proteins;
 use serde::Deserialize;
 
 /// Enum that represents all possible commandline arguments
@@ -134,11 +131,6 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     eprintln!("\tSample rate: {}", sa.sample_rate());
 
     eprintln!();
-    eprintln!("📋 Started creating the function aggregator...");
-    let function_aggregator = FunctionAggregator {};
-    eprintln!("✅ Successfully created the function aggregator!");
-
-    eprintln!();
     eprintln!("📋 Started loading the proteins...");
     let proteins = Proteins::try_from_database_file(&database_file)?;
     let suffix_index_to_protein = Box::new(SparseSuffixToProtein::new(&proteins.input_string));
@@ -147,8 +139,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let searcher = Arc::new(Searcher::new(
         sa,
         suffix_index_to_protein,
-        proteins,
-        function_aggregator
+        proteins
     ));
 
     // build our application with a route

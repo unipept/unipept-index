@@ -3,5 +3,4 @@
 
 #![warn(missing_docs)]
 
-pub mod functionality;
 pub mod proteins;

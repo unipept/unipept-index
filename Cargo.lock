@@ -1135,8 +1135,6 @@ version = "0.1.0"
 dependencies = [
  "bytelines",
  "fa-compression",
- "serde",
- "serde_json",
  "tempdir",
 ]
 

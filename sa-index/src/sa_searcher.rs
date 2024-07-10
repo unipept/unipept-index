@@ -1,14 +1,8 @@
 use std::cmp::min;
 
-use sa_mappings::{
-    functionality::{
-        FunctionAggregator,
-        FunctionalAggregation
-    },
-    proteins::{
-        Protein,
-        Proteins
-    }
+use sa_mappings::proteins::{
+    Protein,
+    Proteins
 };
 
 use crate::{
@@ -101,8 +95,7 @@ impl PartialEq for SearchAllSuffixesResult {
 pub struct Searcher {
     pub sa: SuffixArray,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
-    pub proteins: Proteins,
-    pub function_aggregator: FunctionAggregator
+    pub proteins: Proteins
 }
 
 impl Searcher {
@@ -125,14 +118,12 @@ impl Searcher {
     pub fn new(
         sa: SuffixArray,
         suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
-        proteins: Proteins,
-        function_aggregator: FunctionAggregator
+        proteins: Proteins
     ) -> Self {
         Self {
             sa,
             suffix_index_to_protein,
-            proteins,
-            function_aggregator
+            proteins
         }
     }
 
@@ -484,42 +475,13 @@ impl Searcher {
         }
         self.retrieve_proteins(&matching_suffixes)
     }
-
-    /// Retrieves the functional analysis for a collection of proteins
-    ///
-    /// # Arguments
-    /// * `proteins` - A collection of proteins
-    ///
-    /// # Returns
-    ///
-    /// Returns the functional analysis result for the given list of proteins
-    pub fn retrieve_function(&self, proteins: &[&Protein]) -> Option<FunctionalAggregation> {
-        let res = self.function_aggregator.aggregate(proteins.to_vec());
-        Some(res)
-    }
-
-    /// Retrieves the all the functional annotations for a collection of proteins
-    ///
-    /// # Arguments
-    /// * `proteins` - A collection of proteins
-    ///
-    /// # Returns
-    ///
-    /// Returns all functional annotations for a collection of proteins
-    pub fn get_all_functional_annotations(&self, proteins: &[&Protein]) -> Vec<Vec<String>> {
-        self.function_aggregator
-            .get_all_functional_annotations(proteins)
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use sa_mappings::{
-        functionality::FunctionAggregator,
-        proteins::{
-            Protein,
-            Proteins
-        }
+    use sa_mappings::proteins::{
+        Protein,
+        Proteins
     };
 
     use crate::{
@@ -592,8 +554,7 @@ mod tests {
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         // search bounds 'A'
@@ -617,8 +578,7 @@ mod tests {
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         // search suffix 'VAA'
@@ -642,8 +602,7 @@ mod tests {
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         let bounds_res = searcher.search_bounds(&[b'I']);
@@ -662,8 +621,7 @@ mod tests {
         let searcher = Searcher::new(
             sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         // search bounds 'RIZ' with equal I and L
@@ -695,8 +653,7 @@ mod tests {
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         // search bounds 'IM' with equal I and L
@@ -721,8 +678,7 @@ mod tests {
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true);
@@ -746,8 +702,7 @@ mod tests {
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
@@ -771,8 +726,7 @@ mod tests {
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         // search all places where II is in the string IIIILL, but with a sparse SA
@@ -798,8 +752,7 @@ mod tests {
         let searcher = Searcher::new(
             sparse_sa,
             Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins,
-            FunctionAggregator {}
+            proteins
         );
 
         // search bounds 'IM' with equal I and L

@@ -19,7 +19,7 @@ pub struct SearchResult {
 pub struct ProteinInfo {
     pub taxon: u32,
     pub uniprot_accession: String,
-    pub functional_annotations: Vec<String>
+    pub functional_annotations: String
 }
 
 /// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
@@ -78,20 +78,13 @@ pub fn search_peptide(
     let (cutoff_used, proteins) =
         search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
-    let annotations = searcher.get_all_functional_annotations(&proteins);
-
-    let mut protein_info: Vec<ProteinInfo> = vec![];
-    for (&protein, annotations) in proteins.iter().zip(annotations) {
-        protein_info.push(ProteinInfo {
-            taxon:                  protein.taxon_id as u32,
-            uniprot_accession:      protein.uniprot_id.clone(),
-            functional_annotations: annotations
-        })
-    }
-
     Some(SearchResult {
         sequence: peptide.to_string(),
-        proteins: protein_info,
+        proteins: proteins.iter().map(|protein| ProteinInfo {
+            taxon: protein.taxon_id,
+            uniprot_accession: protein.uniprot_id.clone(),
+            functional_annotations: protein.get_functional_annotations()
+        }).collect(),
         cutoff_used
     })
 }
@@ -138,11 +131,11 @@ mod tests {
         let protein_info = ProteinInfo {
             taxon:                  1,
             uniprot_accession:      "P12345".to_string(),
-            functional_annotations: vec!["GO:0001234".to_string(), "GO:0005678".to_string()]
+            functional_annotations: "GO:0001234;GO:0005678".to_string()
         };
 
         let generated_json = serde_json::to_string(&protein_info).unwrap();
-        let expected_json = "{\"taxon\":1,\"uniprot_accession\":\"P12345\",\"functional_annotations\":[\"GO:0001234\",\"GO:0005678\"]}";
+        let expected_json = "{\"taxon\":1,\"uniprot_accession\":\"P12345\",\"functional_annotations\":\"GO:0001234;GO:0005678\"}";
 
         assert_json_eq(&generated_json, expected_json);
     }
