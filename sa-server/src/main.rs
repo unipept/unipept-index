@@ -14,10 +14,7 @@ use axum::{
         State
     },
     http::StatusCode,
-    routing::{
-        get,
-        post
-    },
+    routing::post,
     Json,
     Router
 };
@@ -26,11 +23,8 @@ use sa_compression::load_compressed_suffix_array;
 use sa_index::{
     binary::load_suffix_array,
     peptide_search::{
-        analyse_all_peptides,
         search_all_peptides,
-        OutputData,
-        SearchOnlyResult,
-        SearchResultWithAnalysis
+        SearchResult
     },
     sa_searcher::Searcher,
     suffix_to_protein_index::SparseSuffixToProtein,
@@ -40,10 +34,7 @@ use sa_mappings::{
     functionality::FunctionAggregator,
     proteins::Proteins
 };
-use serde::{
-    Deserialize,
-    Serialize
-};
+use serde::Deserialize;
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -74,8 +65,7 @@ fn default_true() -> bool {
 /// * `cutoff` - The maximum amount of matches to process, default value 10000
 /// * `equate_il` - True if we want to equalize I and L during search
 /// * `clean_taxa` - True if we only want to use proteins marked as "valid"
-#[derive(Debug, Deserialize, Serialize)]
-#[allow(non_snake_case)]
+#[derive(Debug, Deserialize)]
 struct InputData {
     peptides:         Vec<String>,
     #[serde(default = "default_cutoff")] // default value is 10000
@@ -94,34 +84,6 @@ async fn main() {
     }
 }
 
-/// Basic handler used to check the server status
-async fn root() -> &'static str {
-    "Server is online"
-}
-
-/// Endpoint executed for peptide matching and taxonomic and functional analysis
-///
-/// # Arguments
-/// * `state(searcher)` - The searcher object provided by the server
-/// * `data` - InputData object provided by the user with the peptides to be searched and the config
-///
-/// # Returns
-///
-/// Returns the search and analysis results from the index as a JSON
-async fn analyse(
-    State(searcher): State<Arc<Searcher>>,
-    data: Json<InputData>
-) -> Result<Json<OutputData<SearchResultWithAnalysis>>, StatusCode> {
-    let search_result = analyse_all_peptides(
-        &searcher,
-        &data.peptides,
-        data.cutoff,
-        data.equate_il
-    );
-
-    Ok(Json(search_result))
-}
-
 /// Endpoint executed for peptide matching, without any analysis
 ///
 /// # Arguments
@@ -134,7 +96,7 @@ async fn analyse(
 async fn search(
     State(searcher): State<Arc<Searcher>>,
     data: Json<InputData>
-) -> Result<Json<OutputData<SearchOnlyResult>>, StatusCode> {
+) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(
         &searcher,
         &data.peptides,
@@ -191,13 +153,6 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     // build our application with a route
     let app = Router::new()
-        // `GET /` goes to `root`
-        .route("/", get(root))
-        // `POST /analyse` goes to `analyse` and set max payload size to 5 MB
-        .route("/analyse", post(analyse))
-        .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))
-        .with_state(searcher.clone())
-        // `POST /search` goes to `search` and set max payload size to 5 MB
         .route("/search", post(search))
         .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))
         .with_state(searcher);
