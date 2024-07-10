@@ -20,7 +20,7 @@ pub struct OutputData<T: Serialize> {
 #[derive(Debug, Serialize)]
 pub struct SearchResultWithAnalysis {
     pub sequence: String,
-    pub taxa: Vec<usize>,
+    pub taxa: Vec<u32>,
     pub uniprot_accession_numbers: Vec<String>,
     pub fa: Option<FunctionalAggregation>,
     pub cutoff_used: bool
@@ -37,7 +37,7 @@ pub struct SearchOnlyResult {
 /// Struct that represents all information known about a certain protein in our database
 #[derive(Debug, Serialize)]
 pub struct ProteinInfo {
-    pub taxon:                  usize,
+    pub taxon:                  u32,
     pub uniprot_accession:      String,
     pub functional_annotations: Vec<String>
 }
@@ -123,7 +123,7 @@ pub fn search_peptide_retrieve_annotations(
     let mut protein_info: Vec<ProteinInfo> = vec![];
     for (&protein, annotations) in proteins.iter().zip(annotations) {
         protein_info.push(ProteinInfo {
-            taxon:                  protein.taxon_id,
+            taxon:                  protein.taxon_id as u32,
             uniprot_accession:      protein.uniprot_id.clone(),
             functional_annotations: annotations
         })
@@ -165,7 +165,7 @@ pub fn analyse_peptide(
     let mut taxa = vec![];
 
     for protein in &proteins {
-        taxa.push(protein.taxon_id);
+        taxa.push(protein.taxon_id as u32);
         uniprot_accession_numbers.push(protein.uniprot_id.clone());
     }
 
