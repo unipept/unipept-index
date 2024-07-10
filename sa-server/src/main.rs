@@ -26,8 +26,7 @@ use sa_index::{
         search_all_peptides,
         SearchResult
     },
-    sa_searcher::Searcher,
-    suffix_to_protein_index::SparseSuffixToProtein,
+    sa_searcher::SparseSearcher,
     SuffixArray
 };
 use sa_mappings::proteins::Proteins;
@@ -91,7 +90,7 @@ async fn main() {
 ///
 /// Returns the search results from the index as a JSON
 async fn search(
-    State(searcher): State<Arc<Searcher>>,
+    State(searcher): State<Arc<SparseSearcher>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(
@@ -124,21 +123,19 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     eprintln!();
     eprintln!("📋 Started loading the suffix array...");
-    let sa = load_suffix_array_file(&index_file)?;
+    let suffix_array = load_suffix_array_file(&index_file)?;
     eprintln!("✅ Successfully loaded the suffix array!");
-    eprintln!("\tAmount of items: {}", sa.len());
-    eprintln!("\tAmount of bits per item: {}", sa.bits_per_value());
-    eprintln!("\tSample rate: {}", sa.sample_rate());
+    eprintln!("\tAmount of items: {}", suffix_array.len());
+    eprintln!("\tAmount of bits per item: {}", suffix_array.bits_per_value());
+    eprintln!("\tSample rate: {}", suffix_array.sample_rate());
 
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
     let proteins = Proteins::try_from_database_file(&database_file)?;
-    let suffix_index_to_protein = Box::new(SparseSuffixToProtein::new(&proteins.input_string));
     eprintln!("✅ Successfully loaded the proteins!");
 
-    let searcher = Arc::new(Searcher::new(
-        sa,
-        suffix_index_to_protein,
+    let searcher = Arc::new(SparseSearcher::new(
+        suffix_array,
         proteins
     ));
 

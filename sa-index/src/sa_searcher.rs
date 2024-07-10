@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::{cmp::min, ops::Deref};
 
 use sa_mappings::proteins::{
     Protein,
@@ -10,7 +10,7 @@ use crate::{
         Maximum,
         Minimum
     },
-    suffix_to_protein_index::SuffixToProteinIndex,
+    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
     Nullable,
     SuffixArray
 };
@@ -80,6 +80,42 @@ impl PartialEq for SearchAllSuffixesResult {
     }
 }
 
+pub struct SparseSearcher (Searcher);
+
+impl SparseSearcher {
+    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        Self(searcher)
+    }
+}
+
+impl Deref for SparseSearcher {
+    type Target = Searcher;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct DenseSearcher (Searcher);
+
+impl DenseSearcher {
+    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+        let suffix_index_to_protein = DenseSuffixToProtein::new(&proteins.input_string);
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        Self(searcher)
+    }
+}
+
+impl Deref for DenseSearcher {
+    type Target = Searcher;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Struct that contains all the elements needed to search a peptide in the suffix array
 /// This struct also contains all the functions used for search
 ///
@@ -94,8 +130,8 @@ impl PartialEq for SearchAllSuffixesResult {
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
     pub sa: SuffixArray,
-    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
-    pub proteins: Proteins
+    pub proteins: Proteins,
+    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
 }
 
 impl Searcher {
@@ -117,13 +153,13 @@ impl Searcher {
     /// Returns a new Searcher object
     pub fn new(
         sa: SuffixArray,
-        suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
-        proteins: Proteins
+        proteins: Proteins,
+        suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
     ) -> Self {
         Self {
             sa,
-            suffix_index_to_protein,
-            proteins
+            proteins,
+            suffix_index_to_protein
         }
     }
 
@@ -452,29 +488,6 @@ impl Searcher {
         }
         res
     }
-
-    /// Searches all the matching proteins for a search_string/peptide in the suffix array
-    ///
-    /// # Arguments
-    /// * `search_string` - The string/peptide being searched
-    /// * `equate_il` - If set to true, I and L are equalized during search
-    ///
-    /// # Returns
-    ///
-    /// Returns the matching proteins for the search_string
-    pub fn search_proteins_for_peptide(
-        &self,
-        search_string: &[u8],
-        equate_il: bool
-    ) -> Vec<&Protein> {
-        let mut matching_suffixes = vec![];
-        if let SearchAllSuffixesResult::SearchResult(suffixes) =
-            self.search_matching_suffixes(search_string, usize::MAX, equate_il)
-        {
-            matching_suffixes = suffixes;
-        }
-        self.retrieve_proteins(&matching_suffixes)
-    }
 }
 
 #[cfg(test)]
@@ -551,10 +564,11 @@ mod tests {
             1
         );
 
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein),
         );
 
         // search bounds 'A'
@@ -575,10 +589,11 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein),
         );
 
         // search suffix 'VAA'
@@ -599,10 +614,11 @@ mod tests {
             1
         );
 
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein),
         );
 
         let bounds_res = searcher.search_bounds(&[b'I']);
@@ -618,10 +634,11 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein),
         );
 
         // search bounds 'RIZ' with equal I and L
@@ -650,10 +667,11 @@ mod tests {
         };
 
         let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sparse_sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein)
         );
 
         // search bounds 'IM' with equal I and L
@@ -675,10 +693,11 @@ mod tests {
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sparse_sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein)
         );
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true);
@@ -699,10 +718,11 @@ mod tests {
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sparse_sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein)
         );
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
@@ -723,10 +743,11 @@ mod tests {
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sparse_sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein)
         );
 
         // search all places where II is in the string IIIILL, but with a sparse SA
@@ -749,10 +770,11 @@ mod tests {
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(
             sparse_sa,
-            Box::new(SparseSuffixToProtein::new(&proteins.input_string)),
-            proteins
+            proteins,
+            Box::new(suffix_index_to_protein)
         );
 
         // search bounds 'IM' with equal I and L
