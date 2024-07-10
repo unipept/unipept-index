@@ -20,7 +20,6 @@ pub struct OutputData<T: Serialize> {
 #[derive(Debug, Serialize)]
 pub struct SearchResultWithAnalysis {
     pub sequence: String,
-    pub lca: Option<usize>,
     pub taxa: Vec<usize>,
     pub uniprot_accession_numbers: Vec<String>,
     pub fa: Option<FunctionalAggregation>,
@@ -49,7 +48,7 @@ pub struct ProteinInfo {
 /// * `searcher` - The Searcher which contains the protein database
 /// * `peptide` - The peptide that is being searched in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
-/// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
 /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
 ///   taxonomy
 ///
@@ -64,8 +63,7 @@ pub fn search_proteins_for_peptide<'a>(
     searcher: &'a Searcher,
     peptide: &str,
     cutoff: usize,
-    equalize_i_and_l: bool,
-    clean_taxa: bool
+    equate_il: bool
 ) -> Option<(bool, Vec<&'a Protein>)> {
     let peptide = peptide.strip_suffix('\n').unwrap_or(peptide).to_uppercase();
 
@@ -75,7 +73,7 @@ pub fn search_proteins_for_peptide<'a>(
     }
 
     let suffix_search =
-        searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equalize_i_and_l);
+        searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il);
     let mut cutoff_used = false;
     let suffixes = match suffix_search {
         SearchAllSuffixesResult::MaxMatches(matched_suffixes) => {
@@ -89,10 +87,7 @@ pub fn search_proteins_for_peptide<'a>(
         }
     };
 
-    let mut proteins = searcher.retrieve_proteins(&suffixes);
-    if clean_taxa {
-        proteins.retain(|protein| searcher.taxon_valid(protein))
-    }
+    let proteins = searcher.retrieve_proteins(&suffixes);
 
     Some((cutoff_used, proteins))
 }
@@ -105,7 +100,7 @@ pub fn search_proteins_for_peptide<'a>(
 /// * `searcher` - The Searcher which contains the protein database
 /// * `peptide` - The peptide that is being searched in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
-/// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
 /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
 ///   taxonomy
 ///
@@ -118,11 +113,10 @@ pub fn search_peptide_retrieve_annotations(
     searcher: &Searcher,
     peptide: &str,
     cutoff: usize,
-    equalize_i_and_l: bool,
-    clean_taxa: bool
+    equate_il: bool
 ) -> Option<SearchOnlyResult> {
     let (cutoff_used, proteins) =
-        search_proteins_for_peptide(searcher, peptide, cutoff, equalize_i_and_l, clean_taxa)?;
+        search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
     let annotations = searcher.get_all_functional_annotations(&proteins);
 
@@ -149,7 +143,7 @@ pub fn search_peptide_retrieve_annotations(
 /// * `searcher` - The Searcher which contains the protein database
 /// * `peptide` - The peptide that is being searched in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
-/// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
 /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
 ///   taxonomy
 ///
@@ -162,25 +156,10 @@ pub fn analyse_peptide(
     searcher: &Searcher,
     peptide: &str,
     cutoff: usize,
-    equalize_i_and_l: bool,
-    clean_taxa: bool
+    equate_il: bool
 ) -> Option<SearchResultWithAnalysis> {
-    let (cutoff_used, mut proteins) =
-        search_proteins_for_peptide(searcher, peptide, cutoff, equalize_i_and_l, clean_taxa)?;
-
-    if clean_taxa {
-        proteins.retain(|protein| searcher.taxon_valid(protein))
-    }
-
-    // calculate the lca
-    let lca = if cutoff_used {
-        Some(1)
-    } else {
-        searcher.retrieve_lca(&proteins)
-    };
-
-    // return None if the LCA is none
-    lca?;
+    let (cutoff_used, proteins) =
+        search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
     let mut uniprot_accession_numbers = vec![];
     let mut taxa = vec![];
@@ -194,7 +173,6 @@ pub fn analyse_peptide(
     // output the result
     Some(SearchResultWithAnalysis {
         sequence: peptide.to_string(),
-        lca,
         cutoff_used,
         uniprot_accession_numbers,
         taxa,
@@ -209,7 +187,7 @@ pub fn analyse_peptide(
 /// * `searcher` - The Searcher which contains the protein database
 /// * `peptides` - List of peptides we want to search in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
-/// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
 /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
 ///   taxonomy
 ///
@@ -221,15 +199,12 @@ pub fn analyse_all_peptides(
     searcher: &Searcher,
     peptides: &Vec<String>,
     cutoff: usize,
-    equalize_i_and_l: bool,
-    clean_taxa: bool
+    equate_il: bool
 ) -> OutputData<SearchResultWithAnalysis> {
     let res: Vec<SearchResultWithAnalysis> = peptides
         .par_iter()
-        // calculate the results
-        .map(|peptide| analyse_peptide(searcher, peptide, cutoff, equalize_i_and_l, clean_taxa))
-        // remove the None's
-        .filter_map(|search_result| search_result)
+        // calculate the results and remove None's
+        .filter_map(|peptide| analyse_peptide(searcher, peptide, cutoff, equate_il))
         .collect();
 
     OutputData {
@@ -244,7 +219,7 @@ pub fn analyse_all_peptides(
 /// * `searcher` - The Searcher which contains the protein database
 /// * `peptides` - List of peptides we want to search in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
-/// * `equalize_i_and_l` - Boolean indicating if we want to equate I and L during search
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
 /// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
 ///   taxonomy
 ///
@@ -255,23 +230,19 @@ pub fn search_all_peptides(
     searcher: &Searcher,
     peptides: &Vec<String>,
     cutoff: usize,
-    equalize_i_and_l: bool,
-    clean_taxa: bool
+    equate_il: bool
 ) -> OutputData<SearchOnlyResult> {
     let res: Vec<SearchOnlyResult> = peptides
         .par_iter()
-        // calculate the results
-        .map(|peptide| {
+        // calculate the results and remove None's
+        .filter_map(|peptide| {
             search_peptide_retrieve_annotations(
                 searcher,
                 peptide,
                 cutoff,
-                equalize_i_and_l,
-                clean_taxa
+                equate_il
             )
         })
-        // remove None's
-        .filter_map(|search_result| search_result)
         .collect();
 
     OutputData {
@@ -306,7 +277,6 @@ mod tests {
     fn test_serialize_search_result_with_analysis() {
         let search_result = SearchResultWithAnalysis {
             sequence: "MSKIAALLPSV".to_string(),
-            lca: Some(1),
             taxa: vec![1, 2, 3],
             uniprot_accession_numbers: vec!["P12345".to_string(), "P23456".to_string()],
             fa: None,
@@ -314,7 +284,7 @@ mod tests {
         };
 
         let generated_json = serde_json::to_string(&search_result).unwrap();
-        let expected_json = "{\"sequence\":\"MSKIAALLPSV\",\"lca\":1,\"taxa\":[1,2,3],\"uniprot_accession_numbers\":[\"P12345\",\"P23456\"],\"fa\":null,\"cutoff_used\":true}";
+        let expected_json = "{\"sequence\":\"MSKIAALLPSV\",\"taxa\":[1,2,3],\"uniprot_accession_numbers\":[\"P12345\",\"P23456\"],\"fa\":null,\"cutoff_used\":true}";
 
         assert_json_eq(&generated_json, expected_json);
     }

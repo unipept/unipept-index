@@ -79,7 +79,7 @@ fn default_true() -> bool {
 /// # Arguments
 /// * `peptides` - List of peptides we want to process
 /// * `cutoff` - The maximum amount of matches to process, default value 10000
-/// * `equalize_I_and_L` - True if we want to equalize I and L during search
+/// * `equate_il` - True if we want to equalize I and L during search
 /// * `clean_taxa` - True if we only want to use proteins marked as "valid"
 #[derive(Debug, Deserialize, Serialize)]
 #[allow(non_snake_case)]
@@ -89,9 +89,7 @@ struct InputData {
     cutoff: usize,
     #[serde(default = "bool::default")]
     // default value is false // TODO: maybe default should be true?
-    equalize_I_and_L: bool,
-    #[serde(default = "bool::default")] // default value is false
-    clean_taxa: bool
+    equate_il: bool
 }
 
 #[tokio::main]
@@ -125,8 +123,7 @@ async fn analyse(
         &searcher,
         &data.peptides,
         data.cutoff,
-        data.equalize_I_and_L,
-        data.clean_taxa
+        data.equate_il
     );
 
     Ok(Json(search_result))
@@ -149,8 +146,7 @@ async fn search(
         &searcher,
         &data.peptides,
         data.cutoff,
-        data.equalize_I_and_L,
-        data.clean_taxa
+        data.equate_il,
     );
 
     Ok(Json(search_result))

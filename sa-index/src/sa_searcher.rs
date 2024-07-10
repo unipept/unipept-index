@@ -300,7 +300,7 @@ impl Searcher {
     /// * `search_string` - The string/peptide we are searching in the suffix array
     /// * `max_matches` - The maximum amount of matches processed, if more matches are found we
     ///   don't process them
-    /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
+    /// * `equate_il` - True if we want to equate I and L during search, otherwise false
     ///
     /// # Returns
     ///
@@ -310,7 +310,7 @@ impl Searcher {
         &self,
         search_string: &[u8],
         max_matches: usize,
-        equalize_i_and_l: bool
+        equate_il: bool
     ) -> SearchAllSuffixesResult {
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
@@ -348,7 +348,7 @@ impl Searcher {
                             || Self::check_prefix(
                                 current_search_string_prefix,
                                 &self.proteins.input_string[suffix - skip .. suffix],
-                                equalize_i_and_l
+                                equate_il
                             ))
                             && Self::check_suffix(
                                 skip,
@@ -356,7 +356,7 @@ impl Searcher {
                                 current_search_string_suffix,
                                 &self.proteins.input_string
                                     [suffix .. suffix + search_string.len() - skip],
-                                equalize_i_and_l
+                                equate_il
                             ))
                     {
                         matching_suffixes.push((suffix - skip) as i64);
@@ -380,12 +380,12 @@ impl Searcher {
     }
 
     /// Returns true of the prefixes are the same
-    /// if `equalize_i_and_l` is set to true, L and I are considered the same
+    /// if `equate_il` is set to true, L and I are considered the same
     ///
     /// # Arguments
     /// * `search_string_prefix` - The unchecked prefix of the string/peptide that is searched
     /// * `index_prefix` - The unchecked prefix from the protein from the suffix array
-    /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
+    /// * `equate_il` - True if we want to equate I and L during search, otherwise false
     ///
     /// # Returns
     ///
@@ -395,9 +395,9 @@ impl Searcher {
     fn check_prefix(
         search_string_prefix: &[u8],
         index_prefix: &[u8],
-        equalize_i_and_l: bool
+        equate_il: bool
     ) -> bool {
-        if equalize_i_and_l {
+        if equate_il {
             search_string_prefix.iter().zip(index_prefix).all(
                 |(&search_character, &index_character)| {
                     search_character == index_character
@@ -411,8 +411,8 @@ impl Searcher {
     }
 
     /// Returns true of the search_string and index_string are equal
-    /// This is automatically true if `equalize_i_and_l` is set to true, since there matched during
-    /// search where I = L If `equalize_i_and_l` is set to false, we need to check if the I and
+    /// This is automatically true if `equate_il` is set to true, since there matched during
+    /// search where I = L If `equate_il` is set to false, we need to check if the I and
     /// L locations have the same character
     ///
     /// # Arguments
@@ -422,7 +422,7 @@ impl Searcher {
     ///   removed from it
     /// * `index_string` - The suffix that search_string matches with when I and L were equalized
     ///   during search
-    /// * `equalize_i_and_l` - True if we want to equate I and L during search, otherwise false
+    /// * `equate_il` - True if we want to equate I and L during search, otherwise false
     ///
     /// # Returns
     ///
@@ -432,9 +432,9 @@ impl Searcher {
         il_locations: &[usize],
         search_string: &[u8],
         index_string: &[u8],
-        equalize_i_and_l: bool
+        equate_il: bool
     ) -> bool {
-        if equalize_i_and_l {
+        if equate_il {
             true
         } else {
             for &il_location in il_locations {
@@ -471,7 +471,7 @@ impl Searcher {
     ///
     /// # Arguments
     /// * `search_string` - The string/peptide being searched
-    /// * `equalize_i_and_l` - If set to true, I and L are equalized during search
+    /// * `equate_il` - If set to true, I and L are equalized during search
     ///
     /// # Returns
     ///
@@ -479,11 +479,11 @@ impl Searcher {
     pub fn search_proteins_for_peptide(
         &self,
         search_string: &[u8],
-        equalize_i_and_l: bool
+        equate_il: bool
     ) -> Vec<&Protein> {
         let mut matching_suffixes = vec![];
         if let SearchAllSuffixesResult::SearchResult(suffixes) =
-            self.search_matching_suffixes(search_string, usize::MAX, equalize_i_and_l)
+            self.search_matching_suffixes(search_string, usize::MAX, equate_il)
         {
             matching_suffixes = suffixes;
         }
