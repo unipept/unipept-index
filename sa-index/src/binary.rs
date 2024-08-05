@@ -1,10 +1,6 @@
 use std::{
     error::Error,
-    io::{
-        BufRead,
-        Read,
-        Write
-    }
+    io::{BufRead, Read, Write}
 };
 
 use crate::SuffixArray;
@@ -69,7 +65,7 @@ impl Binary for Vec<i64> {
 
         loop {
             let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-            for buffer_slice in buffer[.. bytes_read].chunks_exact(8) {
+            for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
                 self.push(i64::from_le_bytes(buffer_slice.try_into().unwrap()));
             }
 
@@ -93,16 +89,10 @@ impl Binary for Vec<i64> {
 /// # Returns
 ///
 /// Returns `Ok(())` if the write operation is successful, or an `Err` if an error occurs.
-pub fn dump_suffix_array(
-    sa: &Vec<i64>,
-    sparseness_factor: u8,
-    writer: &mut impl Write
-) -> Result<(), Box<dyn Error>> {
+pub fn dump_suffix_array(sa: &Vec<i64>, sparseness_factor: u8, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     // Write the required bits to the writer
     // 01000000 indicates that the suffix array is not compressed
-    writer
-        .write(&[64_u8])
-        .map_err(|_| "Could not write the required bits to the writer")?;
+    writer.write(&[64_u8]).map_err(|_| "Could not write the required bits to the writer")?;
 
     // Write the sparseness factor to the writer
     writer
@@ -116,8 +106,7 @@ pub fn dump_suffix_array(
         .map_err(|_| "Could not write the size of the suffix array to the writer")?;
 
     // Write the suffix array to the writer
-    sa.write_binary(writer)
-        .map_err(|_| "Could not write the suffix array to the writer")?;
+    sa.write_binary(writer).map_err(|_| "Could not write the suffix array to the writer")?;
 
     Ok(())
 }
@@ -150,8 +139,7 @@ pub fn load_suffix_array(reader: &mut impl BufRead) -> Result<SuffixArray, Box<d
     let size = u64::from_le_bytes(size_buffer) as usize;
 
     let mut sa = Vec::with_capacity(size);
-    sa.read_binary(reader)
-        .map_err(|_| "Could not read the suffix array from the binary file")?;
+    sa.read_binary(reader).map_err(|_| "Could not read the suffix array from the binary file")?;
 
     Ok(SuffixArray::Original(sa, sample_rate))
 }
@@ -179,16 +167,13 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<
             // No bytes written, which means we've completely filled the buffer
             // or we've reached the end of the file
             Ok(0) => {
-                return Ok((
-                    !writable_buffer_space.is_empty(),
-                    buffer_size - writable_buffer_space.len()
-                ));
+                return Ok((!writable_buffer_space.is_empty(), buffer_size - writable_buffer_space.len()));
             }
 
             // We've read {bytes_read} bytes
             Ok(bytes_read) => {
                 // Shrink the writable buffer slice
-                writable_buffer_space = writable_buffer_space[bytes_read ..].as_mut();
+                writable_buffer_space = writable_buffer_space[bytes_read..].as_mut();
             }
 
             // An error occurred while reading
@@ -268,9 +253,7 @@ mod tests {
 
     #[test]
     fn test_fill_buffer_read_error() {
-        let mut input = FailingReader {
-            valid_read_count: 0
-        };
+        let mut input = FailingReader { valid_read_count: 0 };
         let mut buffer = vec![0; 800];
 
         assert!(fill_buffer(&mut input, &mut buffer).is_err());
@@ -283,20 +266,17 @@ mod tests {
 
         values.write_binary(&mut buffer).unwrap();
 
-        assert_eq!(
-            buffer,
-            vec![
-                1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
-                0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0
-            ]
-        );
+        assert_eq!(buffer, vec![
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
+            0, 0, 0, 0
+        ]);
     }
 
     #[test]
     fn test_read_binary() {
         let buffer = vec![
-            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0,
-            0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
+            0, 0, 0, 0,
         ];
 
         let mut values = Vec::new();
@@ -312,25 +292,20 @@ mod tests {
 
         dump_suffix_array(&sa, 1, &mut buffer).unwrap();
 
-        assert_eq!(
-            buffer,
-            vec![
-                // required bits
-                64, // Sparseness factor
-                1,  // Size of the suffix array
-                5, 0, 0, 0, 0, 0, 0, 0, // Suffix array
-                1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
-                0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0
-            ]
-        );
+        assert_eq!(buffer, vec![
+            // required bits
+            64, // Sparseness factor
+            1,  // Size of the suffix array
+            5, 0, 0, 0, 0, 0, 0, 0, // Suffix array
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
+            0, 0, 0, 0
+        ]);
     }
 
     #[test]
     #[should_panic(expected = "Could not write the required bits to the writer")]
     fn test_dump_suffix_array_fail_required_bits() {
-        let mut writer = FailingWriter {
-            valid_write_count: 0
-        };
+        let mut writer = FailingWriter { valid_write_count: 0 };
 
         dump_suffix_array(&vec![], 1, &mut writer).unwrap();
     }
@@ -338,9 +313,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the sparseness factor to the writer")]
     fn test_dump_suffix_array_fail_sparseness_factor() {
-        let mut writer = FailingWriter {
-            valid_write_count: 1
-        };
+        let mut writer = FailingWriter { valid_write_count: 1 };
 
         dump_suffix_array(&vec![], 1, &mut writer).unwrap();
     }
@@ -348,9 +321,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the size of the suffix array to the writer")]
     fn test_dump_suffix_array_fail_size() {
-        let mut writer = FailingWriter {
-            valid_write_count: 2
-        };
+        let mut writer = FailingWriter { valid_write_count: 2 };
 
         dump_suffix_array(&vec![], 1, &mut writer).unwrap();
     }
@@ -358,9 +329,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the suffix array to the writer")]
     fn test_dump_suffix_array_fail_suffix_array() {
-        let mut writer = FailingWriter {
-            valid_write_count: 3
-        };
+        let mut writer = FailingWriter { valid_write_count: 3 };
 
         dump_suffix_array(&vec![1], 1, &mut writer).unwrap();
     }
@@ -371,15 +340,15 @@ mod tests {
             // Sample rate
             1, // Size of the suffix array
             5, 0, 0, 0, 0, 0, 0, 0, // Suffix array
-            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0,
-            0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
+            0, 0, 0, 0,
         ];
 
         let mut reader = buffer.as_slice();
         let sa = load_suffix_array(&mut reader).unwrap();
 
         assert_eq!(sa.sample_rate(), 1);
-        for i in 0 .. 5 {
+        for i in 0..5 {
             assert_eq!(sa.get(i), i as i64 + 1);
         }
     }
@@ -387,9 +356,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not read the sample rate from the binary file")]
     fn test_load_suffix_array_fail_sample_rate() {
-        let mut reader = FailingReader {
-            valid_read_count: 0
-        };
+        let mut reader = FailingReader { valid_read_count: 0 };
 
         load_suffix_array(&mut reader).unwrap();
     }
@@ -397,9 +364,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not read the size of the suffix array from the binary file")]
     fn test_load_suffix_array_fail_size() {
-        let mut reader = FailingReader {
-            valid_read_count: 1
-        };
+        let mut reader = FailingReader { valid_read_count: 1 };
 
         load_suffix_array(&mut reader).unwrap();
     }
@@ -407,9 +372,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not read the suffix array from the binary file")]
     fn test_load_suffix_array_fail_suffix_array() {
-        let mut reader = FailingReader {
-            valid_read_count: 2
-        };
+        let mut reader = FailingReader { valid_read_count: 2 };
 
         load_suffix_array(&mut reader).unwrap();
     }

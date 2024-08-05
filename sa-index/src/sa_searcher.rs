@@ -1,18 +1,11 @@
 use std::{cmp::min, ops::Deref};
 
-use sa_mappings::proteins::{
-    Protein,
-    Proteins
-};
+use sa_mappings::proteins::{Protein, Proteins};
 
 use crate::{
-    sa_searcher::BoundSearch::{
-        Maximum,
-        Minimum
-    },
+    sa_searcher::BoundSearch::{Maximum, Minimum},
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
-    Nullable,
-    SuffixArray
+    Nullable, SuffixArray
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -66,21 +59,19 @@ impl PartialEq for SearchAllSuffixesResult {
         }
 
         match (self, other) {
-            (
-                SearchAllSuffixesResult::MaxMatches(arr1),
-                SearchAllSuffixesResult::MaxMatches(arr2)
-            ) => array_eq_unordered(arr1, arr2),
-            (
-                SearchAllSuffixesResult::SearchResult(arr1),
-                SearchAllSuffixesResult::SearchResult(arr2)
-            ) => array_eq_unordered(arr1, arr2),
+            (SearchAllSuffixesResult::MaxMatches(arr1), SearchAllSuffixesResult::MaxMatches(arr2)) => {
+                array_eq_unordered(arr1, arr2)
+            }
+            (SearchAllSuffixesResult::SearchResult(arr1), SearchAllSuffixesResult::SearchResult(arr2)) => {
+                array_eq_unordered(arr1, arr2)
+            }
             (SearchAllSuffixesResult::NoMatches, SearchAllSuffixesResult::NoMatches) => true,
             _ => false
         }
     }
 }
 
-pub struct SparseSearcher (Searcher);
+pub struct SparseSearcher(Searcher);
 
 impl SparseSearcher {
     pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
@@ -98,7 +89,7 @@ impl Deref for SparseSearcher {
     }
 }
 
-pub struct DenseSearcher (Searcher);
+pub struct DenseSearcher(Searcher);
 
 impl DenseSearcher {
     pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
@@ -151,16 +142,8 @@ impl Searcher {
     /// # Returns
     ///
     /// Returns a new Searcher object
-    pub fn new(
-        sa: SuffixArray,
-        proteins: Proteins,
-        suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
-    ) -> Self {
-        Self {
-            sa,
-            proteins,
-            suffix_index_to_protein
-        }
+    pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
+        Self { sa, proteins, suffix_index_to_protein }
     }
 
     /// Compares the `search_string` to the `suffix`
@@ -180,13 +163,7 @@ impl Searcher {
     /// The first argument is true if `bound` == `Minimum` and `search_string` <= `suffix` or if
     /// `bound` == `Maximum` and `search_string` >= `suffix` The second argument indicates how
     /// far the `suffix` and `search_string` matched
-    fn compare(
-        &self,
-        search_string: &[u8],
-        suffix: i64,
-        skip: usize,
-        bound: BoundSearch
-    ) -> (bool, usize) {
+    fn compare(&self, search_string: &[u8], suffix: i64, skip: usize, bound: BoundSearch) -> (bool, usize) {
         let mut index_in_suffix = (suffix as usize) + skip;
         let mut index_in_search_string = skip;
         let mut is_cond_or_equal = false;
@@ -200,8 +177,7 @@ impl Searcher {
         // match as long as possible
         while index_in_search_string < search_string.len()
             && index_in_suffix < self.proteins.input_string.len()
-            && (search_string[index_in_search_string]
-                == self.proteins.input_string[index_in_suffix]
+            && (search_string[index_in_search_string] == self.proteins.input_string[index_in_suffix]
                 || (search_string[index_in_search_string] == b'L'
                     && self.proteins.input_string[index_in_suffix] == b'I')
                 || (search_string[index_in_search_string] == b'I'
@@ -260,8 +236,7 @@ impl Searcher {
         while right - left > 1 {
             let center = (left + right) / 2;
             let skip = min(lcp_left, lcp_right);
-            let (retval, lcp_center) =
-                self.compare(search_string, self.sa.get(center), skip, bound);
+            let (retval, lcp_center) = self.compare(search_string, self.sa.get(center), skip, bound);
 
             found |= lcp_center == search_string.len();
 
@@ -278,8 +253,7 @@ impl Searcher {
 
         // handle edge case to search at index 0
         if right == 1 && left == 0 {
-            let (retval, lcp_center) =
-                self.compare(search_string, self.sa.get(0), min(lcp_left, lcp_right), bound);
+            let (retval, lcp_center) = self.compare(search_string, self.sa.get(0), min(lcp_left, lcp_right), bound);
 
             found |= lcp_center == search_string.len();
 
@@ -345,14 +319,13 @@ impl Searcher {
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
             let mut il_locations_start = 0;
-            while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip
-            {
+            while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip {
                 il_locations_start += 1;
             }
-            let il_locations_current_suffix = &il_locations[il_locations_start ..];
-            let current_search_string_prefix = &search_string[.. skip];
-            let current_search_string_suffix = &search_string[skip ..];
-            let search_bound_result = self.search_bounds(&search_string[skip ..]);
+            let il_locations_current_suffix = &il_locations[il_locations_start..];
+            let current_search_string_prefix = &search_string[..skip];
+            let current_search_string_suffix = &search_string[skip..];
+            let search_bound_result = self.search_bounds(&search_string[skip..]);
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
@@ -369,15 +342,14 @@ impl Searcher {
                         && ((skip == 0
                             || Self::check_prefix(
                                 current_search_string_prefix,
-                                &self.proteins.input_string[suffix - skip .. suffix],
+                                &self.proteins.input_string[suffix - skip..suffix],
                                 equate_il
                             ))
                             && Self::check_suffix(
                                 skip,
                                 il_locations_current_suffix,
                                 current_search_string_suffix,
-                                &self.proteins.input_string
-                                    [suffix .. suffix + search_string.len() - skip],
+                                &self.proteins.input_string[suffix..suffix + search_string.len() - skip],
                                 equate_il
                             ))
                     {
@@ -414,19 +386,13 @@ impl Searcher {
     /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise
     /// false
     #[inline]
-    fn check_prefix(
-        search_string_prefix: &[u8],
-        index_prefix: &[u8],
-        equate_il: bool
-    ) -> bool {
+    fn check_prefix(search_string_prefix: &[u8], index_prefix: &[u8], equate_il: bool) -> bool {
         if equate_il {
-            search_string_prefix.iter().zip(index_prefix).all(
-                |(&search_character, &index_character)| {
-                    search_character == index_character
-                        || (search_character == b'I' && index_character == b'L')
-                        || (search_character == b'L' && index_character == b'I')
-                }
-            )
+            search_string_prefix.iter().zip(index_prefix).all(|(&search_character, &index_character)| {
+                search_character == index_character
+                    || (search_character == b'I' && index_character == b'L')
+                    || (search_character == b'L' && index_character == b'I')
+            })
         } else {
             search_string_prefix == index_prefix
         }
@@ -492,17 +458,10 @@ impl Searcher {
 
 #[cfg(test)]
 mod tests {
-    use sa_mappings::proteins::{
-        Protein,
-        Proteins
-    };
+    use sa_mappings::proteins::{Protein, Proteins};
 
     use crate::{
-        sa_searcher::{
-            BoundSearchResult,
-            SearchAllSuffixesResult,
-            Searcher
-        },
+        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
         suffix_to_protein_index::SparseSuffixToProtein,
         SuffixArray
     };
@@ -531,25 +490,25 @@ mod tests {
         let text = "AI-BLACVAA-AC-KCRLZ$".to_string().into_bytes();
         Proteins {
             input_string: text,
-            proteins:     vec![
+            proteins: vec![
                 Protein {
-                    uniprot_id:             String::new(),
-                    taxon_id:               0,
+                    uniprot_id: String::new(),
+                    taxon_id: 0,
                     functional_annotations: vec![]
                 },
                 Protein {
-                    uniprot_id:             String::new(),
-                    taxon_id:               0,
+                    uniprot_id: String::new(),
+                    taxon_id: 0,
                     functional_annotations: vec![]
                 },
                 Protein {
-                    uniprot_id:             String::new(),
-                    taxon_id:               0,
+                    uniprot_id: String::new(),
+                    taxon_id: 0,
                     functional_annotations: vec![]
                 },
                 Protein {
-                    uniprot_id:             String::new(),
-                    taxon_id:               0,
+                    uniprot_id: String::new(),
+                    taxon_id: 0,
                     functional_annotations: vec![]
                 },
             ]
@@ -559,17 +518,10 @@ mod tests {
     #[test]
     fn test_search_simple() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-            1
-        );
+        let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sa,
-            proteins,
-            Box::new(suffix_index_to_protein),
-        );
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'A'
         let bounds_res = searcher.search_bounds(&[b'A']);
@@ -590,15 +542,10 @@ mod tests {
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sa,
-            proteins,
-            Box::new(suffix_index_to_protein),
-        );
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search suffix 'VAA'
-        let found_suffixes =
-            searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
 
         // search suffix 'AC'
@@ -609,17 +556,10 @@ mod tests {
     #[test]
     fn test_il_equality() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-            1
-        );
+        let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sa,
-            proteins,
-            Box::new(suffix_index_to_protein),
-        );
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         let bounds_res = searcher.search_bounds(&[b'I']);
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
@@ -635,20 +575,14 @@ mod tests {
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sa,
-            proteins,
-            Box::new(suffix_index_to_protein),
-        );
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'RIZ' with equal I and L
-        let found_suffixes =
-            searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
         // search bounds 'RIZ' without equal I and L
-        let found_suffixes =
-            searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, false);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
@@ -659,20 +593,16 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins:     vec![Protein {
-                uniprot_id:             String::new(),
-                taxon_id:               0,
+            proteins: vec![Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
                 functional_annotations: vec![]
             }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sparse_sa,
-            proteins,
-            Box::new(suffix_index_to_protein)
-        );
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'M'], usize::MAX, true);
@@ -685,20 +615,16 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins:     vec![Protein {
-                uniprot_id:             String::new(),
-                taxon_id:               0,
+            proteins: vec![Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
                 functional_annotations: vec![]
             }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sparse_sa,
-            proteins,
-            Box::new(suffix_index_to_protein)
-        );
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
@@ -710,20 +636,16 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins:     vec![Protein {
-                uniprot_id:             String::new(),
-                taxon_id:               0,
+            proteins: vec![Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
                 functional_annotations: vec![]
             }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sparse_sa,
-            proteins,
-            Box::new(suffix_index_to_protein)
-        );
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
@@ -735,20 +657,16 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins:     vec![Protein {
-                uniprot_id:             String::new(),
-                taxon_id:               0,
+            proteins: vec![Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
                 functional_annotations: vec![]
             }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sparse_sa,
-            proteins,
-            Box::new(suffix_index_to_protein)
-        );
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
@@ -762,20 +680,16 @@ mod tests {
 
         let proteins = Proteins {
             input_string: text,
-            proteins:     vec![Protein {
-                uniprot_id:             String::new(),
-                taxon_id:               0,
+            proteins: vec![Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
                 functional_annotations: vec![]
             }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(
-            sparse_sa,
-            proteins,
-            Box::new(suffix_index_to_protein)
-        );
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);

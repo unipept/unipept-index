@@ -1,16 +1,9 @@
 use std::{
     error::Error,
-    io::{
-        BufRead,
-        Write
-    }
+    io::{BufRead, Write}
 };
 
-use bitarray::{
-    data_to_writer,
-    Binary,
-    BitArray
-};
+use bitarray::{data_to_writer, Binary, BitArray};
 use sa_index::SuffixArray;
 
 /// Writes the compressed suffix array to a writer.
@@ -148,24 +141,19 @@ mod tests {
         let mut writer = vec![];
         dump_compressed_suffix_array(sa, 1, 8, &mut writer).unwrap();
 
-        assert_eq!(
-            writer,
-            vec![
-                // bits per value
-                8, // sparseness factor
-                1, // size of the suffix array
-                10, 0, 0, 0, 0, 0, 0, 0, // compressed suffix array
-                8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9
-            ]
-        );
+        assert_eq!(writer, vec![
+            // bits per value
+            8, // sparseness factor
+            1, // size of the suffix array
+            10, 0, 0, 0, 0, 0, 0, 0, // compressed suffix array
+            8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9
+        ]);
     }
 
     #[test]
     #[should_panic(expected = "Could not write the required bits to the writer")]
     fn test_dump_compressed_suffix_array_fail_required_bits() {
-        let mut writer = FailingWriter {
-            valid_write_count: 0
-        };
+        let mut writer = FailingWriter { valid_write_count: 0 };
 
         dump_compressed_suffix_array(vec![], 1, 8, &mut writer).unwrap();
     }
@@ -173,9 +161,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the sparseness factor to the writer")]
     fn test_dump_compressed_suffix_array_fail_sparseness_factor() {
-        let mut writer = FailingWriter {
-            valid_write_count: 1
-        };
+        let mut writer = FailingWriter { valid_write_count: 1 };
 
         dump_compressed_suffix_array(vec![], 1, 8, &mut writer).unwrap();
     }
@@ -183,9 +169,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the size of the suffix array to the writer")]
     fn test_dump_compressed_suffix_array_fail_size() {
-        let mut writer = FailingWriter {
-            valid_write_count: 2
-        };
+        let mut writer = FailingWriter { valid_write_count: 2 };
 
         dump_compressed_suffix_array(vec![], 1, 8, &mut writer).unwrap();
     }
@@ -193,9 +177,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the compressed suffix array to the writer")]
     fn test_dump_compressed_suffix_array_fail_compressed_suffix_array() {
-        let mut writer = FailingWriter {
-            valid_write_count: 3
-        };
+        let mut writer = FailingWriter { valid_write_count: 3 };
 
         dump_compressed_suffix_array(vec![1], 1, 8, &mut writer).unwrap();
     }
@@ -213,7 +195,7 @@ mod tests {
         let compressed_suffix_array = load_compressed_suffix_array(&mut reader, 8).unwrap();
 
         assert_eq!(compressed_suffix_array.sample_rate(), 1);
-        for i in 0 .. 10 {
+        for i in 0..10 {
             assert_eq!(compressed_suffix_array.get(i), i as i64 + 1);
         }
     }
@@ -221,9 +203,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not read the sample rate from the binary file")]
     fn test_load_compressed_suffix_array_fail_sample_rate() {
-        let mut reader = FailingReader {
-            valid_read_count: 0
-        };
+        let mut reader = FailingReader { valid_read_count: 0 };
 
         load_compressed_suffix_array(&mut reader, 8).unwrap();
     }
@@ -231,9 +211,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not read the size of the suffix array from the binary file")]
     fn test_load_compressed_suffix_array_fail_size() {
-        let mut reader = FailingReader {
-            valid_read_count: 1
-        };
+        let mut reader = FailingReader { valid_read_count: 1 };
 
         load_compressed_suffix_array(&mut reader, 8).unwrap();
     }
@@ -241,27 +219,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not read the compressed suffix array from the binary file")]
     fn test_load_compressed_suffix_array_fail_compressed_suffix_array() {
-        let mut reader = FailingReader {
-            valid_read_count: 2
-        };
+        let mut reader = FailingReader { valid_read_count: 2 };
 
         load_compressed_suffix_array(&mut reader, 8).unwrap();
     }
 
     #[test]
     fn test_failing_writer() {
-        let mut writer = FailingWriter {
-            valid_write_count: 0
-        };
+        let mut writer = FailingWriter { valid_write_count: 0 };
         assert!(writer.flush().is_ok());
         assert!(writer.write(&[0]).is_err());
     }
 
     #[test]
     fn test_failing_reader() {
-        let mut reader = FailingReader {
-            valid_read_count: 0
-        };
+        let mut reader = FailingReader { valid_read_count: 0 };
         let right_buffer: [u8; 0] = [];
         assert_eq!(reader.fill_buf().unwrap(), &right_buffer);
         assert_eq!(reader.consume(0), ());

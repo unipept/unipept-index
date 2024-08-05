@@ -1,31 +1,21 @@
 use std::{
     error::Error,
     fs::File,
-    io::{
-        BufReader,
-        Read
-    },
+    io::{BufReader, Read},
     sync::Arc
 };
 
 use axum::{
-    extract::{
-        DefaultBodyLimit,
-        State
-    },
+    extract::{DefaultBodyLimit, State},
     http::StatusCode,
     routing::post,
-    Json,
-    Router
+    Json, Router
 };
 use clap::Parser;
 use sa_compression::load_compressed_suffix_array;
 use sa_index::{
     binary::load_suffix_array,
-    peptide_search::{
-        search_all_peptides,
-        SearchResult
-    },
+    peptide_search::{search_all_peptides, SearchResult},
     sa_searcher::SparseSearcher,
     SuffixArray
 };
@@ -40,7 +30,7 @@ pub struct Arguments {
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file:    String
+    index_file: String
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -63,7 +53,7 @@ fn default_true() -> bool {
 /// * `clean_taxa` - True if we only want to use proteins marked as "valid"
 #[derive(Debug, Deserialize)]
 struct InputData {
-    peptides:         Vec<String>,
+    peptides: Vec<String>,
     #[serde(default = "default_cutoff")] // default value is 10000
     cutoff: usize,
     #[serde(default = "bool::default")]
@@ -93,12 +83,7 @@ async fn search(
     State(searcher): State<Arc<SparseSearcher>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    let search_result = search_all_peptides(
-        &searcher,
-        &data.peptides,
-        data.cutoff,
-        data.equate_il,
-    );
+    let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il);
 
     Ok(Json(search_result))
 }
@@ -116,10 +101,7 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments {
-        database_file,
-        index_file
-    } = args;
+    let Arguments { database_file, index_file } = args;
 
     eprintln!();
     eprintln!("📋 Started loading the suffix array...");
@@ -134,10 +116,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let proteins = Proteins::try_from_database_file(&database_file)?;
     eprintln!("✅ Successfully loaded the proteins!");
 
-    let searcher = Arc::new(SparseSearcher::new(
-        suffix_array,
-        proteins
-    ));
+    let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
 
     // build our application with a route
     let app = Router::new()

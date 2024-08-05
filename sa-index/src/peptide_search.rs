@@ -2,10 +2,7 @@ use rayon::prelude::*;
 use sa_mappings::proteins::Protein;
 use serde::Serialize;
 
-use crate::sa_searcher::{
-    SearchAllSuffixesResult,
-    Searcher
-};
+use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
 
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
@@ -20,6 +17,16 @@ pub struct ProteinInfo {
     pub taxon: u32,
     pub uniprot_accession: String,
     pub functional_annotations: String
+}
+
+impl From<&Protein> for ProteinInfo {
+    fn from(protein: &Protein) -> Self {
+        ProteinInfo {
+            taxon: protein.taxon_id,
+            uniprot_accession: protein.uniprot_id.clone(),
+            functional_annotations: protein.get_functional_annotations()
+        }
+    }
 }
 
 /// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
@@ -45,46 +52,31 @@ pub fn search_proteins_for_peptide<'a>(
     cutoff: usize,
     equate_il: bool
 ) -> Option<(bool, Vec<&'a Protein>)> {
-    let peptide = peptide.strip_suffix('\n').unwrap_or(peptide).to_uppercase();
+    let peptide = peptide.trim_end().to_uppercase();
 
     // words that are shorter than the sample rate are not searchable
     if peptide.len() < searcher.sa.sample_rate() as usize {
         return None;
     }
 
-    let suffix_search =
-        searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il);
-    let mut cutoff_used = false;
-    let suffixes = match suffix_search {
-        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => {
-            cutoff_used = true;
-            matched_suffixes
-        }
-        SearchAllSuffixesResult::SearchResult(matched_suffixes) => matched_suffixes,
-        SearchAllSuffixesResult::NoMatches => return None
-    };
+    let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il);
+    let (suffixes, cutoff_used) = match suffix_search {
+        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
+        SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
+        SearchAllSuffixesResult::NoMatches => None
+    }?;
 
     let proteins = searcher.retrieve_proteins(&suffixes);
 
     Some((cutoff_used, proteins))
 }
 
-pub fn search_peptide(
-    searcher: &Searcher,
-    peptide: &str,
-    cutoff: usize,
-    equate_il: bool
-) -> Option<SearchResult> {
-    let (cutoff_used, proteins) =
-        search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
+pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult> {
+    let (cutoff_used, proteins) = search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
     Some(SearchResult {
         sequence: peptide.to_string(),
-        proteins: proteins.iter().map(|protein| ProteinInfo {
-            taxon: protein.taxon_id,
-            uniprot_accession: protein.uniprot_id.clone(),
-            functional_annotations: protein.get_functional_annotations()
-        }).collect(),
+        proteins: proteins.iter().map(|&protein| protein.into()).collect(),
         cutoff_used
     })
 }
@@ -129,13 +121,14 @@ mod tests {
     #[test]
     fn test_serialize_protein_info() {
         let protein_info = ProteinInfo {
-            taxon:                  1,
-            uniprot_accession:      "P12345".to_string(),
+            taxon: 1,
+            uniprot_accession: "P12345".to_string(),
             functional_annotations: "GO:0001234;GO:0005678".to_string()
         };
 
         let generated_json = serde_json::to_string(&protein_info).unwrap();
-        let expected_json = "{\"taxon\":1,\"uniprot_accession\":\"P12345\",\"functional_annotations\":\"GO:0001234;GO:0005678\"}";
+        let expected_json =
+            "{\"taxon\":1,\"uniprot_accession\":\"P12345\",\"functional_annotations\":\"GO:0001234;GO:0005678\"}";
 
         assert_json_eq(&generated_json, expected_json);
     }
@@ -143,8 +136,8 @@ mod tests {
     #[test]
     fn test_serialize_search_result() {
         let search_result = SearchResult {
-            sequence:    "MSKIAALLPSV".to_string(),
-            proteins:    vec![],
+            sequence: "MSKIAALLPSV".to_string(),
+            proteins: vec![],
             cutoff_used: true
         };
 

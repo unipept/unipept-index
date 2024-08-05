@@ -8,7 +8,7 @@ fn generate_decoded_annotations(count: usize) -> String {
     let mut random = rand::thread_rng();
 
     let mut annotations = String::new();
-    for _ in 0 .. count {
+    for _ in 0..count {
         annotations.push_str(&generate_annotation(&mut random));
         annotations.push(';');
     }

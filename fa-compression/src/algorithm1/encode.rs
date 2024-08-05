@@ -1,9 +1,6 @@
 //! This module contains the function to encode the input string into a compressed byte vector.
 
-use super::{
-    CharacterSet,
-    Encode
-};
+use super::{CharacterSet, Encode};
 
 /// Encodes the input string into a compressed byte vector.
 ///
@@ -50,11 +47,11 @@ pub fn encode(input: &str) -> Vec<u8> {
     // Read the input and split the annotations into the corresponding vectors
     for annotation in input.split(';') {
         if annotation.starts_with("IPR") {
-            interpros.push(&annotation[7 ..]);
+            interpros.push(&annotation[7..]);
         } else if annotation.starts_with("GO") {
-            gos.push(&annotation[3 ..]);
+            gos.push(&annotation[3..]);
         } else if annotation.starts_with("EC") {
-            ecs.push(&annotation[3 ..]);
+            ecs.push(&annotation[3..]);
         }
     }
 
@@ -109,33 +106,27 @@ mod tests {
 
     #[test]
     fn test_encode_no_ec() {
-        assert_eq!(
-            encode("IPR:IPR016364;GO:0009279;IPR:IPR008816"),
-            vec![225, 17, 163, 138, 225, 39, 71, 95, 17, 153, 39]
-        )
+        assert_eq!(encode("IPR:IPR016364;GO:0009279;IPR:IPR008816"), vec![
+            225, 17, 163, 138, 225, 39, 71, 95, 17, 153, 39
+        ])
     }
 
     #[test]
     fn test_encode_no_go() {
-        assert_eq!(
-            encode("IPR:IPR016364;EC:1.1.1.-;EC:1.2.1.7"),
-            vec![44, 44, 44, 191, 44, 60, 44, 142, 225, 39, 71, 80]
-        )
+        assert_eq!(encode("IPR:IPR016364;EC:1.1.1.-;EC:1.2.1.7"), vec![
+            44, 44, 44, 191, 44, 60, 44, 142, 225, 39, 71, 80
+        ])
     }
 
     #[test]
     fn test_encode_no_ipr() {
-        assert_eq!(
-            encode("EC:1.1.1.-;GO:0009279;GO:0009279"),
-            vec![44, 44, 44, 190, 17, 26, 56, 175, 17, 26, 56, 174]
-        )
+        assert_eq!(encode("EC:1.1.1.-;GO:0009279;GO:0009279"), vec![44, 44, 44, 190, 17, 26, 56, 175, 17, 26, 56, 174])
     }
 
     #[test]
     fn test_encode_all() {
-        assert_eq!(
-            encode("IPR:IPR016364;EC:1.1.1.-;IPR:IPR032635;GO:0009279;IPR:IPR008816"),
-            vec![44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117, 241, 67, 116, 111, 17, 153, 39]
-        )
+        assert_eq!(encode("IPR:IPR016364;EC:1.1.1.-;IPR:IPR032635;GO:0009279;IPR:IPR008816"), vec![
+            44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117, 241, 67, 116, 111, 17, 153, 39
+        ])
     }
 }

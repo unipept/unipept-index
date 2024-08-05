@@ -1,9 +1,6 @@
 use std::error::Error;
 
-use clap::{
-    Parser,
-    ValueEnum
-};
+use clap::{Parser, ValueEnum};
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
@@ -11,20 +8,20 @@ pub struct Arguments {
     /// File with the proteins used to build the suffix tree. All the proteins are expected to be
     /// concatenated using a hashtag `#`.
     #[arg(short, long)]
-    pub database_file:          String,
+    pub database_file: String,
     /// Output location where to store the suffix array
     #[arg(short, long)]
-    pub output:                 String,
+    pub output: String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
     /// the SA is used)
     #[arg(short, long, default_value_t = 1)]
-    pub sparseness_factor:      u8,
+    pub sparseness_factor: u8,
     /// The algorithm used to construct the suffix array (default value LibSais)
     #[arg(short('a'), long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
     pub construction_algorithm: SAConstructionAlgorithm,
     /// If the suffix array should be compressed (default value true)
     #[arg(short, long, default_value_t = false)]
-    pub compress_sa:            bool
+    pub compress_sa: bool
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array
@@ -100,7 +97,7 @@ fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) {
     }
 
     let mut current_sampled_index = 0;
-    for i in 0 .. sa.len() {
+    for i in 0..sa.len() {
         let current_sa_val = sa[i];
         if current_sa_val % sparseness_factor as i64 == 0 {
             sa[current_sampled_index] = current_sa_val;
@@ -144,10 +141,7 @@ mod tests {
             SAConstructionAlgorithm::from_str("lib-div-suf-sort", false),
             Ok(SAConstructionAlgorithm::LibDivSufSort)
         );
-        assert_eq!(
-            SAConstructionAlgorithm::from_str("lib-sais", false),
-            Ok(SAConstructionAlgorithm::LibSais)
-        );
+        assert_eq!(SAConstructionAlgorithm::from_str("lib-sais", false), Ok(SAConstructionAlgorithm::LibSais));
     }
 
     #[test]
