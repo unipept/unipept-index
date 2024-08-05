@@ -1,59 +1,28 @@
 use std::{
-    fs::{
-        File,
-        OpenOptions
-    },
+    fs::{File, OpenOptions},
     io::BufWriter,
-    time::{
-        SystemTime,
-        SystemTimeError,
-        UNIX_EPOCH
-    }
+    time::{SystemTime, SystemTimeError, UNIX_EPOCH}
 };
 
 use clap::Parser;
-use sa_builder::{
-    build_ssa,
-    Arguments
-};
+use sa_builder::{build_ssa, Arguments};
 use sa_compression::dump_compressed_suffix_array;
 use sa_index::binary::dump_suffix_array;
-use sa_mappings::{
-    proteins::Proteins,
-    taxonomy::{
-        AggregationMethod,
-        TaxonAggregator
-    }
-};
+use sa_mappings::proteins::Proteins;
 
 fn main() {
     let Arguments {
         database_file,
-        taxonomy,
         output,
         sparseness_factor,
         construction_algorithm,
         compress_sa
     } = Arguments::parse();
-
-    eprintln!();
-    eprintln!("📋 Started loading the taxon file...");
-    let start_taxon_time = get_time_ms().unwrap();
-    let taxon_id_calculator =
-        TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-    eprintln!(
-        "✅ Successfully loaded the taxon file in {} seconds!",
-        (get_time_ms().unwrap() - start_taxon_time) / 1000.0
-    );
-    eprintln!("\tAggregation method: LCA*");
-
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
     let start_proteins_time = get_time_ms().unwrap();
-    let mut data =
-        Proteins::try_from_database_file_without_annotations(&database_file, &taxon_id_calculator)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    let mut data = Proteins::try_from_database_file_without_annotations(&database_file)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     eprintln!(
         "✅ Successfully loaded the proteins in {} seconds!",
         (get_time_ms().unwrap() - start_proteins_time) / 1000.0
@@ -72,8 +41,8 @@ fn main() {
     eprintln!("\tSample rate: {}", sparseness_factor);
 
     // open the output file
-    let mut file = open_file_buffer(&output, 100 * 1024 * 1024)
-        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    let mut file =
+        open_file_buffer(&output, 100 * 1024 * 1024).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     eprintln!();
     eprintln!("📋 Started dumping the suffix array...");
@@ -82,9 +51,7 @@ fn main() {
     if compress_sa {
         let bits_per_value = (data.len() as f64).log2().ceil() as usize;
 
-        if let Err(err) =
-            dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file)
-        {
+        if let Err(err) = dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file) {
             eprint_and_exit(err.to_string().as_str());
         };
 

@@ -1,53 +1,26 @@
 use std::{
     error::Error,
     fs::File,
-    io::{
-        BufReader,
-        Read
-    },
+    io::{BufReader, Read},
     sync::Arc
 };
 
 use axum::{
-    extract::{
-        DefaultBodyLimit,
-        State
-    },
+    extract::{DefaultBodyLimit, State},
     http::StatusCode,
-    routing::{
-        get,
-        post
-    },
-    Json,
-    Router
+    routing::post,
+    Json, Router
 };
 use clap::Parser;
 use sa_compression::load_compressed_suffix_array;
 use sa_index::{
     binary::load_suffix_array,
-    peptide_search::{
-        analyse_all_peptides,
-        search_all_peptides,
-        OutputData,
-        SearchOnlyResult,
-        SearchResultWithAnalysis
-    },
-    sa_searcher::Searcher,
-    suffix_to_protein_index::SparseSuffixToProtein,
+    peptide_search::{search_all_peptides, SearchResult},
+    sa_searcher::SparseSearcher,
     SuffixArray
 };
-use sa_mappings::{
-    functionality::FunctionAggregator,
-    proteins::Proteins,
-    taxonomy::{
-        AggregationMethod,
-        TaxonAggregator
-    }
-};
-use serde::{
-    Deserialize,
-    Serialize
-};
+use sa_mappings::proteins::Proteins;
+use serde::Deserialize;
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -57,10 +30,7 @@ pub struct Arguments {
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file:    String,
-    #[arg(short, long)]
-    /// The taxonomy to be used as a tsv file. This is a preprocessed version of the NCBI taxonomy.
-    taxonomy:      String
+    index_file: String
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -79,19 +49,16 @@ fn default_true() -> bool {
 /// # Arguments
 /// * `peptides` - List of peptides we want to process
 /// * `cutoff` - The maximum amount of matches to process, default value 10000
-/// * `equalize_I_and_L` - True if we want to equalize I and L during search
+/// * `equate_il` - True if we want to equalize I and L during search
 /// * `clean_taxa` - True if we only want to use proteins marked as "valid"
-#[derive(Debug, Deserialize, Serialize)]
-#[allow(non_snake_case)]
+#[derive(Debug, Deserialize)]
 struct InputData {
-    peptides:         Vec<String>,
+    peptides: Vec<String>,
     #[serde(default = "default_cutoff")] // default value is 10000
     cutoff: usize,
     #[serde(default = "bool::default")]
     // default value is false // TODO: maybe default should be true?
-    equalize_I_and_L: bool,
-    #[serde(default = "bool::default")] // default value is false
-    clean_taxa: bool
+    equate_il: bool
 }
 
 #[tokio::main]
@@ -101,35 +68,6 @@ async fn main() {
         eprintln!("{}", err);
         std::process::exit(1);
     }
-}
-
-/// Basic handler used to check the server status
-async fn root() -> &'static str {
-    "Server is online"
-}
-
-/// Endpoint executed for peptide matching and taxonomic and functional analysis
-///
-/// # Arguments
-/// * `state(searcher)` - The searcher object provided by the server
-/// * `data` - InputData object provided by the user with the peptides to be searched and the config
-///
-/// # Returns
-///
-/// Returns the search and analysis results from the index as a JSON
-async fn analyse(
-    State(searcher): State<Arc<Searcher>>,
-    data: Json<InputData>
-) -> Result<Json<OutputData<SearchResultWithAnalysis>>, StatusCode> {
-    let search_result = analyse_all_peptides(
-        &searcher,
-        &data.peptides,
-        data.cutoff,
-        data.equalize_I_and_L,
-        data.clean_taxa
-    );
-
-    Ok(Json(search_result))
 }
 
 /// Endpoint executed for peptide matching, without any analysis
@@ -142,16 +80,10 @@ async fn analyse(
 ///
 /// Returns the search results from the index as a JSON
 async fn search(
-    State(searcher): State<Arc<Searcher>>,
+    State(searcher): State<Arc<SparseSearcher>>,
     data: Json<InputData>
-) -> Result<Json<OutputData<SearchOnlyResult>>, StatusCode> {
-    let search_result = search_all_peptides(
-        &searcher,
-        &data.peptides,
-        data.cutoff,
-        data.equalize_I_and_L,
-        data.clean_taxa
-    );
+) -> Result<Json<Vec<SearchResult>>, StatusCode> {
+    let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il);
 
     Ok(Json(search_result))
 }
@@ -169,55 +101,25 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments {
-        database_file,
-        index_file,
-        taxonomy
-    } = args;
+    let Arguments { database_file, index_file } = args;
 
     eprintln!();
     eprintln!("📋 Started loading the suffix array...");
-    let sa = load_suffix_array_file(&index_file)?;
+    let suffix_array = load_suffix_array_file(&index_file)?;
     eprintln!("✅ Successfully loaded the suffix array!");
-    eprintln!("\tAmount of items: {}", sa.len());
-    eprintln!("\tAmount of bits per item: {}", sa.bits_per_value());
-    eprintln!("\tSample rate: {}", sa.sample_rate());
-
-    eprintln!();
-    eprintln!("📋 Started loading the taxon file...");
-    let taxon_id_calculator =
-        TaxonAggregator::try_from_taxonomy_file(&taxonomy, AggregationMethod::LcaStar)?;
-    eprintln!("✅ Successfully loaded the taxon file!");
-    eprintln!("\tAggregation method: LCA*");
-
-    eprintln!();
-    eprintln!("📋 Started creating the function aggregator...");
-    let function_aggregator = FunctionAggregator {};
-    eprintln!("✅ Successfully created the function aggregator!");
+    eprintln!("\tAmount of items: {}", suffix_array.len());
+    eprintln!("\tAmount of bits per item: {}", suffix_array.bits_per_value());
+    eprintln!("\tSample rate: {}", suffix_array.sample_rate());
 
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
-    let proteins = Proteins::try_from_database_file(&database_file, &taxon_id_calculator)?;
-    let suffix_index_to_protein = Box::new(SparseSuffixToProtein::new(&proteins.input_string));
+    let proteins = Proteins::try_from_database_file(&database_file)?;
     eprintln!("✅ Successfully loaded the proteins!");
 
-    let searcher = Arc::new(Searcher::new(
-        sa,
-        suffix_index_to_protein,
-        proteins,
-        taxon_id_calculator,
-        function_aggregator
-    ));
+    let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
 
     // build our application with a route
     let app = Router::new()
-        // `GET /` goes to `root`
-        .route("/", get(root))
-        // `POST /analyse` goes to `analyse` and set max payload size to 5 MB
-        .route("/analyse", post(analyse))
-        .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))
-        .with_state(searcher.clone())
-        // `POST /search` goes to `search` and set max payload size to 5 MB
         .route("/search", post(search))
         .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))
         .with_state(searcher);

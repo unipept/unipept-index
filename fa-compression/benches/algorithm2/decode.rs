@@ -1,9 +1,5 @@
 use criterion::black_box;
-use fa_compression::algorithm2::{
-    decode,
-    encode,
-    CompressionTable
-};
+use fa_compression::algorithm2::{decode, encode, CompressionTable};
 
 use super::util::generate_annotation;
 
@@ -14,7 +10,7 @@ fn generate_encoded_annotations_and_table(count: usize) -> (Vec<u8>, Compression
     let mut compression_table2 = CompressionTable::new();
 
     let mut annotations = String::new();
-    for _ in 0 .. count {
+    for _ in 0..count {
         let annotation = generate_annotation(&mut random);
         annotations.push_str(&annotation);
         annotations.push(';');

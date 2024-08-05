@@ -1,10 +1,7 @@
 //! This module provides a function to decode a byte array into a string representation of
 //! annotations.
 
-use super::{
-    CharacterSet,
-    Decode
-};
+use super::{CharacterSet, Decode};
 
 /// The prefixes for the different types of annotations.
 static PREFIXES: [&str; 3] = ["EC:", "GO:", "IPR:IPR"];
@@ -53,11 +50,7 @@ pub fn decode(input: &[u8]) -> String {
     //       Given the additional prefixes, we can safely triple the space. This might
     //       allocate more than necessary, but it's a simple and fast solution.
     let mut result = String::with_capacity(input.len() * 3);
-    for (annotations, prefix) in decoded
-        .split(',')
-        .zip(PREFIXES)
-        .filter(|(s, _)| !s.is_empty())
-    {
+    for (annotations, prefix) in decoded.split(',').zip(PREFIXES).filter(|(s, _)| !s.is_empty()) {
         for annotation in annotations.split(';') {
             result.push_str(prefix);
             result.push_str(annotation);
@@ -97,34 +90,23 @@ mod tests {
 
     #[test]
     fn test_decode_no_ec() {
-        assert_eq!(
-            decode(&[225, 17, 163, 138, 225, 39, 71, 95, 17, 153, 39]),
-            "GO:0009279;IPR:IPR016364;IPR:IPR008816"
-        )
+        assert_eq!(decode(&[225, 17, 163, 138, 225, 39, 71, 95, 17, 153, 39]), "GO:0009279;IPR:IPR016364;IPR:IPR008816")
     }
 
     #[test]
     fn test_decode_no_go() {
-        assert_eq!(
-            decode(&[44, 44, 44, 191, 44, 60, 44, 142, 225, 39, 71, 80]),
-            "EC:1.1.1.-;EC:1.2.1.7;IPR:IPR016364"
-        )
+        assert_eq!(decode(&[44, 44, 44, 191, 44, 60, 44, 142, 225, 39, 71, 80]), "EC:1.1.1.-;EC:1.2.1.7;IPR:IPR016364")
     }
 
     #[test]
     fn test_decode_no_ipr() {
-        assert_eq!(
-            decode(&[44, 44, 44, 190, 17, 26, 56, 175, 17, 26, 56, 174]),
-            "EC:1.1.1.-;GO:0009279;GO:0009279"
-        )
+        assert_eq!(decode(&[44, 44, 44, 190, 17, 26, 56, 175, 17, 26, 56, 174]), "EC:1.1.1.-;GO:0009279;GO:0009279")
     }
 
     #[test]
     fn test_decode_all() {
         assert_eq!(
-            decode(&[
-                44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117, 241, 67, 116, 111, 17, 153, 39
-            ]),
+            decode(&[44, 44, 44, 190, 17, 26, 56, 174, 18, 116, 117, 241, 67, 116, 111, 17, 153, 39]),
             "EC:1.1.1.-;GO:0009279;IPR:IPR016364;IPR:IPR032635;IPR:IPR008816"
         )
     }

@@ -36,9 +36,7 @@ impl CompressionTable {
     /// let table = CompressionTable::new();
     /// ```
     pub fn new() -> CompressionTable {
-        CompressionTable {
-            entries: Vec::new()
-        }
+        CompressionTable { entries: Vec::new() }
     }
 
     /// Adds a new entry to the compression table.
@@ -57,16 +55,12 @@ impl CompressionTable {
     /// table.add_entry("IPR:IPR000002".to_string());
     /// ```
     pub fn add_entry(&mut self, annotation: String) {
-        self.entries.push(CompressionTableEntry {
-            annotation
-        });
+        self.entries.push(CompressionTableEntry { annotation });
     }
 
     /// Returns the index of the given annotation in the compression table, if it exists.
     fn index_of(&self, annotation: &str) -> Option<usize> {
-        self.entries
-            .iter()
-            .position(|entry| entry.annotation == annotation)
+        self.entries.iter().position(|entry| entry.annotation == annotation)
     }
 }
 

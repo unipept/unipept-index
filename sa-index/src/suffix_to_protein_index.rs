@@ -1,8 +1,5 @@
 use clap::ValueEnum;
-use sa_mappings::proteins::{
-    SEPARATION_CHARACTER,
-    TERMINATION_CHARACTER
-};
+use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 use crate::Nullable;
 
@@ -49,10 +46,7 @@ impl SuffixToProteinIndex for DenseSuffixToProtein {
 
 impl SuffixToProteinIndex for SparseSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
-        let protein_index = self
-            .mapping
-            .binary_search(&suffix)
-            .unwrap_or_else(|index| index - 1);
+        let protein_index = self.mapping.binary_search(&suffix).unwrap_or_else(|index| index - 1);
         // if the next value in the mapping is 1 larger than the current suffix, that means that the
         // current suffix starts with a SEPARATION_CHARACTER or TERMINATION_CHARACTER
         // this means it does not belong to a protein
@@ -85,9 +79,7 @@ impl DenseSuffixToProtein {
             }
         }
         suffix_index_to_protein.shrink_to_fit();
-        DenseSuffixToProtein {
-            mapping: suffix_index_to_protein
-        }
+        DenseSuffixToProtein { mapping: suffix_index_to_protein }
     }
 }
 
@@ -108,26 +100,18 @@ impl SparseSuffixToProtein {
             }
         }
         suffix_index_to_protein.shrink_to_fit();
-        SparseSuffixToProtein {
-            mapping: suffix_index_to_protein
-        }
+        SparseSuffixToProtein { mapping: suffix_index_to_protein }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use clap::ValueEnum;
-    use sa_mappings::proteins::{
-        SEPARATION_CHARACTER,
-        TERMINATION_CHARACTER
-    };
+    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
     use crate::{
         suffix_to_protein_index::{
-            DenseSuffixToProtein,
-            SparseSuffixToProtein,
-            SuffixToProteinIndex,
-            SuffixToProteinMappingStyle
+            DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle
         },
         Nullable
     };
@@ -140,10 +124,7 @@ mod tests {
 
     #[test]
     fn test_suffix_to_protein_mapping_style() {
-        assert_eq!(
-            SuffixToProteinMappingStyle::Dense,
-            SuffixToProteinMappingStyle::from_str("dense", false).unwrap()
-        );
+        assert_eq!(SuffixToProteinMappingStyle::Dense, SuffixToProteinMappingStyle::from_str("dense", false).unwrap());
         assert_eq!(
             SuffixToProteinMappingStyle::Sparse,
             SuffixToProteinMappingStyle::from_str("sparse", false).unwrap()
@@ -164,9 +145,7 @@ mod tests {
     fn test_sparse_build() {
         let u8_text = &build_text();
         let index = SparseSuffixToProtein::new(u8_text);
-        let expected = SparseSuffixToProtein {
-            mapping: vec![0, 4, 7, 11]
-        };
+        let expected = SparseSuffixToProtein { mapping: vec![0, 4, 7, 11] };
         assert_eq!(index, expected);
     }
 

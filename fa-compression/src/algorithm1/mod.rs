@@ -170,10 +170,8 @@ impl BitOr for CharacterSet {
 mod tests {
     use super::*;
 
-    static CHARACTERS: [u8; 16] = [
-        b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b'n', b',',
-        b';'
-    ];
+    static CHARACTERS: [u8; 16] =
+        [b'$', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'-', b'.', b'n', b',', b';'];
 
     static CHARACTER_SETS: [CharacterSet; 16] = [
         CharacterSet::Empty,
@@ -196,8 +194,8 @@ mod tests {
 
     #[test]
     fn test_or() {
-        for i in 0 .. CHARACTERS.len() {
-            for j in 0 .. CHARACTERS.len() {
+        for i in 0..CHARACTERS.len() {
+            for j in 0..CHARACTERS.len() {
                 assert_eq!(CHARACTER_SETS[i] | CHARACTER_SETS[j], ((i as u8) << 4) | (j as u8));
             }
         }
@@ -205,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_encode() {
-        for i in 0 .. CHARACTERS.len() {
+        for i in 0..CHARACTERS.len() {
             assert_eq!(CHARACTER_SETS[i], CharacterSet::encode(CHARACTERS[i]));
         }
     }
