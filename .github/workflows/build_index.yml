@@ -67,15 +67,14 @@ jobs:
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
         run: |
-          prefix="build/$SP_VERSION"
-          zip -r "build/$SP_VERSION.zip" "$prefix"
+          cd build && zip -r "index_$SP_VERSION.zip" "$SP_VERSION"
 
       # Create a GitHub release and upload the zip file
       - name: Upload or Update Release
         id: upload_or_update_release
         uses: softprops/action-gh-release@v1
         with:
-          files: build/${{ env.SP_VERSION }}.zip
+          files: build/index_${{ env.SP_VERSION }}.zip
           tag_name: index-${{ env.SP_VERSION }}
           name: Index ${{ env.SP_VERSION }}
           commitish: ${{ github.sha }}
