@@ -62,7 +62,7 @@ jobs:
       - name: Run sa-builder
         run: |
           prefix="build/$SP_VERSION"
-          ./target/release/sa-builder -d "$prefix/proteins.tsv" -t "$prefix/taxons.tsv" -o "$prefix/sa_sparse3_compressed.bin" -s 3 -a lib-div-suf-sort -c
+          ./target/release/sa-builder -d "$prefix/proteins.tsv" -o "$prefix/sa_sparse3_compressed.bin" -s 3 -a lib-div-suf-sort -c
           
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
