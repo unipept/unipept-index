@@ -75,7 +75,7 @@ jobs:
         id: upload_or_update_release
         uses: softprops/action-gh-release@v1
         with:
-          files: build/$SP_VERSION.zip
+          files: build/${{ env.SP_VERSION }}.zip
           tag_name: index-${{ env.SP_VERSION }}
           name: Index ${{ env.SP_VERSION }}
           commitish: ${{ github.sha }}
