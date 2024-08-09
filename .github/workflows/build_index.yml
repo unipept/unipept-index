@@ -67,7 +67,7 @@ jobs:
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
         run: |
-          cd build && zip "index_$SP_VERSION.zip" "$SP_VERSION/*.tsv" "$SP_VERSION/*.bin"
+          cd build && zip "index_$SP_VERSION.zip" "$SP_VERSION/proteins.tsv" "$SP_VERSION/taxons.tsv" "$SP_VERSION/sa_sparse3_compressed.bin"
 
       # Create a GitHub release and upload the zip file
       - name: Upload or Update Release
