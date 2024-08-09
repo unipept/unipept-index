@@ -67,7 +67,7 @@ jobs:
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
         run: |
-          cd build && zip -r "index_$SP_VERSION.zip" "$SP_VERSION"
+          cd build && zip -r "index_$SP_VERSION.zip" "$SP_VERSION/*.tsv.lz4"
 
       # Create a GitHub release and upload the zip file
       - name: Upload or Update Release
