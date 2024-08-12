@@ -47,9 +47,7 @@ jobs:
       # Extract the contents of the output folder from the zip into a folder "build/input"
       - name: Extract zip contents
         run: |
-          unzip build/suffix-array.zip 'output/*' -d build/temp
-          mv build/temp/output/* build/input/
-          rm -r build/temp
+          unzip build/suffix-array.zip '*' -d build/input
 
       # Make a directory with the SP_VERSION and process files
       - name: Process files
