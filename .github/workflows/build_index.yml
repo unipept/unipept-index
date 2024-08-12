@@ -57,6 +57,7 @@ jobs:
           mkdir -p build/$SP_VERSION
           lz4 -d build/input/uniprot_entries.tsv.lz4 | cut -f2,4,7,8 > build/$SP_VERSION/proteins.tsv
           lz4 -d build/input/taxons.tsv.lz4 > build/$SP_VERSION/taxons.tsv
+          mv build/input/uniprot_entries.tsv.lz4 build/$SP_VERSION/uniprot_entries.tsv.lz4
 
       # Step 8: Run the sa-builder command
       - name: Run sa-builder
