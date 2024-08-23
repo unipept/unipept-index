@@ -308,10 +308,12 @@ impl Searcher {
         equate_il: bool,
         tryptic_search: bool
     ) -> SearchAllSuffixesResult {
+        eprintln!("trypic_search: {}", tryptic_search);
+
         // If we perform a tryptic search, the last character of the search string should be R or K
-        if tryptic_search && search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
-            return SearchAllSuffixesResult::NoMatches;
-        }
+        // if tryptic_search && search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
+        //     return SearchAllSuffixesResult::NoMatches;
+        // }
 
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
