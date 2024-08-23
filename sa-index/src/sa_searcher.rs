@@ -343,16 +343,16 @@ impl Searcher {
 
                     // If the suffix is smaller than the skip factor, we can't check the prefix
                     if suffix >= skip
-                        && (
-                            // Skip this check if we are not performing a tryptic search
-                            !tryptic_search
-                            // Check if the match is tryptic
-                            || ((
-                                self.proteins.input_string[suffix - skip - 1] == b'R' ||
-                                    self.proteins.input_string[suffix - skip - 1] == b'K' ||
-                                    self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
-                            ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P')
-                        )
+                        // && (
+                        //     // Skip this check if we are not performing a tryptic search
+                        //     !tryptic_search
+                        //     // Check if the match is tryptic
+                        //     || ((
+                        //         self.proteins.input_string[suffix - skip - 1] == b'R' ||
+                        //             self.proteins.input_string[suffix - skip - 1] == b'K' ||
+                        //             self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
+                        //     ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P')
+                        // )
                         && (
                             // If the skip factor is 0, the entire search string should match.
                             skip == 0
