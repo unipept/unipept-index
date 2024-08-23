@@ -51,7 +51,7 @@ pub fn search_proteins_for_peptide<'a>(
     peptide: &str,
     cutoff: usize,
     equate_il: bool,
-    missed: bool
+    tryptic: bool
 ) -> Option<(bool, Vec<&'a Protein>)> {
     let peptide = peptide.trim_end().to_uppercase();
 
@@ -60,7 +60,7 @@ pub fn search_proteins_for_peptide<'a>(
         return None;
     }
 
-    let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il, missed);
+    let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il, tryptic);
     let (suffixes, cutoff_used) = match suffix_search {
         SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
         SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
@@ -72,8 +72,8 @@ pub fn search_proteins_for_peptide<'a>(
     Some((cutoff_used, proteins))
 }
 
-pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_il: bool, missed: bool) -> Option<SearchResult> {
-    let (cutoff_used, proteins) = search_proteins_for_peptide(searcher, peptide, cutoff, equate_il, missed)?;
+pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_il: bool, tryptic: bool) -> Option<SearchResult> {
+    let (cutoff_used, proteins) = search_proteins_for_peptide(searcher, peptide, cutoff, equate_il, tryptic)?;
 
     Some(SearchResult {
         sequence: peptide.to_string(),
@@ -101,11 +101,11 @@ pub fn search_all_peptides(
     peptides: &Vec<String>,
     cutoff: usize,
     equate_il: bool,
-    missed: bool
+    tryptic: bool
 ) -> Vec<SearchResult> {
     peptides
         .par_iter()
-        .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il, missed))
+        .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il, tryptic))
         .collect()
 }
 

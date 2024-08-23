@@ -1,5 +1,4 @@
 use std::{cmp::min, ops::Deref};
-use std::str::from_utf8;
 use sa_mappings::proteins::{Protein, Proteins, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 use crate::{
@@ -307,8 +306,13 @@ impl Searcher {
         search_string: &[u8],
         max_matches: usize,
         equate_il: bool,
-        missed: bool
+        tryptic: bool
     ) -> SearchAllSuffixesResult {
+        // If we perform a tryptic search, the last character of the search string should be R or K
+        if tryptic && search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
+            return SearchAllSuffixesResult::NoMatches;
+        }
+
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
         for (i, &character) in search_string.iter().enumerate() {
@@ -326,18 +330,11 @@ impl Searcher {
             let il_locations_current_suffix = &il_locations[il_locations_start..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
-
-            eprintln!("skip: {}, current_search_string_prefix: {}, current_search_string_suffix: {}", skip, from_utf8(current_search_string_prefix).unwrap(), from_utf8(current_search_string_suffix).unwrap());
-
             let search_bound_result = self.search_bounds(&search_string[skip..]);
-
-            eprintln!("search_bound_result: {:?}", search_bound_result);
 
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
-                eprintln!("min_bound: {}, max_bound: {}", min_bound, max_bound);
-
                 // try all the partially matched suffixes and store the matching suffixes in an
                 // array (stop when our max number of matches is reached)
                 let mut sa_index = min_bound;
@@ -363,22 +360,19 @@ impl Searcher {
                                 equate_il
                             ))
                     {
-                        if !missed {
-                            let is_tryptic_match = (
-                                (suffix - skip == 0)
-                                    || self.proteins.input_string[suffix - skip - 1] == b'R'
-                                    || self.proteins.input_string[suffix - skip - 1] == b'K'
-                                    || self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
+                        if tryptic && (
+                            (suffix - skip == 0)
+                                || self.proteins.input_string[suffix - skip - 1] == b'R'
+                                || self.proteins.input_string[suffix - skip - 1] == b'K'
+                                || self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
                             ) && (
                                 self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P'
                                     || self.proteins.input_string[suffix - skip + search_string.len() + 1] == SEPARATION_CHARACTER
                                     || self.proteins.input_string[suffix - skip + search_string.len() + 1] == TERMINATION_CHARACTER
-                            );
-
-                            if !is_tryptic_match {
-                                sa_index += 1;
-                                continue;
-                            }
+                            )
+                        {
+                            sa_index += 1;
+                            continue;
                         }
 
                         matching_suffixes.push((suffix - skip) as i64);
@@ -573,16 +567,16 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search suffix 'VAA'
-        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false, true);
-        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
         let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
+        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
 
         // search suffix 'AC'
-        let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false, true);
-        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![11, 5]));
         let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false, false);
-        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![11]));
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![11, 5]));
+        let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false, true);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
     #[test]
