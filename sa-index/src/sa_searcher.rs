@@ -345,11 +345,11 @@ impl Searcher {
                     let checkable_suffix = suffix >= skip;
 
                     // Check for trypticity if a tryptic search is performed
-                    let is_tryptic = tryptic_search && (
+                    let is_tryptic = checkable_suffix && tryptic_search && (
                         self.proteins.input_string[suffix - skip - 1] == b'R' ||
                             self.proteins.input_string[suffix - skip - 1] == b'K' ||
                             self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
-                    ) && self.proteins.input_string[suffix - skip + search_string.len()] != b'P';
+                    ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P';
 
                     // If a tryptic search is performed and the suffix is not tryptic, we can skip
                     if tryptic_search && !is_tryptic {
