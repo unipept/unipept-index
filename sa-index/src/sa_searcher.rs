@@ -306,10 +306,10 @@ impl Searcher {
         search_string: &[u8],
         max_matches: usize,
         equate_il: bool,
-        tryptic: bool
+        tryptic_search: bool
     ) -> SearchAllSuffixesResult {
         // If we perform a tryptic search, the last character of the search string should be R or K
-        if tryptic && search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
+        if tryptic_search && search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
             return SearchAllSuffixesResult::NoMatches;
         }
 
@@ -345,13 +345,14 @@ impl Searcher {
                     let checkable_suffix = suffix >= skip;
 
                     // Check for trypticity if a tryptic search is performed
-                    let is_tryptic = tryptic && (
+                    let is_tryptic = tryptic_search && (
                         self.proteins.input_string[suffix - skip - 1] == b'R' ||
                             self.proteins.input_string[suffix - skip - 1] == b'K' ||
                             self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
                     ) && self.proteins.input_string[suffix - skip + search_string.len()] != b'P';
 
-                    if !is_tryptic {
+                    // If a tryptic search is performed and the suffix is not tryptic, we can skip
+                    if tryptic_search && !is_tryptic {
                         sa_index += 1;
                         continue;
                     }
