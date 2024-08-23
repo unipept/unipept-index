@@ -353,7 +353,7 @@ impl Searcher {
                         //             self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
                         //     ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P')
                         // )
-                        && (
+                        && ((
                             // If the skip factor is 0, the entire search string should match.
                             skip == 0
                             // If the skip factor is not 0, the prefix should match the prefix of the search string.
@@ -370,7 +370,7 @@ impl Searcher {
                             current_search_string_suffix,
                             &self.proteins.input_string[suffix..suffix + search_string.len() - skip],
                             equate_il
-                        )
+                        ))
                     {
                         matching_suffixes.push((suffix - skip) as i64);
 
