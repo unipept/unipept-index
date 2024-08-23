@@ -301,15 +301,14 @@ impl Searcher {
     ///
     /// Returns all the matching suffixes
     #[inline]
-    pub fn search_matching_suffixes(
+    pub fn search_matching_tryptic_suffixes(
         &self,
         search_string: &[u8],
         max_matches: usize,
-        equate_il: bool,
-        tryptic_search: bool
+        equate_il: bool
     ) -> SearchAllSuffixesResult {
-        // If we perform a tryptic search, the last character of the search string should be R or K
-        if tryptic_search && search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
+        // The last character of the search string should be R or K
+        if search_string[search_string.len() - 1] != b'R' && search_string[search_string.len() - 1] != b'K' {
             return SearchAllSuffixesResult::NoMatches;
         }
 
@@ -344,16 +343,12 @@ impl Searcher {
                     // If the suffix is smaller than the skip factor, we can't check the prefix
                     if suffix >= skip
                         && (
-                            // Skip this check if we are not performing a tryptic search
-                            !tryptic_search
-                            // Check if the match is tryptic
-                            || ((
-                                (suffix == skip) ||
+                            (suffix == skip) ||
                                 self.proteins.input_string[suffix - skip - 1] == b'R' ||
-                                    self.proteins.input_string[suffix - skip - 1] == b'K' ||
-                                    self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
-                            ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P')
+                                self.proteins.input_string[suffix - skip - 1] == b'K' ||
+                                self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
                         )
+                        && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P'
                         && ((
                             // If the skip factor is 0, the entire search string should match.
                             skip == 0
@@ -372,6 +367,83 @@ impl Searcher {
                             &self.proteins.input_string[suffix..suffix + search_string.len() - skip],
                             equate_il
                         ))
+                    {
+                        matching_suffixes.push((suffix - skip) as i64);
+
+                        // return if max number of matches is reached
+                        if matching_suffixes.len() >= max_matches {
+                            return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                        }
+                    }
+
+                    sa_index += 1;
+                }
+            }
+            skip += 1;
+        }
+
+        if matching_suffixes.is_empty() {
+            SearchAllSuffixesResult::NoMatches
+        } else {
+            SearchAllSuffixesResult::SearchResult(matching_suffixes)
+        }
+    }
+
+    #[inline]
+    pub fn search_matching_suffixes(
+        &self,
+        search_string: &[u8],
+        max_matches: usize,
+        equate_il: bool
+    ) -> SearchAllSuffixesResult {
+        let mut matching_suffixes: Vec<i64> = vec![];
+        let mut il_locations = vec![];
+        for (i, &character) in search_string.iter().enumerate() {
+            if character == b'I' || character == b'L' {
+                il_locations.push(i);
+            }
+        }
+
+        let mut skip: usize = 0;
+        while skip < self.sa.sample_rate() as usize {
+            let mut il_locations_start = 0;
+            while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip {
+                il_locations_start += 1;
+            }
+            let il_locations_current_suffix = &il_locations[il_locations_start..];
+            let current_search_string_prefix = &search_string[..skip];
+            let current_search_string_suffix = &search_string[skip..];
+            let search_bound_result = self.search_bounds(&search_string[skip..]);
+
+            // if the shorter part is matched, see if what goes before the matched suffix matches
+            // the unmatched part of the prefix
+            if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
+                // try all the partially matched suffixes and store the matching suffixes in an
+                // array (stop when our max number of matches is reached)
+                let mut sa_index = min_bound;
+                while sa_index < max_bound {
+                    let suffix = self.sa.get(sa_index) as usize;
+
+                    // If the suffix is smaller than the skip factor, we can't check the prefix
+                    if suffix >= skip
+                        && (
+                            // If the skip factor is 0, the entire search string should match.
+                            skip == 0
+                                // If the skip factor is not 0, the prefix should match the prefix of the search string.
+                                || Self::check_prefix(
+                                current_search_string_prefix,
+                                &self.proteins.input_string[suffix - skip..suffix],
+                                equate_il
+                            )
+                        )
+                        // If the prefix is matched, we can check the suffix.
+                        && Self::check_suffix(
+                            skip,
+                            il_locations_current_suffix,
+                            current_search_string_suffix,
+                            &self.proteins.input_string[suffix..suffix + search_string.len() - skip],
+                            equate_il
+                        )
                     {
                         matching_suffixes.push((suffix - skip) as i64);
 
@@ -566,16 +638,12 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search suffix 'VAA'
-        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
-        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false, true);
-        assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
 
         // search suffix 'AC'
-        let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![11, 5]));
-        let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false, true);
-        assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
     #[test]
@@ -603,11 +671,11 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'RIZ' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
         // search bounds 'RIZ' without equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, false, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
@@ -630,7 +698,7 @@ mod tests {
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'M'], usize::MAX, true, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'M'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0]));
     }
 
@@ -651,7 +719,7 @@ mod tests {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
     }
 
@@ -672,7 +740,7 @@ mod tests {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
 
@@ -695,7 +763,7 @@ mod tests {
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, false, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2]));
     }
 
@@ -717,7 +785,7 @@ mod tests {
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
 }

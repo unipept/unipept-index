@@ -60,7 +60,12 @@ pub fn search_proteins_for_peptide<'a>(
         return None;
     }
 
-    let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il, tryptic);
+    let suffix_search = if tryptic {
+        searcher.search_matching_tryptic_suffixes(peptide.as_bytes(), cutoff, equate_il)
+    } else {
+        searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il)
+    };
+
     let (suffixes, cutoff_used) = match suffix_search {
         SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
         SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
