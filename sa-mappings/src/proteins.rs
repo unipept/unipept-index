@@ -65,8 +65,6 @@ impl Proteins {
         // because of the encoded functional annotations
         let mut lines = ByteLines::new(BufReader::new(file));
 
-        input_string.push(SEPARATION_CHARACTER.into());
-
         while let Some(Ok(line)) = lines.next() {
             let mut fields = line.split(|b| *b == b'\t');
 
