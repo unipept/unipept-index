@@ -342,42 +342,36 @@ impl Searcher {
                     let suffix = self.sa.get(sa_index) as usize;
 
                     // If the suffix is smaller than the skip factor, we can't check the prefix
-                    let checkable_suffix = suffix >= skip;
-
-                    // Check for trypticity if a tryptic search is performed
-                    let is_tryptic = checkable_suffix && tryptic_search && (
-                        self.proteins.input_string[suffix - skip - 1] == b'R' ||
-                            self.proteins.input_string[suffix - skip - 1] == b'K' ||
-                            self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
-                    ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P';
-
-                    // If a tryptic search is performed and the suffix is not tryptic, we can skip
-                    if tryptic_search && !is_tryptic {
-                        sa_index += 1;
-                        continue;
-                    }
-
-                    // If the skip factor is 0, the entire search string should match.
-                    // If the skip factor is not 0, the prefix should match the prefix of the search string.
-                    let prefix_matched = checkable_suffix && (
-                        skip == 0 ||
-                        Self::check_prefix(
-                            current_search_string_prefix,
-                            &self.proteins.input_string[suffix - skip..suffix],
+                    if suffix >= skip
+                        && (
+                            // Skip this check if we are not performing a tryptic search
+                            !tryptic_search
+                            // Check if the match is tryptic
+                            || ((
+                                self.proteins.input_string[suffix - skip - 1] == b'R' ||
+                                    self.proteins.input_string[suffix - skip - 1] == b'K' ||
+                                    self.proteins.input_string[suffix - skip - 1] == SEPARATION_CHARACTER
+                            ) && self.proteins.input_string[suffix - skip + search_string.len() + 1] != b'P')
+                        )
+                        && (
+                            // If the skip factor is 0, the entire search string should match.
+                            skip == 0
+                            // If the skip factor is not 0, the prefix should match the prefix of the search string.
+                            || Self::check_prefix(
+                                current_search_string_prefix,
+                                &self.proteins.input_string[suffix - skip..suffix],
+                                equate_il
+                            )
+                        )
+                        // If the prefix is matched, we can check the suffix.
+                        && Self::check_suffix(
+                            skip,
+                            il_locations_current_suffix,
+                            current_search_string_suffix,
+                            &self.proteins.input_string[suffix..suffix + search_string.len() - skip],
                             equate_il
                         )
-                    );
-
-                    // If the prefix is matched, we can check the suffix.
-                    let suffix_matched = prefix_matched && Self::check_suffix(
-                        skip,
-                        il_locations_current_suffix,
-                        current_search_string_suffix,
-                        &self.proteins.input_string[suffix..suffix + search_string.len() - skip],
-                        equate_il
-                    );
-
-                    if suffix_matched {
+                    {
                         matching_suffixes.push((suffix - skip) as i64);
 
                         // return if max number of matches is reached
