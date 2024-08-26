@@ -308,17 +308,18 @@ impl Searcher {
         // Use the (up to) first 5 characters of the search string as the kmer
         // If the kmer is found in the cache, use the bounds from the cache as start bounds
         // to find the bounds of the entire string
-        // TODO: compare to only doing the max check: 6d8c54e7180db854bca5795fe37d7ae4553346fb
         let mut max_mer_length = min(5, search_string.len());
-        while max_mer_length > 0 {
-            if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-                // TODO: There is no need to process the entire string again, since we know that the first
-                //  `max_mer_length` characters are already matched. We can just search the remaining
-                //  characters using the bounds from the cache
-                return self.search_bounds_no_cache(search_string, bounds, max_mer_length);
-            }
-            max_mer_length -= 1;
+        if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
+            return self.search_bounds_no_cache(search_string, bounds, max_mer_length - 1);
         }
+
+        // TODO: following code might be better on Trembl
+        // while max_mer_length > 0 {
+        //     if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
+        //         return self.search_bounds_no_cache(search_string, bounds, max_mer_length);
+        //     }
+        //     max_mer_length -= 1;
+        // }
 
         BoundSearchResult::NoMatches
     }
