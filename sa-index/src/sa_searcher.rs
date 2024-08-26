@@ -157,7 +157,7 @@ impl Searcher {
 
             // Calculate stricter starting bounds for the 3-mers
             // TODO: IL equality
-            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()));
+            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()), 0);
 
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
                 let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
@@ -246,10 +246,10 @@ impl Searcher {
     /// The first argument is true if a match was found
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
-    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize)) -> (bool, usize) {
+    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> (bool, usize) {
         let (mut left, mut right) = start_bounds;
-        let mut lcp_left: usize = 0;
-        let mut lcp_right: usize = 0;
+        let mut lcp_left: usize = start_lcp;
+        let mut lcp_right: usize = start_lcp;
         let mut found = false;
 
         // repeat until search window is minimum size OR we matched the whole search string last
@@ -308,10 +308,14 @@ impl Searcher {
         // Use the (up to) first 5 characters of the search string as the kmer
         // If the kmer is found in the cache, use the bounds from the cache as start bounds
         // to find the bounds of the entire string
+        // TODO: compare to only doing the max check: 6d8c54e7180db854bca5795fe37d7ae4553346fb
         let mut max_mer_length = min(5, search_string.len());
         while max_mer_length > 0 {
             if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-                return self.search_bounds_no_cache(search_string, bounds);
+                // TODO: There is no need to process the entire string again, since we know that the first
+                //  `max_mer_length` characters are already matched. We can just search the remaining
+                //  characters using the bounds from the cache
+                return self.search_bounds_no_cache(search_string, bounds, max_mer_length);
             }
             max_mer_length -= 1;
         }
@@ -319,14 +323,14 @@ impl Searcher {
         BoundSearchResult::NoMatches
     }
 
-    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize)) -> BoundSearchResult {
-        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds);
+    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> BoundSearchResult {
+        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds, start_lcp);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds);
+        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds, start_lcp);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
