@@ -2,12 +2,15 @@ pub struct BoundsCache<const K: u32> {
     pub bounds: Vec<Option<(usize, usize)>>,
 
     ascii_array: [usize; 128],
+    powers_array: [usize; 10],
     alphabet: Vec<u8>,
     base: usize
 }
 
 impl<const K: u32> BoundsCache<K> {
     pub fn new(alphabet: String) -> BoundsCache<K> {
+        assert!(K < 10, "K must be less than 10");
+
         let alphabet = alphabet.to_uppercase().as_bytes().to_vec();
         let base = alphabet.len();
 
@@ -16,12 +19,18 @@ impl<const K: u32> BoundsCache<K> {
             ascii_array[*byte as usize] = i;
         }
 
+        let mut powers_array = [0; 10];
+        for i in 0..10 {
+            powers_array[i] = base.pow(i as u32);
+        }
+
         // 20^1 + 20^2 + 20^3 + ... + 20^(K) = (20^(K + 1) - 20) / 19
-        let capacity = (20_u32.pow(K + 1) - 20) / 19;
+        let capacity = (base.pow(K + 1) - base) / (base - 1);
 
         BoundsCache {
-            bounds: vec![None; capacity as usize],
+            bounds: vec![None; capacity],
             ascii_array,
+            powers_array,
             alphabet,
             base
         }
@@ -43,21 +52,20 @@ impl<const K: u32> BoundsCache<K> {
 
         let mut length = 2;
         let mut offset = self.base;
-        while offset + self.base.pow(length) <= index {
-            offset += self.base.pow(length);
+        while offset + self.powers_array[length] <= index {
+            offset += self.powers_array[length];
             length += 1;
         }
 
-        let mut kmer = Vec::with_capacity(length as usize);
-
         let mut index = index - offset;
 
-        for _ in 0..length {
-            kmer.push(self.alphabet[index % self.base]);
+        let mut kmer = vec![0; length];
+        for i in 0..length {
+            kmer[length - i - 1] = self.alphabet[index % self.base];
             index /= self.base;
         }
 
-        kmer.iter().rev().cloned().collect()
+        kmer
     }
 
     fn kmer_to_index(&self, kmer: &[u8]) -> usize {
@@ -65,15 +73,12 @@ impl<const K: u32> BoundsCache<K> {
             return self.ascii_array[kmer[0] as usize];
         }
 
-        let a = kmer
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(i, n)| (self.ascii_array[*n as usize] + 1) * self.base.pow(i as u32))
-            .sum::<usize>();
+        let mut result = 0;
+        for i in 0..kmer.len() {
+            result += (self.ascii_array[kmer[i] as usize] + 1) * self.powers_array[kmer.len() - i - 1];
+        }
 
-        let b = a - 1;
-        b
+        result - 1
     }
 }
 
