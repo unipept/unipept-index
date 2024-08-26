@@ -1,5 +1,4 @@
 use std::{cmp::min, ops::Deref};
-
 use sa_mappings::proteins::{Protein, Proteins};
 
 use crate::{
@@ -7,6 +6,7 @@ use crate::{
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
     Nullable, SuffixArray
 };
+use crate::bounds_table::BoundsCache;
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
 #[derive(Clone, Copy, PartialEq)]
@@ -121,6 +121,7 @@ impl Deref for DenseSearcher {
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
     pub sa: SuffixArray,
+    pub kmer_cache: BoundsCache<3>,
     pub proteins: Proteins,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
 }
@@ -143,7 +144,30 @@ impl Searcher {
     ///
     /// Returns a new Searcher object
     pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
-        Self { sa, proteins, suffix_index_to_protein }
+        // Create a KTable with all possible 3-mers
+        let mut kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string());
+
+        // Create the Searcher object
+        let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
+
+        // Update the bounds for all 3-mers in the KTable
+        for i in 0..21_usize.pow(3) {
+            let kmer = searcher.kmer_cache.index_to_kmer(i);
+
+            if kmer.is_empty() || searcher.kmer_cache.get_kmer(&kmer).is_some() {
+                continue;
+            }
+
+            // Calculate stricter starting bounds for the 3-mers
+            let bounds = searcher.search_bounds(&kmer);
+
+            if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
+                let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
+                searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
+            }
+        }
+
+        searcher
     }
 
     /// Compares the `search_string` to the `suffix`
@@ -225,8 +249,7 @@ impl Searcher {
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
     fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8]) -> (bool, usize) {
-        let mut left: usize = 0;
-        let mut right: usize = self.sa.len();
+        let (mut left, mut right) = self.kmer_cache.get_kmer(search_string).unwrap_or((0, self.sa.len()));
         let mut lcp_left: usize = 0;
         let mut lcp_right: usize = 0;
         let mut found = false;
