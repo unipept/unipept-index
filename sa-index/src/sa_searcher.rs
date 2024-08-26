@@ -298,10 +298,10 @@ impl Searcher {
     ///
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
-    pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
+    pub fn search_bounds(&self, search_string: &[u8]) -> (BoundSearchResult, bool) {
         // If the string is empty, we don't need to search as nothing can be matched
         if search_string.is_empty() {
-            return BoundSearchResult::NoMatches;
+            return (BoundSearchResult::NoMatches, false);
         }
 
         // Do a quick lookup in the kmer cache
@@ -310,7 +310,7 @@ impl Searcher {
         // to find the bounds of the entire string
         let mut max_mer_length = min(5, search_string.len());
         if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-            return self.search_bounds_no_cache(search_string, bounds);
+            return (self.search_bounds_no_cache(search_string, bounds), true);
         }
 
         // TODO: following code might be better on Trembl
@@ -321,7 +321,7 @@ impl Searcher {
         //     max_mer_length -= 1;
         // }
 
-        BoundSearchResult::NoMatches
+        (BoundSearchResult::NoMatches, false)
     }
 
     pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize)) -> BoundSearchResult {
@@ -372,7 +372,10 @@ impl Searcher {
             let il_locations_current_suffix = &il_locations[il_locations_start..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
-            let search_bound_result = self.search_bounds(current_search_string_suffix);
+            let (search_bound_result, cache_hit) = self.search_bounds(current_search_string_suffix);
+
+            eprintln!("Cache: {}", cache_hit);
+
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
