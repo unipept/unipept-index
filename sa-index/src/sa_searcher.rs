@@ -1,4 +1,5 @@
 use std::{cmp::min, ops::Deref};
+use std::str::from_utf8;
 use sa_mappings::proteins::{Protein, Proteins};
 
 use crate::{
@@ -153,10 +154,6 @@ impl Searcher {
         // Update the bounds for all 3-mers in the KTable
         for i in 0..21_usize.pow(3) {
             let kmer = searcher.kmer_cache.index_to_kmer(i);
-
-            if kmer.is_empty() || searcher.kmer_cache.get_kmer(&kmer).is_some() {
-                continue;
-            }
 
             // Calculate stricter starting bounds for the 3-mers
             let bounds = searcher.search_bounds(&kmer);
