@@ -157,7 +157,7 @@ impl Searcher {
 
             // Calculate stricter starting bounds for the 3-mers
             // TODO: IL equality
-            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()), 0);
+            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()));
 
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
                 let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
@@ -246,10 +246,10 @@ impl Searcher {
     /// The first argument is true if a match was found
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
-    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> (bool, usize) {
+    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize)) -> (bool, usize) {
         let (mut left, mut right) = start_bounds;
-        let mut lcp_left: usize = start_lcp;
-        let mut lcp_right: usize = start_lcp;
+        let mut lcp_left: usize = 0;
+        let mut lcp_right: usize = 0;
         let mut found = false;
 
         // repeat until search window is minimum size OR we matched the whole search string last
@@ -310,7 +310,7 @@ impl Searcher {
         // to find the bounds of the entire string
         let mut max_mer_length = min(5, search_string.len());
         if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-            return self.search_bounds_no_cache(search_string, bounds, max_mer_length - 1);
+            return self.search_bounds_no_cache(search_string, bounds);
         }
 
         // TODO: following code might be better on Trembl
@@ -324,14 +324,14 @@ impl Searcher {
         BoundSearchResult::NoMatches
     }
 
-    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> BoundSearchResult {
-        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds, start_lcp);
+    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize)) -> BoundSearchResult {
+        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds, start_lcp);
+        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
