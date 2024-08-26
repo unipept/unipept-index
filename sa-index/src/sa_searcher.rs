@@ -162,6 +162,8 @@ impl Searcher {
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
                 let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
                 searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
+            } else {
+                searcher.kmer_cache.update_kmer(&kmer, (0, 0));
             }
         }
 
