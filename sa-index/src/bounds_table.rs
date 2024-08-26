@@ -19,8 +19,6 @@ impl<const K: u32> BoundsCache<K> {
         // 20^1 + 20^2 + 20^3 + ... + 20^(K) = (20^(K + 1) - 20) / 19
         let capacity = (20_u32.pow(K + 1) - 20) / 19;
 
-        eprintln!("Capacity: {}", capacity);
-
         BoundsCache {
             bounds: vec![None; capacity as usize],
             ascii_array,

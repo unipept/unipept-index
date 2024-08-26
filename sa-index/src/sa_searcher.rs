@@ -157,13 +157,11 @@ impl Searcher {
 
             // Calculate stricter starting bounds for the 3-mers
             // TODO: IL equality
-            let bounds = searcher.search_bounds(&kmer);
+            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()));
 
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
                 let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
                 searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
-            } else {
-                searcher.kmer_cache.update_kmer(&kmer, (0, 0));
             }
         }
 
@@ -248,8 +246,8 @@ impl Searcher {
     /// The first argument is true if a match was found
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
-    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8]) -> (bool, usize) {
-        let (mut left, mut right) = self.kmer_cache.get_kmer(search_string).unwrap_or((0, self.sa.len()));
+    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize)) -> (bool, usize) {
+        let (mut left, mut right) = start_bounds;
         let mut lcp_left: usize = 0;
         let mut lcp_right: usize = 0;
         let mut found = false;
@@ -301,17 +299,31 @@ impl Searcher {
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
     pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
+        // If the string is empty, we don't need to search as nothing can be matched
         if search_string.is_empty() {
             return BoundSearchResult::NoMatches;
         }
 
-        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string);
+        // Do a quick lookup in the kmer cache
+        // Use the (up to) first 5 characters of the search string as the kmer
+        // If the kmer is found in the cache, use the bounds from the cache as start bounds
+        // to find the bounds of the entire string
+        let max_mer = &search_string[..min(5, search_string.len())];
+        if let Some(bounds) = self.kmer_cache.get_kmer(max_mer) {
+            return self.search_bounds_no_cache(search_string, bounds);
+        }
+
+        BoundSearchResult::NoMatches
+    }
+
+    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize)) -> BoundSearchResult {
+        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound(Maximum, search_string);
+        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
