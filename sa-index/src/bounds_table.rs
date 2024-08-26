@@ -63,12 +63,19 @@ impl<const K: u32> BoundsCache<K> {
     }
 
     fn kmer_to_index(&self, kmer: &[u8]) -> usize {
-        kmer
+        if kmer.len() == 1 {
+            return self.ascii_array[kmer[0] as usize];
+        }
+
+        let a = kmer
             .iter()
             .rev()
             .enumerate()
             .map(|(i, n)| (self.ascii_array[*n as usize] + 1) * self.base.pow(i as u32))
-            .sum::<usize>() - 1
+            .sum::<usize>();
+
+        let b = a - 1;
+        b
     }
 }
 

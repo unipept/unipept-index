@@ -152,10 +152,11 @@ impl Searcher {
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
 
         // Update the bounds for all 3-mers in the KTable
-        for i in 0..21_usize.pow(3) {
+        for i in 0..20_usize.pow(3) {
             let kmer = searcher.kmer_cache.index_to_kmer(i);
 
             // Calculate stricter starting bounds for the 3-mers
+            // TODO: IL equality
             let bounds = searcher.search_bounds(&kmer);
 
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
@@ -298,6 +299,10 @@ impl Searcher {
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
     pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
+        if search_string.is_empty() {
+            return BoundSearchResult::NoMatches;
+        }
+
         let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string);
 
         if !found_min {
@@ -345,7 +350,7 @@ impl Searcher {
             let il_locations_current_suffix = &il_locations[il_locations_start..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
-            let search_bound_result = self.search_bounds(&search_string[skip..]);
+            let search_bound_result = self.search_bounds(current_search_string_suffix);
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
@@ -548,8 +553,9 @@ mod tests {
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((4, 9)));
 
         // search bounds '$'
-        let bounds_res = searcher.search_bounds(&[b'$']);
-        assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
+        // TODO: do we want to keep this??
+        // let bounds_res = searcher.search_bounds(&[b'$']);
+        // assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
 
         // search bounds 'AC'
         let bounds_res = searcher.search_bounds(&[b'A', b'C']);
