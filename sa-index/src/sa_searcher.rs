@@ -1,5 +1,4 @@
 use std::{cmp::min, ops::Deref};
-use std::str::from_utf8;
 use sa_mappings::proteins::{Protein, Proteins};
 
 use crate::{
@@ -308,18 +307,18 @@ impl Searcher {
         // Use the (up to) first 5 characters of the search string as the kmer
         // If the kmer is found in the cache, use the bounds from the cache as start bounds
         // to find the bounds of the entire string
-        let mut max_mer_length = min(5, search_string.len());
-        // if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-        //     return (self.search_bounds_no_cache(search_string, bounds), true);
-        // }
+        let max_mer_length = min(5, search_string.len());
+        if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
+            return (self.search_bounds_no_cache(search_string, bounds), true);
+        }
 
         // TODO: following code might be better on Trembl
-        while max_mer_length > 0 {
-            if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-                return (self.search_bounds_no_cache(search_string, bounds), true);
-            }
-            max_mer_length -= 1;
-        }
+        // while max_mer_length > 0 {
+        //     if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
+        //         return (self.search_bounds_no_cache(search_string, bounds), true);
+        //     }
+        //     max_mer_length -= 1;
+        // }
 
         (BoundSearchResult::NoMatches, false)
     }
