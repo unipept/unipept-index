@@ -122,7 +122,7 @@ impl Deref for DenseSearcher {
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
     pub sa: SuffixArray,
-    pub kmer_cache: BoundsCache<3>,
+    pub kmer_cache: BoundsCache<5>,
     pub proteins: Proteins,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
 }
@@ -152,7 +152,7 @@ impl Searcher {
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
 
         // Update the bounds for all 3-mers in the KTable
-        for i in 0..20_usize.pow(3) {
+        for i in 0..20_usize.pow(5) {
             let kmer = searcher.kmer_cache.index_to_kmer(i);
 
             // Calculate stricter starting bounds for the 3-mers
