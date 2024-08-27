@@ -112,6 +112,13 @@ mod tests {
 
         for i in 0..20_usize.pow(5) {
             let kmer = kmer_cache.index_to_kmer(i);
+
+            if kmer.contains(&b'L') {
+                let equated_kmer = kmer.iter().map(|&c| if c == b'L' { b'I' } else { c }).collect::<Vec<u8>>();
+                assert_eq!(kmer_cache.kmer_to_index(&kmer), kmer_cache.kmer_to_index(&equated_kmer));
+                continue;
+            }
+
             assert_eq!(kmer_cache.kmer_to_index(&kmer), i);
         }
     }
