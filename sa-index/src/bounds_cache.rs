@@ -5,6 +5,7 @@ pub struct BoundsCache {
 
     ascii_array: [usize; 128],
     powers_array: [usize; 10],
+    offsets_array: [usize; 10],
     alphabet: Vec<u8>
 }
 
@@ -25,6 +26,11 @@ impl BoundsCache {
             powers_array[i] = base.pow(i as u32);
         }
 
+        let mut offsets_array = [0; 10];
+        for i in 2..10 {
+            offsets_array[i] = offsets_array[i - 1] + powers_array[i - 1];
+        }
+
         // 20^1 + 20^2 + 20^3 + ... + 20^(K) = (20^(K + 1) - 20) / 19
         let capacity = (base.pow(k as u32 + 1) - base) / (base - 1);
 
@@ -32,6 +38,7 @@ impl BoundsCache {
             bounds: vec![None; capacity],
             ascii_array,
             powers_array,
+            offsets_array,
             alphabet,
             base,
             k
@@ -52,15 +59,19 @@ impl BoundsCache {
             return vec![self.alphabet[index]];
         }
 
+        // Calculate the length of the kmer
         let mut length = 2;
-        let mut offset = self.base;
-        while offset + self.powers_array[length] <= index {
-            offset += self.powers_array[length];
+        while self.offsets_array[length + 1] <= index {
             length += 1;
         }
 
-        let mut index = index - offset;
+        // Calculate the offset of the kmer
+        let offset = self.offsets_array[length];
 
+        // Translate the index to be inside the bounds [0, 20^k)
+        index -= offset;
+
+        // Basic conversion from base 10 to base `length`
         let mut kmer = vec![0; length];
         for i in 0..length {
             kmer[length - i - 1] = self.alphabet[index % self.base];

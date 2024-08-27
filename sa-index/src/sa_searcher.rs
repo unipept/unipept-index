@@ -6,7 +6,7 @@ use crate::{
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
     Nullable, SuffixArray
 };
-use crate::bounds_table::BoundsCache;
+use crate::bounds_cache::BoundsCache;
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
 #[derive(Clone, Copy, PartialEq)]
@@ -145,7 +145,7 @@ impl Searcher {
     /// Returns a new Searcher object
     pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>, k: usize) -> Self {
         // Create a KTable with all possible 3-mers
-        let mut kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), k);
+        let kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), k);
 
         // Create the Searcher object
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
@@ -307,7 +307,7 @@ impl Searcher {
         // Use the (up to) first 5 characters of the search string as the kmer
         // If the kmer is found in the cache, use the bounds from the cache as start bounds
         // to find the bounds of the entire string
-        let mut max_mer_length = min(self.kmer_cache.k, search_string.len());
+        let max_mer_length = min(self.kmer_cache.k, search_string.len());
         if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
             return self.search_bounds_no_cache(search_string, bounds);
         }
