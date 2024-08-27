@@ -20,6 +20,7 @@ impl BoundsCache {
         for (i, byte) in alphabet.iter().enumerate() {
             ascii_array[*byte as usize] = i;
         }
+        ascii_array[b'L' as usize] = ascii_array[b'I' as usize]; // I and L are treated as the same amino acid
 
         let mut powers_array = [0; 10];
         for i in 0..10 {
@@ -97,11 +98,17 @@ impl BoundsCache {
 
 #[cfg(test)]
 mod tests {
+    use std::str::from_utf8;
     use super::*;
 
     #[test]
     fn test_bounds_cache() {
         let kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), 5);
+
+        for i in 0..40 {
+            let kmer = kmer_cache.index_to_kmer(i);
+            eprintln!("{} -> {:?} -> {:?}", i, from_utf8(&kmer).unwrap(), kmer_cache.kmer_to_index(&kmer));
+        }
 
         for i in 0..20_usize.pow(5) {
             let kmer = kmer_cache.index_to_kmer(i);
