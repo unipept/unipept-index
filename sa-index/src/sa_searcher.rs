@@ -1,4 +1,5 @@
 use std::{cmp::min, ops::Deref};
+use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use sa_mappings::proteins::{Protein, Proteins};
 
 use crate::{
@@ -152,10 +153,13 @@ impl Searcher {
 
         let print_step_size = searcher.kmer_cache.base.pow(k as u32) / 100;
 
+        eprintln!("Starting cache fill");
+        let start_cache_fill_time = get_time_ms().unwrap();
+
         // Update the bounds for all 3-mers in the KTable
         for i in 0..searcher.kmer_cache.base.pow(k as u32) {
             if i % print_step_size == 0 {
-                eprintln!("Updating kmer cache: {}%", i / print_step_size);
+                eprintln!("Updating kmer cache: {}% ({} seconds since start)", i / print_step_size, (get_time_ms().unwrap() - start_cache_fill_time) / 1000.0);
             }
 
             let kmer = searcher.kmer_cache.index_to_kmer(i);
@@ -170,7 +174,7 @@ impl Searcher {
             }
         }
 
-        eprintln!("Updating kmer cache: 100%");
+        eprintln!("Filled cache in {} seconds", (get_time_ms().unwrap() - start_cache_fill_time) / 1000.0);
 
         searcher
     }
@@ -508,6 +512,10 @@ impl Searcher {
         }
         res
     }
+}
+
+pub fn get_time_ms() -> Result<f64, SystemTimeError> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as f64 * 1e-6)
 }
 
 #[cfg(test)]
