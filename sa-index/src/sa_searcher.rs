@@ -164,12 +164,9 @@ impl Searcher {
 
             let kmer = searcher.kmer_cache.index_to_kmer(i);
 
-            // Calculate stricter starting bounds for the 3-mers
-            // TODO: IL equality
             let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()));
 
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
-                let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
                 searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
             }
         }
@@ -323,14 +320,6 @@ impl Searcher {
         if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
             return self.search_bounds_no_cache(search_string, bounds);
         }
-
-        // TODO: following code might be better on Trembl
-        // while max_mer_length > 0 {
-        //     if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-        //         return self.search_bounds_no_cache(search_string, bounds, max_mer_length);
-        //     }
-        //     max_mer_length -= 1;
-        // }
 
         BoundSearchResult::NoMatches
     }
