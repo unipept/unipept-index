@@ -1,15 +1,16 @@
-pub struct BoundsCache<const K: u32> {
+pub struct BoundsCache {
     pub bounds: Vec<Option<(usize, usize)>>,
+    pub base: usize,
+    pub k: usize,
 
     ascii_array: [usize; 128],
     powers_array: [usize; 10],
-    alphabet: Vec<u8>,
-    base: usize
+    alphabet: Vec<u8>
 }
 
-impl<const K: u32> BoundsCache<K> {
-    pub fn new(alphabet: String) -> BoundsCache<K> {
-        assert!(K < 10, "K must be less than 10");
+impl BoundsCache {
+    pub fn new(alphabet: String, k: usize) -> BoundsCache {
+        assert!(k < 10, "K must be less than 10");
 
         let alphabet = alphabet.to_uppercase().as_bytes().to_vec();
         let base = alphabet.len();
@@ -25,14 +26,15 @@ impl<const K: u32> BoundsCache<K> {
         }
 
         // 20^1 + 20^2 + 20^3 + ... + 20^(K) = (20^(K + 1) - 20) / 19
-        let capacity = (base.pow(K + 1) - base) / (base - 1);
+        let capacity = (base.pow(k as u32 + 1) - base) / (base - 1);
 
-        BoundsCache {
+        Self {
             bounds: vec![None; capacity],
             ascii_array,
             powers_array,
             alphabet,
-            base
+            base,
+            k
         }
     }
 
@@ -88,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_bounds_cache() {
-        let kmer_cache = BoundsCache::<5>::new("ACDEFGHIKLMNPQRSTVWY".to_string());
+        let kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), 5);
 
         for i in 0..20_usize.pow(5) {
             let kmer = kmer_cache.index_to_kmer(i);
