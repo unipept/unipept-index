@@ -116,7 +116,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let proteins = Proteins::try_from_database_file(&database_file)?;
     eprintln!("✅ Successfully loaded the proteins!");
 
-    let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
+    let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins, 5));
 
     // build our application with a route
     let app = Router::new()
