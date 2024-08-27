@@ -150,8 +150,14 @@ impl Searcher {
         // Create the Searcher object
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
 
+        let print_step_size = searcher.kmer_cache.base.pow(k as u32) / 100;
+
         // Update the bounds for all 3-mers in the KTable
         for i in 0..searcher.kmer_cache.base.pow(k as u32) {
+            if i % print_step_size == 0 {
+                eprintln!("Updating kmer cache: {}%", i / print_step_size);
+            }
+
             let kmer = searcher.kmer_cache.index_to_kmer(i);
 
             // Calculate stricter starting bounds for the 3-mers
@@ -163,6 +169,8 @@ impl Searcher {
                 searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
             }
         }
+
+        eprintln!("Updating kmer cache: 100%");
 
         searcher
     }
