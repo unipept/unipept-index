@@ -22,7 +22,9 @@ pub struct Protein {
     pub taxon_id: u32,
 
     /// The encoded functional annotations of the protein
-    pub functional_annotations: Vec<u8>
+    pub ec_numbers: Vec<u8>,
+    pub go_terms: Vec<u8>,
+    pub interpro_entries: Vec<u8>
 }
 
 /// A struct that represents a collection of proteins
@@ -35,9 +37,16 @@ pub struct Proteins {
 }
 
 impl Protein {
-    /// Returns the decoded functional annotations of the protein
-    pub fn get_functional_annotations(&self) -> String {
-        decode(&self.functional_annotations)
+    pub fn get_ec_numbers(&self) -> String {
+        decode(&self.ec_numbers)
+    }
+
+    pub fn get_go_terms(&self) -> String {
+        decode(&self.go_terms)
+    }
+
+    pub fn get_interpro_entries(&self) -> String {
+        decode(&self.interpro_entries)
     }
 }
 
@@ -72,7 +81,9 @@ impl Proteins {
             let uniprot_id = from_utf8(fields.next().unwrap())?;
             let taxon_id = from_utf8(fields.next().unwrap())?.parse()?;
             let sequence = from_utf8(fields.next().unwrap())?;
-            let functional_annotations: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
+            let ec_numbers: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
+            let go_terms: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
+            let interpro_entries: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
 
             input_string.push_str(&sequence.to_uppercase());
             input_string.push(SEPARATION_CHARACTER.into());
@@ -80,7 +91,9 @@ impl Proteins {
             proteins.push(Protein {
                 uniprot_id: uniprot_id.to_string(),
                 taxon_id,
-                functional_annotations
+                ec_numbers,
+                go_terms,
+                interpro_entries
             });
         }
 

@@ -16,7 +16,9 @@ pub struct SearchResult {
 pub struct ProteinInfo {
     pub taxon: u32,
     pub uniprot_accession: String,
-    pub functional_annotations: String
+    pub ec_numbers: String,
+    pub go_terms: String,
+    pub interpro_entries: String
 }
 
 impl From<&Protein> for ProteinInfo {
@@ -24,7 +26,9 @@ impl From<&Protein> for ProteinInfo {
         ProteinInfo {
             taxon: protein.taxon_id,
             uniprot_accession: protein.uniprot_id.clone(),
-            functional_annotations: protein.get_functional_annotations()
+            ec_numbers: protein.get_ec_numbers(),
+            go_terms: protein.get_go_terms(),
+            interpro_entries: protein.get_interpro_entries()
         }
     }
 }
