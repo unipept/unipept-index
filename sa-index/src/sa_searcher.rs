@@ -152,7 +152,7 @@ impl Searcher {
         // Create the Searcher object
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
 
-        let print_step_size = min(searcher.kmer_cache.base.pow(k as u32) / 100, searcher.kmer_cache.base);
+        let print_step_size = max(searcher.kmer_cache.base.pow(k as u32) / 100, searcher.kmer_cache.base);
 
         eprintln!("Starting cache fill");
         let start_cache_fill_time = get_time_ms().unwrap();
