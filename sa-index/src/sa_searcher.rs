@@ -1,4 +1,5 @@
 use std::{cmp::min, ops::Deref};
+use std::str::from_utf8;
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use sa_mappings::proteins::{Protein, Proteins};
 
@@ -146,7 +147,7 @@ impl Searcher {
     /// Returns a new Searcher object
     pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>, k: usize) -> Self {
         // Create a KTable with all possible 3-mers
-        let kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), k);
+        let kmer_cache = BoundsCache::new("-ACDEFGHIKLMNPQRSTVWY".to_string(), k);
 
         // Create the Searcher object
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
@@ -164,7 +165,7 @@ impl Searcher {
 
             let kmer = searcher.kmer_cache.index_to_kmer(i);
 
-            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()));
+            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()), 0);
 
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
                 searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
@@ -254,9 +255,9 @@ impl Searcher {
     /// The first argument is true if a match was found
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
-    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize)) -> (bool, usize) {
+    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), lcp_left: usize) -> (bool, usize) {
         let (mut left, mut right) = start_bounds;
-        let mut lcp_left: usize = 0;
+        let mut lcp_left: usize = lcp_left;
         let mut lcp_right: usize = 0;
         let mut found = false;
 
@@ -318,20 +319,20 @@ impl Searcher {
         // to find the bounds of the entire string
         let max_mer_length = min(self.kmer_cache.k, search_string.len());
         if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
-            return self.search_bounds_no_cache(search_string, bounds);
+            return self.search_bounds_no_cache(search_string, bounds, max_mer_length);
         }
 
         BoundSearchResult::NoMatches
     }
 
-    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize)) -> BoundSearchResult {
-        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds);
+    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize), lcp_left: usize) -> BoundSearchResult {
+        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds, lcp_left);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds);
+        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds, lcp_left);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
