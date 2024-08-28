@@ -157,7 +157,9 @@ impl Searcher {
         let start_cache_fill_time = get_time_ms().unwrap();
 
         // Update the bounds for all 3-mers in the KTable
-        for i in 0..searcher.kmer_cache.base.pow(k as u32) {
+        let base = searcher.kmer_cache.base;
+        let length = (base.pow(k as u32 + 1) - base) / (base - 1);
+        for i in 0..length {
             if i % print_step_size == 0 {
                 eprintln!("Updating kmer cache: {}% ({} seconds since start)", i / print_step_size, (get_time_ms().unwrap() - start_cache_fill_time) / 1000.0);
             }
