@@ -5,9 +5,9 @@ use serde::Serialize;
 use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
 
 #[derive(Debug, Serialize)]
-pub struct SearchResult {
+pub struct SearchResult<'a> {
     pub sequence: String,
-    pub proteins: Vec<ProteinInfo>,
+    pub proteins: Vec<&'a Protein>,
     pub cutoff_used: bool
 }
 
@@ -75,12 +75,12 @@ pub fn search_proteins_for_peptide<'a>(
     Some((cutoff_used, proteins))
 }
 
-pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult> {
+pub fn search_peptide<'a>(searcher: &'a Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult<'a>> {
     let (cutoff_used, proteins) = search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
     Some(SearchResult {
         sequence: peptide.to_string(),
-        proteins: proteins.iter().map(|&protein| protein.into()).collect(),
+        proteins,
         cutoff_used
     })
 }
@@ -99,12 +99,12 @@ pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_
 /// # Returns
 ///
 /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
-pub fn search_all_peptides(
-    searcher: &Searcher,
+pub fn search_all_peptides<'a>(
+    searcher: &'a Searcher,
     peptides: &Vec<String>,
     cutoff: usize,
     equate_il: bool
-) -> Vec<SearchResult> {
+) -> Vec<SearchResult<'a>> {
     peptides
         .par_iter()
         .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il))

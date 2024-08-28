@@ -5,6 +5,7 @@ use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
+use serde::Serialize;
 
 /// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
@@ -13,6 +14,7 @@ pub static SEPARATION_CHARACTER: u8 = b'-';
 /// This character should be smaller than the separation character
 pub static TERMINATION_CHARACTER: u8 = b'$';
 
+#[derive(Debug, Clone, Serialize)]
 /// A struct that represents a protein and its linked information
 pub struct Protein {
     /// The id of the protein
