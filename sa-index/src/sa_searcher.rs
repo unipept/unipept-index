@@ -1,5 +1,4 @@
-use std::{cmp::min, ops::Deref};
-use std::str::from_utf8;
+use std::{cmp::min, cmp::max, ops::Deref};
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use sa_mappings::proteins::{Protein, Proteins};
 
