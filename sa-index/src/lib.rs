@@ -4,6 +4,7 @@ pub mod binary;
 pub mod peptide_search;
 pub mod sa_searcher;
 pub mod suffix_to_protein_index;
+mod bounds_cache;
 
 /// Represents a suffix array.
 pub enum SuffixArray {
