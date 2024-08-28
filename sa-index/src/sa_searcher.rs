@@ -147,7 +147,7 @@ impl Searcher {
     /// Returns a new Searcher object
     pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>, k: usize) -> Self {
         // Create a KTable with all possible 3-mers
-        let kmer_cache = BoundsCache::new("-ACDEFGHIKLMNPQRSTVWY".to_string(), k);
+        let kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), k);
 
         // Create the Searcher object
         let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };

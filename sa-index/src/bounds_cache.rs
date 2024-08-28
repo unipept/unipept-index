@@ -20,7 +20,7 @@ impl BoundsCache {
         for (i, byte) in alphabet.iter().enumerate() {
             ascii_array[*byte as usize] = i;
         }
-        ascii_array[b'L' as usize] = ascii_array[b'I' as usize]; // I and L are treated as the same amino acid
+        //ascii_array[b'L' as usize] = ascii_array[b'I' as usize]; // I and L are treated as the same amino acid
 
         let mut powers_array = [0; 10];
         for i in 0..10 {
