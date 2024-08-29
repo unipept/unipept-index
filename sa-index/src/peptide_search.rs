@@ -1,35 +1,50 @@
+use rayon::iter::FilterMap;
 use rayon::prelude::*;
 use sa_mappings::proteins::Protein;
 use serde::Serialize;
 
 use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
 
-#[derive(Debug, Serialize)]
-pub struct SearchResult<'a> {
+pub struct ProteinsIterator<'a> {
+    searcher: &'a Searcher,
+    suffixes: &'a Vec<i64>,
+    index: usize
+}
+
+impl<'a> ProteinsIterator<'a> {
+    pub fn new(searcher: &'a Searcher, suffixes: &'a Vec<i64>) -> Self {
+        ProteinsIterator {
+            searcher,
+            suffixes,
+            index: 0
+        }
+    }
+}
+
+impl<'a> Iterator for ProteinsIterator<'a> {
+    type Item = &'a Protein;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.suffixes.len() {
+            let protein = self.searcher.retrieve_protein(self.suffixes[self.index]);
+            self.index += 1;
+            protein
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SearchResult {
     pub sequence: String,
-    pub proteins: Vec<&'a Protein>,
+    pub suffixes: Vec<i64>,
     pub cutoff_used: bool
 }
 
-/// Struct that represents all information known about a certain protein in our database
-#[derive(Debug, Serialize)]
-pub struct ProteinInfo {
-    pub taxon: u32,
-    pub uniprot_accession: String,
-    pub ec_numbers: String,
-    pub go_terms: String,
-    pub interpro_entries: String
-}
-
-impl From<&Protein> for ProteinInfo {
-    fn from(protein: &Protein) -> Self {
-        ProteinInfo {
-            taxon: protein.taxon_id,
-            uniprot_accession: protein.uniprot_id.clone(),
-            ec_numbers: protein.get_ec_numbers(),
-            go_terms: protein.get_go_terms(),
-            interpro_entries: protein.get_interpro_entries()
-        }
+impl SearchResult {
+    pub fn proteins<'a>(&'a self, searcher: &'a Searcher) -> ProteinsIterator<'a> {
+        ProteinsIterator::new(searcher, &self.suffixes)
     }
 }
 
@@ -55,7 +70,7 @@ pub fn search_proteins_for_peptide<'a>(
     peptide: &str,
     cutoff: usize,
     equate_il: bool
-) -> Option<(bool, Vec<&'a Protein>)> {
+) -> Option<(bool, Vec<i64>)> {
     let peptide = peptide.trim_end().to_uppercase();
 
     // words that are shorter than the sample rate are not searchable
@@ -70,17 +85,17 @@ pub fn search_proteins_for_peptide<'a>(
         SearchAllSuffixesResult::NoMatches => None
     }?;
 
-    let proteins = searcher.retrieve_proteins(&suffixes);
+    //let proteins = searcher.retrieve_proteins(&suffixes);
 
-    Some((cutoff_used, proteins))
+    Some((cutoff_used, suffixes))
 }
 
-pub fn search_peptide<'a>(searcher: &'a Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult<'a>> {
+pub fn search_peptide<'a>(searcher: &'a Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult> {
     let (cutoff_used, proteins) = search_proteins_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
     Some(SearchResult {
         sequence: peptide.to_string(),
-        proteins,
+        suffixes: proteins,
         cutoff_used
     })
 }
@@ -104,7 +119,7 @@ pub fn search_all_peptides<'a>(
     peptides: &Vec<String>,
     cutoff: usize,
     equate_il: bool
-) -> Vec<SearchResult<'a>> {
+) -> Vec<SearchResult> {
     peptides
         .par_iter()
         .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il))

@@ -259,10 +259,10 @@ impl Searcher {
     /// The first argument is true if a match was found
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
-    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), lcp_left: usize) -> (bool, usize) {
+    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> (bool, usize) {
         let (mut left, mut right) = start_bounds;
-        let mut lcp_left: usize = lcp_left;
-        let mut lcp_right: usize = 0;
+        let mut lcp_left: usize = start_lcp;
+        let mut lcp_right: usize = start_lcp;
         let mut found = false;
 
         // repeat until search window is minimum size OR we matched the whole search string last
@@ -329,14 +329,14 @@ impl Searcher {
         BoundSearchResult::NoMatches
     }
 
-    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize), lcp_left: usize) -> BoundSearchResult {
-        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds, lcp_left);
+    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> BoundSearchResult {
+        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds, start_lcp);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds, lcp_left);
+        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds, start_lcp);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
@@ -497,7 +497,7 @@ impl Searcher {
     /// Returns the proteins that every suffix is a part of
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &Vec<i64>) -> Vec<&Protein> {
-        let mut res = vec![];
+        let mut res: Vec<&Protein> = Vec::with_capacity(suffixes.len()); // TODO: is this the right capacity?
         for &suffix in suffixes {
             let protein_index = self.suffix_index_to_protein.suffix_to_protein(suffix);
             if !protein_index.is_null() {
@@ -505,6 +505,16 @@ impl Searcher {
             }
         }
         res
+    }
+
+    #[inline]
+    pub fn retrieve_protein(&self, suffix: i64) -> Option<&Protein> {
+        let protein_index = self.suffix_index_to_protein.suffix_to_protein(suffix);
+        if !protein_index.is_null() {
+            Some(&self.proteins[protein_index as usize])
+        } else {
+            None
+        }
     }
 }
 

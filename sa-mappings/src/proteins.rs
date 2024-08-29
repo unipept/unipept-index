@@ -2,7 +2,7 @@
 //! and collections of proteins, respectively.
 
 use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
-
+use std::ops::Deref;
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
 use serde::Serialize;
@@ -143,6 +143,10 @@ impl Proteins {
 
         input_string.shrink_to_fit();
         Ok(input_string.into_bytes())
+    }
+
+    pub fn get_ref(&self) -> &Protein {
+        self.proteins.get(0).unwrap()
     }
 }
 
