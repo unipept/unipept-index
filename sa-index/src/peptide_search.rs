@@ -7,12 +7,12 @@ use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
 pub struct ProteinsIterator<'a> {
     searcher: &'a Searcher,
 
-    suffixes: Vec<i64>,
+    suffixes: &'a Vec<i64>,
     index: usize
 }
 
 impl<'a> ProteinsIterator<'a> {
-    pub fn new(searcher: &'a Searcher, suffixes: Vec<i64>) -> Self {
+    pub fn new(searcher: &'a Searcher, suffixes: &'a Vec<i64>) -> Self {
         ProteinsIterator {
             searcher,
             suffixes,
@@ -28,17 +28,24 @@ impl<'a> Iterator for ProteinsIterator<'a> {
         if self.index < self.suffixes.len() {
             let protein = self.searcher.retrieve_protein(self.suffixes[self.index]);
             self.index += 1;
-            protein
-        } else {
-            None
+            return protein;
         }
+
+        None
     }
 }
 
-pub struct SearchResult<'a> {
+pub struct SearchResult {
     pub sequence: String,
-    pub proteins: ProteinsIterator<'a>,
-    pub cutoff_used: bool
+    pub cutoff_used: bool,
+
+    suffixes: Vec<i64>
+}
+
+impl SearchResult {
+    pub fn proteins<'a>(&'a self, searcher: &'a Searcher) -> ProteinsIterator<'a> {
+        ProteinsIterator::new(searcher, &self.suffixes)
+    }
 }
 
 /// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
@@ -72,21 +79,20 @@ pub fn search_suffixes_for_peptide(
     }
 
     let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il);
-    let (suffixes, cutoff_used) = match suffix_search {
-        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
-        SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
-        SearchAllSuffixesResult::NoMatches => None
-    }?;
 
-    Some((cutoff_used, suffixes))
+    match suffix_search {
+        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((true, matched_suffixes)),
+        SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((false, matched_suffixes)),
+        SearchAllSuffixesResult::NoMatches => None
+    }
 }
 
-pub fn search_peptide<'a>(searcher: &'a Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult<'a>> {
+pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_il: bool) -> Option<SearchResult> {
     let (cutoff_used, suffixes) = search_suffixes_for_peptide(searcher, peptide, cutoff, equate_il)?;
 
     Some(SearchResult {
         sequence: peptide.to_string(),
-        proteins: ProteinsIterator::new(searcher, suffixes),
+        suffixes,
         cutoff_used
     })
 }
@@ -105,12 +111,12 @@ pub fn search_peptide<'a>(searcher: &'a Searcher, peptide: &str, cutoff: usize, 
 /// # Returns
 ///
 /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
-pub fn search_all_peptides<'a>(
-    searcher: &'a Searcher,
+pub fn search_all_peptides(
+    searcher: &Searcher,
     peptides: &Vec<String>,
     cutoff: usize,
     equate_il: bool
-) -> Vec<SearchResult<'a>> {
+) -> Vec<SearchResult> {
     peptides
         .par_iter()
         .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il))
