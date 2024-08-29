@@ -262,7 +262,7 @@ impl Searcher {
     fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), start_lcp: usize) -> (bool, usize) {
         let (mut left, mut right) = start_bounds;
         let mut lcp_left: usize = start_lcp;
-        let mut lcp_right: usize = start_lcp;
+        let mut lcp_right: usize = 0;
         let mut found = false;
 
         // repeat until search window is minimum size OR we matched the whole search string last
