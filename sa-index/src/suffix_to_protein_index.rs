@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use vers_vecs::{BitVec, RsVec};
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 use crate::Nullable;
@@ -38,6 +39,10 @@ pub struct SparseSuffixToProtein {
     mapping: Vec<i64>
 }
 
+pub struct RankSuffixToProtein {
+    mapping: RsVec
+}
+
 impl SuffixToProteinIndex for DenseSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         self.mapping[suffix as usize]
@@ -54,6 +59,16 @@ impl SuffixToProteinIndex for SparseSuffixToProtein {
             return u32::NULL;
         }
         protein_index as u32
+    }
+}
+
+impl SuffixToProteinIndex for RankSuffixToProtein {
+    fn suffix_to_protein(&self, suffix: i64) -> u32 {
+        if let Some(1) = self.mapping.get(suffix as usize) {
+            return u32::NULL;
+        }
+
+        self.mapping.rank1(suffix as usize) as u32
     }
 }
 
@@ -104,6 +119,21 @@ impl SparseSuffixToProtein {
     }
 }
 
+impl RankSuffixToProtein {
+    pub fn new(text: &[u8]) -> Self {
+        let mut bit_vector = BitVec::from_zeros(text.len());
+        for (index, &char) in text.iter().enumerate() {
+            if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
+                bit_vector.set(index, 1).unwrap();
+            }
+        }
+
+        Self {
+            mapping: RsVec::from_bit_vec(bit_vector)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::ValueEnum;
@@ -115,6 +145,7 @@ mod tests {
         },
         Nullable
     };
+    use crate::suffix_to_protein_index::RankSuffixToProtein;
 
     fn build_text() -> Vec<u8> {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -165,6 +196,18 @@ mod tests {
     fn test_search_sparse() {
         let u8_text = &build_text();
         let index = SparseSuffixToProtein::new(u8_text);
+        assert_eq!(index.suffix_to_protein(5), 1);
+        assert_eq!(index.suffix_to_protein(7), 2);
+        // suffix that starts with SEPARATION_CHARACTER
+        assert_eq!(index.suffix_to_protein(3), u32::NULL);
+        // suffix that starts with TERMINATION_CHARACTER
+        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+    }
+
+    #[test]
+    fn test_search_rank() {
+        let u8_text = &build_text();
+        let index = RankSuffixToProtein::new(u8_text);
         assert_eq!(index.suffix_to_protein(5), 1);
         assert_eq!(index.suffix_to_protein(7), 2);
         // suffix that starts with SEPARATION_CHARACTER

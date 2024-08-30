@@ -8,6 +8,7 @@ use crate::{
     Nullable, SuffixArray
 };
 use crate::bounds_cache::BoundsCache;
+use crate::suffix_to_protein_index::RankSuffixToProtein;
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
 #[derive(Clone, Copy, PartialEq)]
@@ -101,6 +102,24 @@ impl DenseSearcher {
 }
 
 impl Deref for DenseSearcher {
+    type Target = Searcher;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct RankSearcher(Searcher);
+
+impl RankSearcher {
+    pub fn new(sa: SuffixArray, proteins: Proteins, k: usize) -> Self {
+        let suffix_index_to_protein = RankSuffixToProtein::new(&proteins.input_string);
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), k);
+        Self(searcher)
+    }
+}
+
+impl Deref for RankSearcher {
     type Target = Searcher;
 
     fn deref(&self) -> &Self::Target {
