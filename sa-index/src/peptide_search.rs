@@ -97,6 +97,18 @@ pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_
     })
 }
 
+pub fn search_all_peptides(
+    searcher: &Searcher,
+    peptides: &Vec<String>,
+    cutoff: usize,
+    equate_il: bool
+) -> Vec<SearchResult> {
+    peptides
+        .iter()
+        .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il))
+        .collect()
+}
+
 /// Searches the list of `peptides` in the index and retrieves all related information about the
 /// found proteins This does NOT perform any of the analyses
 ///
@@ -111,7 +123,7 @@ pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_
 /// # Returns
 ///
 /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
-pub fn search_all_peptides(
+pub fn search_all_peptides_parallel(
     searcher: &Searcher,
     peptides: &Vec<String>,
     cutoff: usize,
