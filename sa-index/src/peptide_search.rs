@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use sa_mappings::proteins::Protein;
+use sa_mappings::proteins::{Protein, Proteins};
 use serde::Serialize;
 
 use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};

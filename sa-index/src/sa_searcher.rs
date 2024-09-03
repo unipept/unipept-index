@@ -458,6 +458,10 @@ impl Searcher {
     /// false
     #[inline]
     fn check_prefix(search_string_prefix: &[u8], index_prefix: &[u8], equate_il: bool) -> bool {
+        if search_string_prefix.len() > 2 {
+            eprintln!("Prefix too long: {:?}", search_string_prefix);
+        }
+
         if equate_il {
             search_string_prefix.iter().zip(index_prefix).all(|(&search_character, &index_character)| {
                 search_character == index_character
