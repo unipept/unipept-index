@@ -6,14 +6,23 @@ use std::collections::HashMap;
 
 use bitarray::{data_to_writer, Binary, BitArray};
 
+/// Structure representing the proteins, stored in a bit array using 5 bits per amino acid.
 pub struct ProteinText {
+    /// Bit array holding the sequence of amino acids
     bit_array: BitArray,
+    /// Hashmap storing the mapping between the character as `u8` and a 5 bit number.
     char_to_5bit: HashMap<u8, u8>,
+    /// Vector storing the mapping between the 5 bit number and the character as `u8`.
     bit5_to_char: Vec<u8>,
 }
 
 impl ProteinText {
 
+    /// Creates the hashmap storing the mappings between the characters as `u8` and 5 bit numbers.
+    ///
+    /// # Returns
+    ///
+    /// Returns the hashmap
     fn create_char_to_5bit_hashmap() -> HashMap<u8, u8> {
         let mut hashmap = HashMap::<u8, u8>::new();
         for (i, c) in "ACDEFGHIKLMNPQRSTVWY-$".chars().enumerate() {
@@ -23,6 +32,11 @@ impl ProteinText {
         hashmap
     }
 
+    /// Creates the vector storing the mappings between the 5 bit numbers and the characters as `u8`.
+    ///
+    /// # Returns
+    ///
+    /// Returns the vector
     fn create_bit5_to_char() -> Vec<u8> {
         let mut vec = Vec::<u8>::new();
         for c in "ACDEFGHIKLMNPQRSTVWY-$".chars() {
@@ -31,6 +45,14 @@ impl ProteinText {
         vec
     }
     
+    /// Creates the compressed text from a string.
+    /// 
+    /// # Arguments
+    /// * `input_string` - The text (proteins) in string format
+    ///
+    /// # Returns
+    ///
+    /// An instance of `ProteinText`
     pub fn from_string(input_string: &str) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
@@ -44,6 +66,14 @@ impl ProteinText {
         Self { bit_array, char_to_5bit, bit5_to_char }
     }
 
+    /// Creates the compressed text from a vector.
+    /// 
+    /// # Arguments
+    /// * `input_vec` - The text (proteins) in a vector with elements of type `u8` representing the amino acids.
+    ///
+    /// # Returns
+    ///
+    /// An instance of `ProteinText`
     pub fn from_vec(input_vec: &Vec<u8>) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
@@ -57,30 +87,69 @@ impl ProteinText {
         Self { bit_array, char_to_5bit, bit5_to_char }
     }
 
+    /// Creates the compressed text from a bit array.
+    /// 
+    /// # Arguments
+    /// * `bit_array` - The text (proteins) in a bit array using 5 bits for each amino acid.
+    ///
+    /// # Returns
+    ///
+    /// An instance of `ProteinText`
     pub fn new(bit_array: BitArray) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
         Self { bit_array, char_to_5bit, bit5_to_char }
     }
 
+    /// Creates an instance of `ProteinText` with a given capacity.
+    /// 
+    /// # Arguments
+    /// * `capacity` - The amount of characters in the text.
+    ///
+    /// # Returns
+    ///
+    /// An instance of `ProteinText`
     pub fn with_capacity(capacity: usize) -> Self {
         Self::new(BitArray::with_capacity(capacity, 5))
     }
 
+    /// Search the character at a given position in the compressed text.
+    /// 
+    /// # Arguments
+    /// * `index` - The index of the character to search.
+    ///
+    /// # Returns
+    ///
+    /// the character at position `index` as `u8`.
     pub fn get(&self, index: usize) -> u8 {
         let char_5bit = self.bit_array.get(index) as usize;
         self.bit5_to_char[char_5bit]
     }
 
+    /// Set the character at a given index.
+    /// 
+    /// # Arguments
+    /// * `index` - The index of the character to change.
+    /// * `value` - The character to fill in as `u8`.
     pub fn set(&mut self, index: usize, value: u8) {
         let char_5bit: u8 = *self.char_to_5bit.get(&value).expect("Input character not in alphabet");
         self.bit_array.set(index, char_5bit as u64);
     }
 
+    /// Queries the length of the text.
+    ///
+    /// # Returns
+    /// 
+    /// the length of the text
     pub fn len(&self) -> usize {
         self.bit_array.len()
     }
 
+    /// Check if the text is empty (length 0).
+    ///
+    /// # Returns
+    /// 
+    /// true if the the text has length 0, false otherwise.
     pub fn is_empty(&self) -> bool {
         self.bit_array.len() == 0
     }
@@ -90,36 +159,83 @@ impl ProteinText {
         self.bit_array.clear()
     }
 
+    /// Get an iterator over the characters of the text.
+    ///
+    /// # Returns
+    /// 
+    /// A `ProteinTextIterator`, which can iterate over the characters of the text.
     pub fn iter(&self) -> ProteinTextIterator {
         ProteinTextIterator {protein_text: self, index: 0, }
     }
 
+    /// Get a slice of the text
+    ///
+    /// # Returns
+    /// 
+    /// An `ProteinTextSlice` representing a slice of the text.
     pub fn slice(&self, start: usize, end:usize) -> ProteinTextSlice {
         ProteinTextSlice::new(self, start, end)
     }
 
 }
 
+/// Structure representing a slice of a `ProteinText`.
 pub struct ProteinTextSlice<'a> {
+    /// The `Proteintext` of whih to take a slice.
     text: &'a ProteinText,
+    /// The start of the slice.
     start: usize, // included
+    /// The end of the slice.
     end: usize,   // excluded
 }
 
 impl<'a> ProteinTextSlice<'a> {
 
+    /// Creates an instance of `ProteintextSlice`, given the text and boundaries.
+    /// 
+    /// # Arguments
+    /// * `text` - The `Proteintext` representing the text of proteins with 5 bits per amino acid.
+    /// * `start` - The start of the slice.
+    /// * `end` - The end of the slice.
+    ///
+    /// # Returns
+    ///
+    /// An instance of `ProteinTextSlice`
     pub fn new(text: &'a ProteinText, start: usize, end: usize) -> ProteinTextSlice {
         Self {text, start, end }
     }
 
+    /// Get a character (amino acid) in the slice.
+    /// 
+    /// # Arguments
+    /// * `index` - The index in the slice of the character to get.
+    ///
+    /// # Returns
+    ///
+    /// The character as `u8`.
     pub fn get(&self, index: usize) -> u8 {
         self.text.get(self.start + index)
     }
 
+    /// Get the length of the slice.
+    ///
+    /// # Returns
+    ///
+    /// The length of the slice.
     pub fn len(&self) -> usize {
         self.end - self.start
     }
 
+    /// Checks if the slice and a given array of `u8` are equal.
+    /// I and L can be equated.
+    /// 
+    /// # Arguments
+    /// * `other` - the array of `u8` to compare the slice with.
+    /// * `equate_il` - true if I and L need to be equated, false otherwise.
+    ///
+    /// # Returns
+    ///
+    /// True if the slice is equal to the given array, false otherwise.
     #[inline]
     pub fn equals_slice(&self, other: &[u8], equate_il: bool) -> bool {
         if equate_il {
@@ -133,6 +249,16 @@ impl<'a> ProteinTextSlice<'a> {
         }
     }
 
+    /// Check if the slice and a given array of `u8` are equal on the I and L positions.
+    /// 
+    /// # Arguments
+    /// * `skip` - The amount of positions this slice skipped, this has an influence on the I and L positions.
+    /// * `il_locations` - The positions where I and L occur.
+    /// * `search_string` -  An array of `u8` to compare the slice with.
+    ///
+    /// # Returns
+    ///
+    /// True if the slice and `search_string` have the same contents on the I and L positions, false otherwise.
     pub fn check_il_locations(
         &self,
         skip: usize,
@@ -148,16 +274,23 @@ impl<'a> ProteinTextSlice<'a> {
         true
     }
 
+    /// Get an iterator over the slice.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over the slice.
     pub fn iter(&self) -> ProteinTextSliceIterator {
         ProteinTextSliceIterator {text_slice: self, index: 0, }
     }
 }
 
+/// Structure representing an iterator over a `ProteinText` instance, iterating the characters of the text.
 pub struct ProteinTextIterator<'a> {
     protein_text: &'a ProteinText,
     index: usize,
 }
 
+/// Structure representing an iterator over a `ProteintextSlice` instance, iterating the characters of the slice.
 pub struct ProteinTextSliceIterator<'a> {
     text_slice: &'a ProteinTextSlice<'a>,
     index: usize,
@@ -167,6 +300,11 @@ impl<'a> Iterator for ProteinTextSliceIterator<'a> {
 
     type Item = u8;
     
+    /// Get the next character in the `ProteinTextSlice`.
+    /// 
+    /// # Returns
+    /// 
+    /// The next character in the slice.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.text_slice.len() {
             return None;
@@ -181,6 +319,11 @@ impl<'a> Iterator for ProteinTextIterator<'a> {
 
     type Item = u8;
     
+    /// Get the next character in the `ProteinText`.
+    /// 
+    /// # Returns
+    /// 
+    /// The next character in the text.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.protein_text.len() {
             return None;
@@ -257,7 +400,7 @@ pub fn load_compressed_text(
 
 #[cfg(test)]
 mod tests {
-    use std::{char, io::Read};
+    use std::io::Read;
 
     use super::*;
 
