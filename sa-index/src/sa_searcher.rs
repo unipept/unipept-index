@@ -481,7 +481,7 @@ mod tests {
     }
 
     fn get_example_proteins() -> Proteins {
-        let input_string = "AI-BLACVAA-AC-KCRLZ$";
+        let input_string = "AI-CLACVAA-AC-KCRLY$";
         let text = ProteinText::from_string(input_string);
 
         Proteins {
@@ -561,7 +561,7 @@ mod tests {
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
 
         // search bounds 'RIZ' with equal I and L
-        let bounds_res = searcher.search_bounds(&[b'R', b'I', b'Z']);
+        let bounds_res = searcher.search_bounds(&[b'R', b'I', b'Y']);
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((17, 18)));
     }
 
@@ -574,18 +574,18 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'RIZ' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Y'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
         // search bounds 'RIZ' without equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, false);
+        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Y'], usize::MAX, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
     // test edge case where an I or L is the first index in the sparse SA.
     #[test]
     fn test_l_first_index_in_sa() {
-        let input_string = "LMOXZ$";
+        let input_string = "LMPYY$";
         let text = ProteinText::from_string(input_string);
 
         let proteins = Proteins {
