@@ -19,7 +19,7 @@ pub struct BitArray {
     /// The length of the bit array.
     len: usize,
     /// The number of bits in a single element of the data vector.
-    bits_per_value: usize
+    bits_per_value: usize,
 }
 
 impl BitArray {
@@ -39,7 +39,7 @@ impl BitArray {
             data: vec![0; capacity * bits_per_value / 64 + extra],
             mask: (1 << bits_per_value) - 1,
             len: capacity,
-            bits_per_value
+            bits_per_value,
         }
     }
 
@@ -85,6 +85,7 @@ impl BitArray {
     /// * `index` - The index of the value to set.
     /// * `value` - The value to set at the specified index.
     pub fn set(&mut self, index: usize, value: u64) {
+        let value: u64 = value.into();
         let start_block = index * self.bits_per_value / 64;
         let start_block_offset = index * self.bits_per_value % 64;
 
@@ -142,6 +143,11 @@ impl BitArray {
     pub fn clear(&mut self) {
         self.data.iter_mut().for_each(|x| *x = 0);
     }
+
+    pub fn get_data_slice(&self, start_slice: usize, end_slice: usize) -> &[u64] {
+        &self.data[start_slice..end_slice]
+    }
+
 }
 
 /// Writes the data to a writer in a binary format using a bit array. This function is helpfull
@@ -257,10 +263,10 @@ mod tests {
     fn test_bitarray_set() {
         let mut bitarray = BitArray::with_capacity(4, 40);
 
-        bitarray.set(0, 0b0001110011111010110001000111111100110010);
-        bitarray.set(1, 0b1100001001010010011000010100110111001001);
-        bitarray.set(2, 0b1111001101001101101101101011101001010001);
-        bitarray.set(3, 0b0000100010010001010001001110101110011100);
+        bitarray.set(0, 0b0001110011111010110001000111111100110010_u64);
+        bitarray.set(1, 0b1100001001010010011000010100110111001001_u64);
+        bitarray.set(2, 0b1111001101001101101101101011101001010001_u64);
+        bitarray.set(3, 0b0000100010010001010001001110101110011100_u64);
 
         assert_eq!(bitarray.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
     }

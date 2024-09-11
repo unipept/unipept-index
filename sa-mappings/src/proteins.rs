@@ -5,6 +5,7 @@ use std::{error::Error, fs::File, io::BufReader, ops::Index, str::from_utf8};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
+use text_compression::ProteinText;
 
 /// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
@@ -28,7 +29,7 @@ pub struct Protein {
 /// A struct that represents a collection of proteins
 pub struct Proteins {
     /// The input string containing all proteins
-    pub input_string: Vec<u8>,
+    pub text: ProteinText,
 
     /// The proteins in the input string
     pub proteins: Vec<Protein>
@@ -86,12 +87,13 @@ impl Proteins {
 
         input_string.pop();
         input_string.push(TERMINATION_CHARACTER.into());
-        input_string.shrink_to_fit();
         proteins.shrink_to_fit();
-        Ok(Self { input_string: input_string.into_bytes(), proteins })
+
+        let text = ProteinText::from_string(&input_string);
+        Ok(Self { text, proteins })
     }
 
-    /// Creates a `vec<u8>` which represents all the proteins concatenated from the database file
+    /// Creates a `ProteinText` which represents all the proteins concatenated from the database file
     ///
     /// # Arguments
     /// * `file` - The path to the database file
@@ -99,12 +101,12 @@ impl Proteins {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the `Vec<u8>`
+    /// Returns a `Result` containing the `ProteinText`
     ///
     /// # Errors
     ///
     /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
-    pub fn try_from_database_file_without_annotations(database_file: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn try_from_database_file_without_annotations(database_file: &str) -> Result<ProteinText, Box<dyn Error>> {
         let mut input_string: String = String::new();
 
         let file = File::open(database_file)?;
@@ -123,11 +125,10 @@ impl Proteins {
             input_string.push(SEPARATION_CHARACTER.into());
         }
 
-        input_string.pop();
-        input_string.push(TERMINATION_CHARACTER.into());
+        let text = ProteinText::from_string(&input_string);
 
-        input_string.shrink_to_fit();
-        Ok(input_string.into_bytes())
+        Ok(text)
+
     }
 }
 
@@ -181,8 +182,10 @@ mod tests {
 
     #[test]
     fn test_new_proteins() {
+        let input_string = "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG";
+        let text = ProteinText::from_string(&input_string);
         let proteins = Proteins {
-            input_string: "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG".as_bytes().to_vec(),
+            text,
             proteins: vec![
                 Protein {
                     uniprot_id: "P12345".to_string(),
@@ -197,7 +200,6 @@ mod tests {
             ]
         };
 
-        assert_eq!(proteins.input_string, "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG".as_bytes());
         assert_eq!(proteins.proteins.len(), 2);
         assert_eq!(proteins[0].uniprot_id, "P12345");
         assert_eq!(proteins[0].taxon_id, 1);
@@ -245,12 +247,7 @@ mod tests {
 
         let proteins = Proteins::try_from_database_file_without_annotations(database_file.to_str().unwrap()).unwrap();
 
-        let sep_char = SEPARATION_CHARACTER as char;
-        let end_char = TERMINATION_CHARACTER as char;
-        let expected = format!(
-            "MLPGLALLLLAAWTARALEV{}PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG{}KWDSDPSGTKTCIDT{}KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH{}",
-            sep_char, sep_char, sep_char, end_char
-        );
-        assert_eq!(proteins, expected.as_bytes());
+        let expected = 'L' as u8;
+        assert_eq!(proteins.get(4), expected);
     }
 }

@@ -2,6 +2,7 @@ use clap::ValueEnum;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 use crate::Nullable;
+use text_compression::ProteinText;
 
 /// Enum used to define the commandline arguments and choose which index style is used
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
@@ -66,10 +67,10 @@ impl DenseSuffixToProtein {
     /// # Returns
     ///
     /// Returns a new DenseSuffixToProtein build over the provided text
-    pub fn new(text: &[u8]) -> Self {
+    pub fn new(text: &ProteinText) -> Self {
         let mut current_protein_index: u32 = 0;
         let mut suffix_index_to_protein: Vec<u32> = vec![];
-        for &char in text.iter() {
+        for char in text.iter() {
             if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
                 current_protein_index += 1;
                 suffix_index_to_protein.push(u32::NULL);
@@ -92,9 +93,9 @@ impl SparseSuffixToProtein {
     /// # Returns
     ///
     /// Returns a new SparseSuffixToProtein build over the provided text
-    pub fn new(text: &[u8]) -> Self {
+    pub fn new(text: &ProteinText) -> Self {
         let mut suffix_index_to_protein: Vec<i64> = vec![0];
-        for (index, &char) in text.iter().enumerate() {
+        for (index, char) in text.iter().enumerate() {
             if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
                 suffix_index_to_protein.push(index as i64 + 1);
             }
@@ -108,6 +109,7 @@ impl SparseSuffixToProtein {
 mod tests {
     use clap::ValueEnum;
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+    use text_compression::ProteinText;
 
     use crate::{
         suffix_to_protein_index::{
@@ -116,10 +118,10 @@ mod tests {
         Nullable
     };
 
-    fn build_text() -> Vec<u8> {
+    fn build_text() -> ProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
         text.push(TERMINATION_CHARACTER as char);
-        text.into_bytes()
+        ProteinText::from_string(&text)
     }
 
     #[test]

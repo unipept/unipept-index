@@ -159,10 +159,10 @@ mod tests {
     #[test]
     fn test_write_binary() {
         let mut bitarray = BitArray::with_capacity(4, 40);
-        bitarray.set(0, 0x1234567890);
-        bitarray.set(1, 0xabcdef0123);
-        bitarray.set(2, 0x4567890abc);
-        bitarray.set(3, 0xdef0123456);
+        bitarray.set(0, 0x1234567890_u64);
+        bitarray.set(1, 0xabcdef0123_u64);
+        bitarray.set(2, 0x4567890abc_u64);
+        bitarray.set(3, 0xdef0123456_u64);
 
         let mut buffer = Vec::new();
         bitarray.write_binary(&mut buffer).unwrap();
