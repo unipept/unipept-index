@@ -47,7 +47,6 @@ impl Proteins {
     ///
     /// # Arguments
     /// * `file` - The path to the database file
-    /// * `taxon_aggregator` - The `TaxonAggregator` to use
     ///
     /// # Returns
     ///
@@ -97,7 +96,6 @@ impl Proteins {
     ///
     /// # Arguments
     /// * `file` - The path to the database file
-    /// * `taxon_aggregator` - The `TaxonAggregator` to use
     ///
     /// # Returns
     ///
@@ -128,6 +126,45 @@ impl Proteins {
         let text = ProteinText::from_string(&input_string);
 
         Ok(text)
+
+    }
+
+    /// Creates a `vec<u8>` which represents all the proteins concatenated from the database file
+    ///
+    /// # Arguments
+    /// * `file` - The path to the database file
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `Vec<u8>`
+    ///
+    /// # Errors
+    ///
+    /// Returns a `Box<dyn Error>` if an error occurred while reading the database file
+    pub fn try_from_database_file_uncompressed(database_file: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut input_string: String = String::new();
+
+        let file = File::open(database_file)?;
+
+        // Read the lines as bytes, since the input string is not guaranteed to be utf8
+        // because of the encoded functional annotations
+        let mut lines = ByteLines::new(BufReader::new(file));
+
+        while let Some(Ok(line)) = lines.next() {
+            let mut fields = line.split(|b| *b == b'\t');
+
+            // only get the taxon id and sequence from each line, we don't need the other parts
+            let sequence = from_utf8(fields.nth(2).unwrap())?;
+
+            input_string.push_str(&sequence.to_uppercase());
+            input_string.push(SEPARATION_CHARACTER.into());
+        }
+
+        input_string.pop();
+        input_string.push(TERMINATION_CHARACTER.into());
+
+        input_string.shrink_to_fit();
+        Ok(input_string.into_bytes())
 
     }
 }

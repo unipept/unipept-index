@@ -342,7 +342,7 @@ impl Searcher {
                     if suffix >= skip
                         && ((skip == 0
                             || ProteinTextSlice::new(&self.proteins.text, suffix - skip, suffix)
-                                .equals_slice(current_search_string_prefix, equate_il))
+                                .equals_slice(current_search_string_prefix, equate_il)) // Check the prefix
                             && 
                             Self::check_suffix(
                                 skip,
@@ -369,31 +369,6 @@ impl Searcher {
             SearchAllSuffixesResult::NoMatches
         } else {
             SearchAllSuffixesResult::SearchResult(matching_suffixes)
-        }
-    }
-
-    /// Returns true of the prefixes are the same
-    /// if `equate_il` is set to true, L and I are considered the same
-    ///
-    /// # Arguments
-    /// * `search_string_prefix` - The unchecked prefix of the string/peptide that is searched
-    /// * `index_prefix` - The unchecked prefix from the protein from the suffix array
-    /// * `equate_il` - True if we want to equate I and L during search, otherwise false
-    ///
-    /// # Returns
-    ///
-    /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise
-    /// false
-    #[inline]
-    fn check_prefix(search_string_prefix: &[u8], index_prefix: &[u8], equate_il: bool) -> bool {
-        if equate_il {
-            search_string_prefix.iter().zip(index_prefix).all(|(&search_character, &index_character)| {
-                search_character == index_character
-                    || (search_character == b'I' && index_character == b'L')
-                    || (search_character == b'L' && index_character == b'I')
-            })
-        } else {
-            search_string_prefix == index_prefix
         }
     }
 

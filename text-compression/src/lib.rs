@@ -351,8 +351,8 @@ mod tests {
         let mut reader = std::io::BufReader::new(&data[..]);
         let compressed_text = load_compressed_text(&mut reader).unwrap();
 
-        for i in 0..10 {
-            assert_eq!(compressed_text.get(i), i as u8 + 1);
+        for (i, c) in "CDEFGHIKLM".chars().enumerate() {
+            assert_eq!(compressed_text.get(i), c as u8);
         }
     }
 
