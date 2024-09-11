@@ -94,6 +94,10 @@ impl ProteinText {
         ProteinTextIterator {protein_text: self, index: 0, }
     }
 
+    pub fn slice(&self, start: usize, end:usize) -> ProteinTextSlice {
+        ProteinTextSlice::new(self, start, end)
+    }
+
 }
 
 pub struct ProteinTextSlice<'a> {
@@ -253,7 +257,7 @@ pub fn load_compressed_text(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::{char, io::Read};
 
     use super::*;
 
@@ -299,6 +303,108 @@ mod tests {
         }
 
         fn consume(&mut self, _: usize) {}
+    }
+
+    #[test]
+    fn test_u8_5bit_conversion() {
+        let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
+        let bit5_to_char = ProteinText::create_bit5_to_char();
+
+        for c in "ACDEFGHIKLMNPQRSTVWY-$".chars() {
+            let char_5bit = char_to_5bit.get(&(c as u8)).unwrap();
+            assert_eq!(c as u8, bit5_to_char[*char_5bit as usize]);
+        }
+    }
+
+    #[test]
+    fn test_build_from_string() {
+        let text = ProteinText::from_string("ACACA-CAC$");
+
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            assert_eq!(c as u8, text.get(i));
+        }
+    }
+
+    #[test]
+    fn test_build_from_vec() {
+        let vec = vec![b'A', b'C', b'A', b'C', b'A', b'-', b'C', b'A', b'C', b'$'];
+        let text = ProteinText::from_vec(&vec);
+
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            assert_eq!(c as u8, text.get(i));
+        }
+    }
+
+    #[test]
+    fn test_build_from_bitarray() {
+        let input_string = "ACACA-CAC$";
+        let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
+
+        let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
+        for (i, c) in input_string.chars().enumerate() {
+            let char_5bit: u8 = *char_to_5bit.get(&(c as u8)).expect("Input character not in alphabet");
+            bit_array.set(i, char_5bit as u64);
+        }
+
+        let text = ProteinText::new(bit_array);
+
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            assert_eq!(c as u8, text.get(i));
+        }
+    }
+
+    #[test]
+    fn test_build_with_capacity() {
+        let input_string = "ACACA-CAC$";
+
+        let mut text = ProteinText::with_capacity(input_string.len());
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            text.set(i, c as u8);
+        }
+
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            assert_eq!(c as u8, text.get(i));
+        }
+    }
+
+    #[test]
+    fn test_text_slice() {
+        let input_string = "ACACA-CAC$";
+        let start = 1;
+        let end  = 5;
+        let text = ProteinText::from_string(&input_string);
+        let text_slice = text.slice(start, end);
+
+        for (i, c) in input_string[start..end].chars().enumerate() {
+            assert_eq!(c as u8, text_slice.get(i));
+        }
+    }
+
+    #[test]
+    fn test_equals_slice() {
+        let input_string = "ACICA-CAC$";
+        let text = ProteinText::from_string(&input_string);
+        let text_slice = text.slice(1, 5);
+        let eq_slice_true = [b'C', b'I', b'C', b'A'];
+        let eq_slice_false = [b'C', b'C', b'C', b'A'];
+        let eq_slice_il_true = [b'C', b'L', b'C', b'A'];
+
+        assert!(text_slice.equals_slice(&eq_slice_true, false));
+        assert!(! text_slice.equals_slice(&eq_slice_false, false));
+        assert!(text_slice.equals_slice(&eq_slice_il_true, true));
+    }
+
+    #[test]
+    fn test_check_il_locations() {
+        let input_string = "ACILA-CAC$";
+        let text = ProteinText::from_string(&input_string);
+        let text_slice = text.slice(1, 5);
+        let il_locations = [1, 2];
+        let il_true = [b'C', b'I', b'L', b'A'];
+        let il_false = [b'C', b'I', b'C', b'A'];
+
+        assert!(text_slice.check_il_locations(0, &il_locations, &il_true));
+        assert!(! text_slice.check_il_locations(0, &il_locations, &il_false));
     }
 
     #[test]
