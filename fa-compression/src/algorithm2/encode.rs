@@ -89,8 +89,9 @@ mod tests {
     #[test]
     fn test_encode_all() {
         let table = create_compresion_table();
-        assert_eq!(encode("IPR:IPR000001;EC:1.1.1.-;IPR:IPR000003;GO:0000002", table), vec![
-            0, 0, 0, 7, 0, 0, 2, 0, 0, 5, 0, 0
-        ])
+        assert_eq!(
+            encode("IPR:IPR000001;EC:1.1.1.-;IPR:IPR000003;GO:0000002", table),
+            vec![0, 0, 0, 7, 0, 0, 2, 0, 0, 5, 0, 0]
+        )
     }
 }

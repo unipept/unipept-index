@@ -1,7 +1,7 @@
 use std::{
     fs::{File, OpenOptions},
     io::BufWriter,
-    time::{SystemTime, SystemTimeError, UNIX_EPOCH}
+    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
 use clap::Parser;
@@ -16,7 +16,7 @@ fn main() {
         output,
         sparseness_factor,
         construction_algorithm,
-        compress_sa
+        compress_sa,
     } = Arguments::parse();
     eprintln!();
     eprintln!("📋 Started loading the proteins...");

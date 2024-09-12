@@ -28,7 +28,7 @@ pub fn decode_benchmark(c: &mut criterion::Criterion) {
         b.iter_batched(
             || generate_encoded_annotations_and_table(100),
             |(annotations, ct)| black_box(decode(annotations.as_slice(), ct)),
-            criterion::BatchSize::SmallInput
+            criterion::BatchSize::SmallInput,
         )
     });
 }

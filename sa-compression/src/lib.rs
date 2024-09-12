@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    io::{BufRead, Write}
+    io::{BufRead, Write},
 };
 
 use bitarray::{data_to_writer, Binary, BitArray};
@@ -22,7 +22,7 @@ pub fn dump_compressed_suffix_array(
     sa: Vec<i64>,
     sparseness_factor: u8,
     bits_per_value: usize,
-    writer: &mut impl Write
+    writer: &mut impl Write,
 ) -> Result<(), Box<dyn Error>> {
     // Write the flags to the writer
     // 00000001 indicates that the suffix array is compressed
@@ -59,7 +59,7 @@ pub fn dump_compressed_suffix_array(
 /// Returns an error if reading from the reader fails.
 pub fn load_compressed_suffix_array(
     reader: &mut impl BufRead,
-    bits_per_value: usize
+    bits_per_value: usize,
 ) -> Result<SuffixArray, Box<dyn Error>> {
     // Read the sample rate from the binary file (1 byte)
     let mut sample_rate_buffer = [0_u8; 1];
@@ -92,7 +92,7 @@ mod tests {
 
     pub struct FailingWriter {
         /// The number of times the write function can be called before it fails.
-        pub valid_write_count: usize
+        pub valid_write_count: usize,
     }
 
     impl Write for FailingWriter {
@@ -112,7 +112,7 @@ mod tests {
 
     pub struct FailingReader {
         /// The number of times the read function can be called before it fails.
-        pub valid_read_count: usize
+        pub valid_read_count: usize,
     }
 
     impl Read for FailingReader {
@@ -141,13 +141,16 @@ mod tests {
         let mut writer = vec![];
         dump_compressed_suffix_array(sa, 1, 8, &mut writer).unwrap();
 
-        assert_eq!(writer, vec![
-            // bits per value
-            8, // sparseness factor
-            1, // size of the suffix array
-            10, 0, 0, 0, 0, 0, 0, 0, // compressed suffix array
-            8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9
-        ]);
+        assert_eq!(
+            writer,
+            vec![
+                // bits per value
+                8, // sparseness factor
+                1, // size of the suffix array
+                10, 0, 0, 0, 0, 0, 0, 0, // compressed suffix array
+                8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9
+            ]
+        );
     }
 
     #[test]

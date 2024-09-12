@@ -27,6 +27,6 @@ pub fn generate_annotation(random: &mut ThreadRng) -> String {
         0 => generate_ipr(random),
         1 => generate_go(random),
         2 => generate_ec(random),
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }

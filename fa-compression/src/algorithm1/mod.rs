@@ -79,7 +79,7 @@ enum CharacterSet {
     Comma,
 
     /// Annotation separator
-    Semicolon
+    Semicolon,
 }
 
 impl Encode for CharacterSet {
@@ -110,7 +110,7 @@ impl Encode for CharacterSet {
             b'n' => CharacterSet::Preliminary,
             b',' => CharacterSet::Comma,
             b';' => CharacterSet::Semicolon,
-            _ => panic!("Invalid character")
+            _ => panic!("Invalid character"),
         }
     }
 }
@@ -143,7 +143,7 @@ impl Decode for CharacterSet {
             13 => 'n',
             14 => ',',
             15 => ';',
-            _ => panic!("Invalid character")
+            _ => panic!("Invalid character"),
         }
     }
 }
@@ -189,7 +189,7 @@ mod tests {
         CharacterSet::Point,
         CharacterSet::Preliminary,
         CharacterSet::Comma,
-        CharacterSet::Semicolon
+        CharacterSet::Semicolon,
     ];
 
     #[test]

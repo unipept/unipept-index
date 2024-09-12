@@ -23,7 +23,7 @@ pub struct Protein {
     pub taxon_id: u32,
 
     /// The encoded functional annotations of the protein
-    pub functional_annotations: Vec<u8>
+    pub functional_annotations: Vec<u8>,
 }
 
 /// A struct that represents a collection of proteins
@@ -32,7 +32,7 @@ pub struct Proteins {
     pub text: ProteinText,
 
     /// The proteins in the input string
-    pub proteins: Vec<Protein>
+    pub proteins: Vec<Protein>,
 }
 
 impl Protein {
@@ -80,7 +80,7 @@ impl Proteins {
             proteins.push(Protein {
                 uniprot_id: uniprot_id.to_string(),
                 taxon_id,
-                functional_annotations
+                functional_annotations,
             });
         }
 
@@ -126,7 +126,6 @@ impl Proteins {
         let text = ProteinText::from_string(&input_string);
 
         Ok(text)
-
     }
 
     /// Creates a `vec<u8>` which represents all the proteins concatenated from the database file
@@ -165,7 +164,6 @@ impl Proteins {
 
         input_string.shrink_to_fit();
         Ok(input_string.into_bytes())
-
     }
 }
 
@@ -197,7 +195,7 @@ mod tests {
             .unwrap();
         file.write(
             "P13579\t17\tKEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n"
-                .as_bytes()
+                .as_bytes(),
         )
         .unwrap();
 
@@ -209,7 +207,7 @@ mod tests {
         let protein = Protein {
             uniprot_id: "P12345".to_string(),
             taxon_id: 1,
-            functional_annotations: vec![0xD1, 0x11]
+            functional_annotations: vec![0xD1, 0x11],
         };
 
         assert_eq!(protein.uniprot_id, "P12345");
@@ -227,14 +225,14 @@ mod tests {
                 Protein {
                     uniprot_id: "P12345".to_string(),
                     taxon_id: 1,
-                    functional_annotations: vec![0xD1, 0x11]
+                    functional_annotations: vec![0xD1, 0x11],
                 },
                 Protein {
                     uniprot_id: "P54321".to_string(),
                     taxon_id: 2,
-                    functional_annotations: vec![0xD1, 0x11]
+                    functional_annotations: vec![0xD1, 0x11],
                 },
-            ]
+            ],
         };
 
         assert_eq!(proteins.proteins.len(), 2);

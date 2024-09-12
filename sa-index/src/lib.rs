@@ -10,7 +10,7 @@ pub enum SuffixArray {
     /// The original suffix array.
     Original(Vec<i64>, u8),
     /// The compressed suffix array.
-    Compressed(BitArray, u8)
+    Compressed(BitArray, u8),
 }
 
 impl SuffixArray {
@@ -22,7 +22,7 @@ impl SuffixArray {
     pub fn len(&self) -> usize {
         match self {
             SuffixArray::Original(sa, _) => sa.len(),
-            SuffixArray::Compressed(sa, _) => sa.len()
+            SuffixArray::Compressed(sa, _) => sa.len(),
         }
     }
 
@@ -34,7 +34,7 @@ impl SuffixArray {
     pub fn bits_per_value(&self) -> usize {
         match self {
             SuffixArray::Original(_, _) => 64,
-            SuffixArray::Compressed(sa, _) => sa.bits_per_value()
+            SuffixArray::Compressed(sa, _) => sa.bits_per_value(),
         }
     }
 
@@ -46,7 +46,7 @@ impl SuffixArray {
     pub fn sample_rate(&self) -> u8 {
         match self {
             SuffixArray::Original(_, sample_rate) => *sample_rate,
-            SuffixArray::Compressed(_, sample_rate) => *sample_rate
+            SuffixArray::Compressed(_, sample_rate) => *sample_rate,
         }
     }
 
@@ -62,7 +62,7 @@ impl SuffixArray {
     pub fn get(&self, index: usize) -> i64 {
         match self {
             SuffixArray::Original(sa, _) => sa[index],
-            SuffixArray::Compressed(sa, _) => sa.get(index) as i64
+            SuffixArray::Compressed(sa, _) => sa.get(index) as i64,
         }
     }
 

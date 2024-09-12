@@ -8,7 +8,7 @@ use text_compression::ProteinText;
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SuffixToProteinMappingStyle {
     Dense,
-    Sparse
+    Sparse,
 }
 
 /// Trait implemented by the SuffixToProtein mappings
@@ -29,14 +29,14 @@ pub trait SuffixToProteinIndex: Send + Sync {
 #[derive(Debug, PartialEq)]
 pub struct DenseSuffixToProtein {
     // UniProtKB does not have more that u32::MAX proteins, so a larger type is not needed
-    mapping: Vec<u32>
+    mapping: Vec<u32>,
 }
 
 /// Mapping that uses O(m) memory with m the number of proteins, but retrieval of the protein is
 /// O(log m)
 #[derive(Debug, PartialEq)]
 pub struct SparseSuffixToProtein {
-    mapping: Vec<i64>
+    mapping: Vec<i64>,
 }
 
 impl SuffixToProteinIndex for DenseSuffixToProtein {
@@ -113,9 +113,9 @@ mod tests {
 
     use crate::{
         suffix_to_protein_index::{
-            DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle
+            DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle,
         },
-        Nullable
+        Nullable,
     };
 
     fn build_text() -> ProteinText {
@@ -138,7 +138,7 @@ mod tests {
         let u8_text = &build_text();
         let index = DenseSuffixToProtein::new(u8_text);
         let expected = DenseSuffixToProtein {
-            mapping: vec![0, 0, 0, u32::NULL, 1, 1, u32::NULL, 2, 2, 2, u32::NULL]
+            mapping: vec![0, 0, 0, u32::NULL, 1, 1, u32::NULL, 2, 2, 2, u32::NULL],
         };
         assert_eq!(index, expected);
     }

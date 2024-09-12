@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::{
     error::Error,
-    io::{BufRead, Write}
+    io::{BufRead, Write},
 };
-use std::collections::HashMap;
 
 use bitarray::{data_to_writer, Binary, BitArray};
 
@@ -17,7 +17,6 @@ pub struct ProteinText {
 }
 
 impl ProteinText {
-
     /// Creates the hashmap storing the mappings between the characters as `u8` and 5 bit numbers.
     ///
     /// # Returns
@@ -44,9 +43,9 @@ impl ProteinText {
         }
         vec
     }
-    
+
     /// Creates the compressed text from a string.
-    /// 
+    ///
     /// # Arguments
     /// * `input_string` - The text (proteins) in string format
     ///
@@ -67,7 +66,7 @@ impl ProteinText {
     }
 
     /// Creates the compressed text from a vector.
-    /// 
+    ///
     /// # Arguments
     /// * `input_vec` - The text (proteins) in a vector with elements of type `u8` representing the amino acids.
     ///
@@ -88,7 +87,7 @@ impl ProteinText {
     }
 
     /// Creates the compressed text from a bit array.
-    /// 
+    ///
     /// # Arguments
     /// * `bit_array` - The text (proteins) in a bit array using 5 bits for each amino acid.
     ///
@@ -102,7 +101,7 @@ impl ProteinText {
     }
 
     /// Creates an instance of `ProteinText` with a given capacity.
-    /// 
+    ///
     /// # Arguments
     /// * `capacity` - The amount of characters in the text.
     ///
@@ -114,7 +113,7 @@ impl ProteinText {
     }
 
     /// Search the character at a given position in the compressed text.
-    /// 
+    ///
     /// # Arguments
     /// * `index` - The index of the character to search.
     ///
@@ -127,7 +126,7 @@ impl ProteinText {
     }
 
     /// Set the character at a given index.
-    /// 
+    ///
     /// # Arguments
     /// * `index` - The index of the character to change.
     /// * `value` - The character to fill in as `u8`.
@@ -139,7 +138,7 @@ impl ProteinText {
     /// Queries the length of the text.
     ///
     /// # Returns
-    /// 
+    ///
     /// the length of the text
     pub fn len(&self) -> usize {
         self.bit_array.len()
@@ -148,7 +147,7 @@ impl ProteinText {
     /// Check if the text is empty (length 0).
     ///
     /// # Returns
-    /// 
+    ///
     /// true if the the text has length 0, false otherwise.
     pub fn is_empty(&self) -> bool {
         self.bit_array.len() == 0
@@ -162,21 +161,20 @@ impl ProteinText {
     /// Get an iterator over the characters of the text.
     ///
     /// # Returns
-    /// 
+    ///
     /// A `ProteinTextIterator`, which can iterate over the characters of the text.
     pub fn iter(&self) -> ProteinTextIterator {
-        ProteinTextIterator {protein_text: self, index: 0, }
+        ProteinTextIterator { protein_text: self, index: 0 }
     }
 
     /// Get a slice of the text
     ///
     /// # Returns
-    /// 
+    ///
     /// An `ProteinTextSlice` representing a slice of the text.
-    pub fn slice(&self, start: usize, end:usize) -> ProteinTextSlice {
+    pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice {
         ProteinTextSlice::new(self, start, end)
     }
-
 }
 
 /// Structure representing a slice of a `ProteinText`.
@@ -186,13 +184,12 @@ pub struct ProteinTextSlice<'a> {
     /// The start of the slice.
     start: usize, // included
     /// The end of the slice.
-    end: usize,   // excluded
+    end: usize, // excluded
 }
 
 impl<'a> ProteinTextSlice<'a> {
-
     /// Creates an instance of `ProteintextSlice`, given the text and boundaries.
-    /// 
+    ///
     /// # Arguments
     /// * `text` - The `Proteintext` representing the text of proteins with 5 bits per amino acid.
     /// * `start` - The start of the slice.
@@ -202,11 +199,11 @@ impl<'a> ProteinTextSlice<'a> {
     ///
     /// An instance of `ProteinTextSlice`
     pub fn new(text: &'a ProteinText, start: usize, end: usize) -> ProteinTextSlice {
-        Self {text, start, end }
+        Self { text, start, end }
     }
 
     /// Get a character (amino acid) in the slice.
-    /// 
+    ///
     /// # Arguments
     /// * `index` - The index in the slice of the character to get.
     ///
@@ -228,7 +225,7 @@ impl<'a> ProteinTextSlice<'a> {
 
     /// Checks if the slice and a given array of `u8` are equal.
     /// I and L can be equated.
-    /// 
+    ///
     /// # Arguments
     /// * `other` - the array of `u8` to compare the slice with.
     /// * `equate_il` - true if I and L need to be equated, false otherwise.
@@ -245,12 +242,15 @@ impl<'a> ProteinTextSlice<'a> {
                     || (search_character == b'L' && text_character == b'I')
             })
         } else {
-            other.iter().zip(self.iter()).all(|(&search_character, text_character)| search_character == text_character)
+            other
+                .iter()
+                .zip(self.iter())
+                .all(|(&search_character, text_character)| search_character == text_character)
         }
     }
 
     /// Check if the slice and a given array of `u8` are equal on the I and L positions.
-    /// 
+    ///
     /// # Arguments
     /// * `skip` - The amount of positions this slice skipped, this has an influence on the I and L positions.
     /// * `il_locations` - The positions where I and L occur.
@@ -259,12 +259,7 @@ impl<'a> ProteinTextSlice<'a> {
     /// # Returns
     ///
     /// True if the slice and `search_string` have the same contents on the I and L positions, false otherwise.
-    pub fn check_il_locations(
-        &self,
-        skip: usize,
-        il_locations: &[usize],
-        search_string: &[u8],
-    ) -> bool {
+    pub fn check_il_locations(&self, skip: usize, il_locations: &[usize], search_string: &[u8]) -> bool {
         for &il_location in il_locations {
             let index = il_location - skip;
             if search_string[index] != self.get(index) {
@@ -280,7 +275,7 @@ impl<'a> ProteinTextSlice<'a> {
     ///
     /// An iterator over the slice.
     pub fn iter(&self) -> ProteinTextSliceIterator {
-        ProteinTextSliceIterator {text_slice: self, index: 0, }
+        ProteinTextSliceIterator { text_slice: self, index: 0 }
     }
 }
 
@@ -297,13 +292,12 @@ pub struct ProteinTextSliceIterator<'a> {
 }
 
 impl<'a> Iterator for ProteinTextSliceIterator<'a> {
-
     type Item = u8;
-    
+
     /// Get the next character in the `ProteinTextSlice`.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The next character in the slice.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.text_slice.len() {
@@ -316,13 +310,12 @@ impl<'a> Iterator for ProteinTextSliceIterator<'a> {
 }
 
 impl<'a> Iterator for ProteinTextIterator<'a> {
-
     type Item = u8;
-    
+
     /// Get the next character in the `ProteinText`.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The next character in the text.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.protein_text.len() {
@@ -344,10 +337,7 @@ impl<'a> Iterator for ProteinTextIterator<'a> {
 /// # Errors
 ///
 /// Returns an error if writing to the writer fails.
-pub fn dump_compressed_text(
-    text: Vec<u8>,
-    writer: &mut impl Write
-) -> Result<(), Box<dyn Error>> {
+pub fn dump_compressed_text(text: Vec<u8>, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let bits_per_value = 5;
 
     // Write the flags to the writer
@@ -378,9 +368,7 @@ pub fn dump_compressed_text(
 /// # Errors
 ///
 /// Returns an error if reading from the reader fails.
-pub fn load_compressed_text(
-    reader: &mut impl BufRead
-) -> Result<ProteinText, Box<dyn Error>> {
+pub fn load_compressed_text(reader: &mut impl BufRead) -> Result<ProteinText, Box<dyn Error>> {
     let bits_per_value: usize = 5;
     // Read the size of the text from the binary file (8 bytes)
     let mut size_buffer = [0_u8; 8];
@@ -406,7 +394,7 @@ mod tests {
 
     pub struct FailingWriter {
         /// The number of times the write function can be called before it fails.
-        pub valid_write_count: usize
+        pub valid_write_count: usize,
     }
 
     impl Write for FailingWriter {
@@ -426,7 +414,7 @@ mod tests {
 
     pub struct FailingReader {
         /// The number of times the read function can be called before it fails.
-        pub valid_read_count: usize
+        pub valid_read_count: usize,
     }
 
     impl Read for FailingReader {
@@ -514,7 +502,7 @@ mod tests {
     fn test_text_slice() {
         let input_string = "ACACA-CAC$";
         let start = 1;
-        let end  = 5;
+        let end = 5;
         let text = ProteinText::from_string(&input_string);
         let text_slice = text.slice(start, end);
 
@@ -533,7 +521,7 @@ mod tests {
         let eq_slice_il_true = [b'C', b'L', b'C', b'A'];
 
         assert!(text_slice.equals_slice(&eq_slice_true, false));
-        assert!(! text_slice.equals_slice(&eq_slice_false, false));
+        assert!(!text_slice.equals_slice(&eq_slice_false, false));
         assert!(text_slice.equals_slice(&eq_slice_il_true, true));
     }
 
@@ -547,7 +535,7 @@ mod tests {
         let il_false = [b'C', b'I', b'C', b'A'];
 
         assert!(text_slice.check_il_locations(0, &il_locations, &il_true));
-        assert!(! text_slice.check_il_locations(0, &il_locations, &il_false));
+        assert!(!text_slice.check_il_locations(0, &il_locations, &il_false));
     }
 
     #[test]
@@ -557,12 +545,15 @@ mod tests {
         let mut writer = vec![];
         dump_compressed_text(text, &mut writer).unwrap();
 
-        assert_eq!(writer, vec![
-            // bits per value
-            5, // size of the text
-            10, 0, 0, 0, 0, 0, 0, 0, // compressed text
-            0, 128, 74, 232, 152, 66, 134, 8
-        ]);
+        assert_eq!(
+            writer,
+            vec![
+                // bits per value
+                5, // size of the text
+                10, 0, 0, 0, 0, 0, 0, 0, // compressed text
+                0, 128, 74, 232, 152, 66, 134, 8
+            ]
+        );
     }
 
     #[test]
@@ -592,9 +583,9 @@ mod tests {
     #[test]
     fn test_load_compressed_text() {
         let data = vec![
-             // size of the text
+            // size of the text
             10, 0, 0, 0, 0, 0, 0, 0, // compressed text
-            0, 128, 74, 232, 152, 66, 134, 8
+            0, 128, 74, 232, 152, 66, 134, 8,
         ];
 
         let mut reader = std::io::BufReader::new(&data[..]);

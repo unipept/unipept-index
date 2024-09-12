@@ -22,7 +22,7 @@ pub fn decode_benchmark(c: &mut criterion::Criterion) {
         b.iter_batched(
             || generate_encoded_annotations(100),
             |annotations| black_box(decode(annotations.as_slice())),
-            criterion::BatchSize::SmallInput
+            criterion::BatchSize::SmallInput,
         )
     });
 }
