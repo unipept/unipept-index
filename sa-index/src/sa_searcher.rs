@@ -179,10 +179,8 @@ impl Searcher {
         while index_in_search_string < search_string.len()
             && index_in_suffix < self.proteins.text.len()
             && (search_string[index_in_search_string] == self.proteins.text.get(index_in_suffix)
-                || (search_string[index_in_search_string] == b'L'
-                    && self.proteins.text.get(index_in_suffix) == b'I')
-                || (search_string[index_in_search_string] == b'I'
-                    && self.proteins.text.get(index_in_suffix) == b'L'))
+                || (search_string[index_in_search_string] == b'L' && self.proteins.text.get(index_in_suffix) == b'I')
+                || (search_string[index_in_search_string] == b'I' && self.proteins.text.get(index_in_suffix) == b'L'))
         {
             index_in_suffix += 1;
             index_in_search_string += 1;
