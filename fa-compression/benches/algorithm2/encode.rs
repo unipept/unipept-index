@@ -26,7 +26,7 @@ pub fn encode_benchmark(c: &mut criterion::Criterion) {
         b.iter_batched(
             || generate_decoded_annotations_and_table(100),
             |(annotations, ct)| black_box(encode(annotations.as_str(), ct)),
-            criterion::BatchSize::SmallInput,
+            criterion::BatchSize::SmallInput
         )
     });
 }

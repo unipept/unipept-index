@@ -2,14 +2,14 @@ use std::{
     error::Error,
     fs::File,
     io::{BufReader, Read},
-    sync::Arc,
+    sync::Arc
 };
 
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::StatusCode,
     routing::post,
-    Json, Router,
+    Json, Router
 };
 use clap::Parser;
 use sa_compression::load_compressed_suffix_array;
@@ -17,7 +17,7 @@ use sa_index::{
     binary::load_suffix_array,
     peptide_search::{search_all_peptides, SearchResult},
     sa_searcher::SparseSearcher,
-    SuffixArray,
+    SuffixArray
 };
 use sa_mappings::proteins::Proteins;
 use serde::Deserialize;
@@ -30,7 +30,7 @@ pub struct Arguments {
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file: String,
+    index_file: String
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -58,7 +58,7 @@ struct InputData {
     cutoff: usize,
     #[serde(default = "bool::default")]
     // default value is false // TODO: maybe default should be true?
-    equate_il: bool,
+    equate_il: bool
 }
 
 #[tokio::main]
@@ -81,7 +81,7 @@ async fn main() {
 /// Returns the search results from the index as a JSON
 async fn search(
     State(searcher): State<Arc<SparseSearcher>>,
-    data: Json<InputData>,
+    data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il);
 

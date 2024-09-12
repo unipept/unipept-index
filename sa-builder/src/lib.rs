@@ -21,14 +21,14 @@ pub struct Arguments {
     pub construction_algorithm: SAConstructionAlgorithm,
     /// If the suffix array should be compressed (default value true)
     #[arg(short, long, default_value_t = false)]
-    pub compress_sa: bool,
+    pub compress_sa: bool
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SAConstructionAlgorithm {
     LibDivSufSort,
-    LibSais,
+    LibSais
 }
 
 /// Build a sparse suffix array from the given text
@@ -48,7 +48,7 @@ pub enum SAConstructionAlgorithm {
 pub fn build_ssa(
     text: &mut Vec<u8>,
     construction_algorithm: &SAConstructionAlgorithm,
-    sparseness_factor: u8,
+    sparseness_factor: u8
 ) -> Result<Vec<i64>, Box<dyn Error>> {
     // translate all L's to a I
     translate_l_to_i(text);
@@ -56,7 +56,7 @@ pub fn build_ssa(
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(text),
-        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text),
+        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text)
     }
     .ok_or("Building suffix array failed")?;
 
@@ -125,7 +125,7 @@ mod tests {
             "2",
             "--construction-algorithm",
             "lib-div-suf-sort",
-            "--compress-sa",
+            "--compress-sa"
         ]);
 
         assert_eq!(args.database_file, "database.fa");

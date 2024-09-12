@@ -6,21 +6,21 @@ use text_compression::ProteinTextSlice;
 use crate::{
     sa_searcher::BoundSearch::{Maximum, Minimum},
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
-    Nullable, SuffixArray,
+    Nullable, SuffixArray
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
 #[derive(Clone, Copy, PartialEq)]
 enum BoundSearch {
     Minimum,
-    Maximum,
+    Maximum
 }
 
 /// Enum representing the minimum and maximum bound of the found matches in the suffix array
 #[derive(PartialEq, Debug)]
 pub enum BoundSearchResult {
     NoMatches,
-    SearchResult((usize, usize)),
+    SearchResult((usize, usize))
 }
 
 /// Enum representing the matching suffixes after searching a peptide in the suffix array
@@ -30,7 +30,7 @@ pub enum BoundSearchResult {
 pub enum SearchAllSuffixesResult {
     NoMatches,
     MaxMatches(Vec<i64>),
-    SearchResult(Vec<i64>),
+    SearchResult(Vec<i64>)
 }
 
 /// Custom implementation of partialEq for SearchAllSuffixesResult
@@ -67,7 +67,7 @@ impl PartialEq for SearchAllSuffixesResult {
                 array_eq_unordered(arr1, arr2)
             }
             (SearchAllSuffixesResult::NoMatches, SearchAllSuffixesResult::NoMatches) => true,
-            _ => false,
+            _ => false
         }
     }
 }
@@ -123,7 +123,7 @@ impl Deref for DenseSearcher {
 pub struct Searcher {
     pub sa: SuffixArray,
     pub proteins: Proteins,
-    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
+    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
 }
 
 impl Searcher {
@@ -172,7 +172,7 @@ impl Searcher {
         // Depending on if we are searching for the min of max bound our condition is different
         let condition_check = match bound {
             Minimum => |a: u8, b: u8| a < b,
-            Maximum => |a: u8, b: u8| a > b,
+            Maximum => |a: u8, b: u8| a > b
         };
 
         // match as long as possible
@@ -265,7 +265,7 @@ impl Searcher {
 
         match bound {
             Minimum => (found, right),
-            Maximum => (found, left),
+            Maximum => (found, left)
         }
     }
 
@@ -307,7 +307,7 @@ impl Searcher {
         &self,
         search_string: &[u8],
         max_matches: usize,
-        equate_il: bool,
+        equate_il: bool
     ) -> SearchAllSuffixesResult {
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
@@ -394,13 +394,9 @@ impl Searcher {
         il_locations: &[usize],
         search_string: &[u8],
         text_slice: ProteinTextSlice,
-        equate_il: bool,
+        equate_il: bool
     ) -> bool {
-        if equate_il {
-            true
-        } else {
-            text_slice.check_il_locations(skip, il_locations, search_string)
-        }
+        if equate_il { true } else { text_slice.check_il_locations(skip, il_locations, search_string) }
     }
 
     /// Returns all the proteins that correspond with the provided suffixes
@@ -432,7 +428,7 @@ mod tests {
     use crate::{
         sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
         suffix_to_protein_index::SparseSuffixToProtein,
-        SuffixArray,
+        SuffixArray
     };
 
     #[test]
@@ -465,24 +461,24 @@ mod tests {
                 Protein {
                     uniprot_id: String::new(),
                     taxon_id: 0,
-                    functional_annotations: vec![],
+                    functional_annotations: vec![]
                 },
                 Protein {
                     uniprot_id: String::new(),
                     taxon_id: 0,
-                    functional_annotations: vec![],
+                    functional_annotations: vec![]
                 },
                 Protein {
                     uniprot_id: String::new(),
                     taxon_id: 0,
-                    functional_annotations: vec![],
+                    functional_annotations: vec![]
                 },
                 Protein {
                     uniprot_id: String::new(),
                     taxon_id: 0,
-                    functional_annotations: vec![],
+                    functional_annotations: vec![]
                 },
-            ],
+            ]
         }
     }
 
@@ -568,8 +564,8 @@ mod tests {
             proteins: vec![Protein {
                 uniprot_id: String::new(),
                 taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+                functional_annotations: vec![]
+            }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
@@ -591,8 +587,8 @@ mod tests {
             proteins: vec![Protein {
                 uniprot_id: String::new(),
                 taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+                functional_annotations: vec![]
+            }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
@@ -613,8 +609,8 @@ mod tests {
             proteins: vec![Protein {
                 uniprot_id: String::new(),
                 taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+                functional_annotations: vec![]
+            }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
@@ -635,8 +631,8 @@ mod tests {
             proteins: vec![Protein {
                 uniprot_id: String::new(),
                 taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+                functional_annotations: vec![]
+            }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
@@ -659,8 +655,8 @@ mod tests {
             proteins: vec![Protein {
                 uniprot_id: String::new(),
                 taxon_id: 0,
-                functional_annotations: vec![],
-            }],
+                functional_annotations: vec![]
+            }]
         };
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);

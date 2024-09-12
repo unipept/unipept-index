@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    io::{BufRead, Read, Write},
+    io::{BufRead, Read, Write}
 };
 
 use crate::SuffixArray;
@@ -190,7 +190,7 @@ mod tests {
 
     pub struct FailingWriter {
         /// The number of times the write function can be called before it fails.
-        pub valid_write_count: usize,
+        pub valid_write_count: usize
     }
 
     impl Write for FailingWriter {
@@ -210,7 +210,7 @@ mod tests {
 
     pub struct FailingReader {
         /// The number of times the read function can be called before it fails.
-        pub valid_read_count: usize,
+        pub valid_read_count: usize
     }
 
     impl Read for FailingReader {
@@ -266,13 +266,10 @@ mod tests {
 
         values.write_binary(&mut buffer).unwrap();
 
-        assert_eq!(
-            buffer,
-            vec![
-                1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0,
-                0, 0, 0, 0, 0, 0
-            ]
-        );
+        assert_eq!(buffer, vec![
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
+            0, 0, 0, 0
+        ]);
     }
 
     #[test]
@@ -295,17 +292,14 @@ mod tests {
 
         dump_suffix_array(&sa, 1, &mut buffer).unwrap();
 
-        assert_eq!(
-            buffer,
-            vec![
-                // required bits
-                64, // Sparseness factor
-                1,  // Size of the suffix array
-                5, 0, 0, 0, 0, 0, 0, 0, // Suffix array
-                1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0,
-                0, 0, 0, 0, 0, 0
-            ]
-        );
+        assert_eq!(buffer, vec![
+            // required bits
+            64, // Sparseness factor
+            1,  // Size of the suffix array
+            5, 0, 0, 0, 0, 0, 0, 0, // Suffix array
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
+            0, 0, 0, 0
+        ]);
     }
 
     #[test]

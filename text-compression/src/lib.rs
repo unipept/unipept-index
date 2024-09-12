@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::{
+    collections::HashMap,
     error::Error,
-    io::{BufRead, Write},
+    io::{BufRead, Write}
 };
 
 use bitarray::{data_to_writer, Binary, BitArray};
@@ -13,7 +13,7 @@ pub struct ProteinText {
     /// Hashmap storing the mapping between the character as `u8` and a 5 bit number.
     char_to_5bit: HashMap<u8, u8>,
     /// Vector storing the mapping between the 5 bit number and the character as `u8`.
-    bit5_to_char: Vec<u8>,
+    bit5_to_char: Vec<u8>
 }
 
 impl ProteinText {
@@ -184,7 +184,7 @@ pub struct ProteinTextSlice<'a> {
     /// The start of the slice.
     start: usize, // included
     /// The end of the slice.
-    end: usize, // excluded
+    end: usize // excluded
 }
 
 impl<'a> ProteinTextSlice<'a> {
@@ -282,13 +282,13 @@ impl<'a> ProteinTextSlice<'a> {
 /// Structure representing an iterator over a `ProteinText` instance, iterating the characters of the text.
 pub struct ProteinTextIterator<'a> {
     protein_text: &'a ProteinText,
-    index: usize,
+    index: usize
 }
 
 /// Structure representing an iterator over a `ProteintextSlice` instance, iterating the characters of the slice.
 pub struct ProteinTextSliceIterator<'a> {
     text_slice: &'a ProteinTextSlice<'a>,
-    index: usize,
+    index: usize
 }
 
 impl<'a> Iterator for ProteinTextSliceIterator<'a> {
@@ -394,7 +394,7 @@ mod tests {
 
     pub struct FailingWriter {
         /// The number of times the write function can be called before it fails.
-        pub valid_write_count: usize,
+        pub valid_write_count: usize
     }
 
     impl Write for FailingWriter {
@@ -414,7 +414,7 @@ mod tests {
 
     pub struct FailingReader {
         /// The number of times the read function can be called before it fails.
-        pub valid_read_count: usize,
+        pub valid_read_count: usize
     }
 
     impl Read for FailingReader {
@@ -545,15 +545,12 @@ mod tests {
         let mut writer = vec![];
         dump_compressed_text(text, &mut writer).unwrap();
 
-        assert_eq!(
-            writer,
-            vec![
-                // bits per value
-                5, // size of the text
-                10, 0, 0, 0, 0, 0, 0, 0, // compressed text
-                0, 128, 74, 232, 152, 66, 134, 8
-            ]
-        );
+        assert_eq!(writer, vec![
+            // bits per value
+            5, // size of the text
+            10, 0, 0, 0, 0, 0, 0, 0, // compressed text
+            0, 128, 74, 232, 152, 66, 134, 8
+        ]);
     }
 
     #[test]

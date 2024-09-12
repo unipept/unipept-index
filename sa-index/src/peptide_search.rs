@@ -8,7 +8,7 @@ use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
 pub struct SearchResult {
     pub sequence: String,
     pub proteins: Vec<ProteinInfo>,
-    pub cutoff_used: bool,
+    pub cutoff_used: bool
 }
 
 /// Struct that represents all information known about a certain protein in our database
@@ -16,7 +16,7 @@ pub struct SearchResult {
 pub struct ProteinInfo {
     pub taxon: u32,
     pub uniprot_accession: String,
-    pub functional_annotations: String,
+    pub functional_annotations: String
 }
 
 impl From<&Protein> for ProteinInfo {
@@ -24,7 +24,7 @@ impl From<&Protein> for ProteinInfo {
         ProteinInfo {
             taxon: protein.taxon_id,
             uniprot_accession: protein.uniprot_id.clone(),
-            functional_annotations: protein.get_functional_annotations(),
+            functional_annotations: protein.get_functional_annotations()
         }
     }
 }
@@ -50,7 +50,7 @@ pub fn search_proteins_for_peptide<'a>(
     searcher: &'a Searcher,
     peptide: &str,
     cutoff: usize,
-    equate_il: bool,
+    equate_il: bool
 ) -> Option<(bool, Vec<&'a Protein>)> {
     let peptide = peptide.trim_end().to_uppercase();
 
@@ -63,7 +63,7 @@ pub fn search_proteins_for_peptide<'a>(
     let (suffixes, cutoff_used) = match suffix_search {
         SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
         SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
-        SearchAllSuffixesResult::NoMatches => None,
+        SearchAllSuffixesResult::NoMatches => None
     }?;
 
     let proteins = searcher.retrieve_proteins(&suffixes);
@@ -77,7 +77,7 @@ pub fn search_peptide(searcher: &Searcher, peptide: &str, cutoff: usize, equate_
     Some(SearchResult {
         sequence: peptide.to_string(),
         proteins: proteins.iter().map(|&protein| protein.into()).collect(),
-        cutoff_used,
+        cutoff_used
     })
 }
 
@@ -99,7 +99,7 @@ pub fn search_all_peptides(
     searcher: &Searcher,
     peptides: &Vec<String>,
     cutoff: usize,
-    equate_il: bool,
+    equate_il: bool
 ) -> Vec<SearchResult> {
     peptides
         .par_iter()
@@ -123,7 +123,7 @@ mod tests {
         let protein_info = ProteinInfo {
             taxon: 1,
             uniprot_accession: "P12345".to_string(),
-            functional_annotations: "GO:0001234;GO:0005678".to_string(),
+            functional_annotations: "GO:0001234;GO:0005678".to_string()
         };
 
         let generated_json = serde_json::to_string(&protein_info).unwrap();
@@ -138,7 +138,7 @@ mod tests {
         let search_result = SearchResult {
             sequence: "MSKIAALLPSV".to_string(),
             proteins: vec![],
-            cutoff_used: true,
+            cutoff_used: true
         };
 
         let generated_json = serde_json::to_string(&search_result).unwrap();

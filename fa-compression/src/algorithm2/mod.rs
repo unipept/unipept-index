@@ -12,13 +12,13 @@ pub use encode::encode;
 /// Represents an entry in the compression table.
 #[doc(hidden)]
 pub struct CompressionTableEntry {
-    annotation: String,
+    annotation: String
 }
 
 /// Represents a compression table.
 pub struct CompressionTable {
     /// List of annotations in the compression table.
-    entries: Vec<CompressionTableEntry>,
+    entries: Vec<CompressionTableEntry>
 }
 
 impl CompressionTable {
