@@ -149,7 +149,7 @@ impl BitArray {
     }
 }
 
-/// Writes the data to a writer in a binary format using a bit array. The data is written 
+/// Writes the data to a writer in a binary format using a bit array. The data is written
 /// in chunks of the specified capacity, so memory usage is minimized.
 ///
 /// # Arguments
