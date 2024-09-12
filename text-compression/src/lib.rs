@@ -198,7 +198,7 @@ impl<'a> ProteinTextSlice<'a> {
     /// # Returns
     ///
     /// An instance of `ProteinTextSlice`
-    pub fn new(text: &'a ProteinText, start: usize, end: usize) -> ProteinTextSlice {
+    pub fn new(text: &'a ProteinText, start: usize, end: usize) -> ProteinTextSlice<'a> {
         Self { text, start, end }
     }
 
