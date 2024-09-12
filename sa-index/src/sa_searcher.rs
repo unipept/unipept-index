@@ -343,7 +343,7 @@ impl Searcher {
                         && ((skip == 0
                             || ProteinTextSlice::new(&self.proteins.text, suffix - skip, suffix)
                                 .equals_slice(current_search_string_prefix, equate_il)) // Check the prefix
-                            && 
+                            &&
                             Self::check_suffix(
                                 skip,
                                 il_locations_current_suffix,
