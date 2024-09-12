@@ -73,7 +73,7 @@ impl ProteinText {
     /// # Returns
     ///
     /// An instance of `ProteinText`
-    pub fn from_vec(input_vec: &Vec<u8>) -> ProteinText {
+    pub fn from_vec(input_vec: &[u8]) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
 
@@ -221,6 +221,10 @@ impl<'a> ProteinTextSlice<'a> {
     /// The length of the slice.
     pub fn len(&self) -> usize {
         self.end - self.start
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Checks if the slice and a given array of `u8` are equal.

@@ -178,11 +178,11 @@ impl Searcher {
         // match as long as possible
         while index_in_search_string < search_string.len()
             && index_in_suffix < self.proteins.text.len()
-            && (search_string[index_in_search_string] == self.proteins.text.get(index_in_suffix) as u8
+            && (search_string[index_in_search_string] == self.proteins.text.get(index_in_suffix)
                 || (search_string[index_in_search_string] == b'L'
-                    && self.proteins.text.get(index_in_suffix) as u8 == b'I')
+                    && self.proteins.text.get(index_in_suffix) == b'I')
                 || (search_string[index_in_search_string] == b'I'
-                    && self.proteins.text.get(index_in_suffix) as u8 == b'L'))
+                    && self.proteins.text.get(index_in_suffix) == b'L'))
         {
             index_in_suffix += 1;
             index_in_search_string += 1;
@@ -201,10 +201,10 @@ impl Searcher {
                     search_string[index_in_search_string]
                 };
 
-                let protein_char = if self.proteins.text.get(index_in_suffix) as u8 == b'L' {
+                let protein_char = if self.proteins.text.get(index_in_suffix) == b'L' {
                     b'I'
                 } else {
-                    self.proteins.text.get(index_in_suffix) as u8
+                    self.proteins.text.get(index_in_suffix)
                 };
 
                 is_cond_or_equal = condition_check(peptide_char, protein_char);

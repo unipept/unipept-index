@@ -85,7 +85,7 @@ impl BitArray {
     /// * `index` - The index of the value to set.
     /// * `value` - The value to set at the specified index.
     pub fn set(&mut self, index: usize, value: u64) {
-        let value: u64 = value.into();
+        let value: u64 = value;
         let start_block = index * self.bits_per_value / 64;
         let start_block_offset = index * self.bits_per_value % 64;
 
