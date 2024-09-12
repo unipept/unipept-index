@@ -149,9 +149,8 @@ impl BitArray {
     }
 }
 
-/// Writes the data to a writer in a binary format using a bit array. This function is helpfull
-/// when writing large amounts of data to a writer in chunks. The data is written in chunks of the
-/// specified capacity, so memory usage is minimized.
+/// Writes the data to a writer in a binary format using a bit array. The data is written 
+/// in chunks of the specified capacity, so memory usage is minimized.
 ///
 /// # Arguments
 ///
