@@ -58,7 +58,9 @@ struct InputData {
     cutoff: usize,
     #[serde(default = "bool::default")]
     // default value is false // TODO: maybe default should be true?
-    equate_il: bool
+    equate_il: bool,
+    #[serde(default = "bool::default")] // default false
+    tryptic: bool
 }
 
 #[tokio::main]
@@ -83,7 +85,7 @@ async fn search(
     State(searcher): State<Arc<SparseSearcher>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il);
+    let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);
 
     Ok(Json(search_result))
 }
