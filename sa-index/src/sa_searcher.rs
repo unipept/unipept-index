@@ -747,4 +747,28 @@ mod tests {
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
+
+    #[test]
+    fn test_tryptic_search() {
+        let text = "PAA-AAKPKAPAA$".to_string().into_bytes();
+
+        let proteins = Proteins {
+            input_string: text,
+            proteins: vec![Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
+                functional_annotations: vec![]
+            }]
+        };
+
+        let sparse_sa = SuffixArray::Original(vec![13, 3, 12, 11, 1, 4, 2, 5, 9, 8, 6, 10, 0, 7], 1);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+
+        let found_suffixes_1 = searcher.search_matching_suffixes(&[b'P', b'A', b'A'], usize::MAX, false, true);
+        assert_eq!(found_suffixes_1, SearchAllSuffixesResult::SearchResult(vec![0]));
+
+        let found_suffixes_2 = searcher.search_matching_suffixes(&[b'A', b'P', b'A', b'A'], usize::MAX, false, true);
+        assert_eq!(found_suffixes_2, SearchAllSuffixesResult::SearchResult(vec![9]));
+    }
 }
