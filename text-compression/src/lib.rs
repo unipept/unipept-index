@@ -59,7 +59,7 @@ impl ProteinText {
         let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 =
-                *char_to_5bit.get(&(c as u8)).expect(&format!("Input character '{}' not in alphabet", c));
+                *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
             bit_array.set(i, char_5bit as u64);
         }
 
@@ -80,7 +80,8 @@ impl ProteinText {
 
         let mut bit_array = BitArray::with_capacity(input_vec.len(), 5);
         for (i, e) in input_vec.iter().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(e).expect(&format!("Input character '{}' not in alphabet", e));
+            let char_5bit: u8 =
+                *char_to_5bit.get(e).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
             bit_array.set(i, char_5bit as u64);
         }
 
@@ -132,8 +133,10 @@ impl ProteinText {
     /// * `index` - The index of the character to change.
     /// * `value` - The character to fill in as `u8`.
     pub fn set(&mut self, index: usize, value: u8) {
-        let char_5bit: u8 =
-            *self.char_to_5bit.get(&value).expect(&format!("Input character '{}' not in alphabet", value));
+        let char_5bit: u8 = *self
+            .char_to_5bit
+            .get(&value)
+            .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
         self.bit_array.set(index, char_5bit as u64);
     }
 
@@ -480,7 +483,7 @@ mod tests {
         let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 =
-                *char_to_5bit.get(&(c as u8)).expect(&format!("Input character '{}' not in alphabet", c));
+                *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
             bit_array.set(i, char_5bit as u64);
         }
 
