@@ -14,5 +14,6 @@ clap = { version = "4.4.8", features = ["derive"] }
 rayon = "1.8.1"
 serde = { version = "1.0.197", features = ["derive"] }
 sa-mappings = { path = "../sa-mappings" }
+text-compression = { path = "../text-compression" }
 bitarray = { path = "../bitarray" }
 serde_json = "1.0.116"
