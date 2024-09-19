@@ -179,10 +179,8 @@ impl Searcher {
         while index_in_search_string < search_string.len()
             && index_in_suffix < self.proteins.text.len()
             && (search_string[index_in_search_string] == self.proteins.text.get(index_in_suffix)
-                || (search_string[index_in_search_string] == b'L'
-                    && self.proteins.text.get(index_in_suffix) == b'I')
-                || (search_string[index_in_search_string] == b'I'
-                    && self.proteins.text.get(index_in_suffix) == b'L'))
+                || (search_string[index_in_search_string] == b'L' && self.proteins.text.get(index_in_suffix) == b'I')
+                || (search_string[index_in_search_string] == b'I' && self.proteins.text.get(index_in_suffix) == b'L'))
         {
             index_in_suffix += 1;
             index_in_search_string += 1;
@@ -348,20 +346,20 @@ impl Searcher {
                         // check at all
                         if (skip == 0
                             || Self::check_prefix(
-                            current_search_string_prefix,
-                            ProteinTextSlice::new(&self.proteins.text, match_start, suffix),
-                            equate_il
-                        ))
+                                current_search_string_prefix,
+                                ProteinTextSlice::new(&self.proteins.text, match_start, suffix),
+                                equate_il
+                            ))
                             && Self::check_suffix(
-                            skip,
-                            il_locations_current_suffix,
-                            current_search_string_suffix,
-                            ProteinTextSlice::new(&self.proteins.text, suffix, match_end),
-                            equate_il
-                        )
+                                skip,
+                                il_locations_current_suffix,
+                                current_search_string_suffix,
+                                ProteinTextSlice::new(&self.proteins.text, suffix, match_end),
+                                equate_il
+                            )
                             && (!tryptic
-                            || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
-                            && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
+                                || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
+                                    && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
                         {
                             matching_suffixes.push((suffix - skip) as i64);
 
