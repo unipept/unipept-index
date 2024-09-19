@@ -115,11 +115,11 @@ mod tests {
     #[test]
     fn test_suffix_array_compressed() {
         let mut bitarray = BitArray::with_capacity(5, 40);
-        bitarray.set(0, 1);
-        bitarray.set(1, 2);
-        bitarray.set(2, 3);
-        bitarray.set(3, 4);
-        bitarray.set(4, 5);
+        bitarray.set(0, 1 as u64);
+        bitarray.set(1, 2 as u64);
+        bitarray.set(2, 3 as u64);
+        bitarray.set(3, 4 as u64);
+        bitarray.set(4, 5 as u64);
 
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.len(), 5);

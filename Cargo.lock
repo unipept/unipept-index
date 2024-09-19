@@ -1127,15 +1127,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tempdir",
+ "text-compression",
 ]
 
 [[package]]
 name = "sa-mappings"
 version = "0.1.0"
 dependencies = [
+ "bitarray",
  "bytelines",
  "fa-compression",
  "tempdir",
+ "text-compression",
 ]
 
 [[package]]
@@ -1273,6 +1276,13 @@ checksum = "15f2b5fb00ccdf689e0149d1b1b3c03fead81c2b37735d812fa8bddbbf41b6d8"
 dependencies = [
  "rand 0.4.6",
  "remove_dir_all",
+]
+
+[[package]]
+name = "text-compression"
+version = "0.1.0"
+dependencies = [
+ "bitarray",
 ]
 
 [[package]]
