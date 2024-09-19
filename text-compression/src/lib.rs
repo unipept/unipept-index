@@ -79,7 +79,7 @@ impl ProteinText {
 
         let mut bit_array = BitArray::with_capacity(input_vec.len(), 5);
         for (i, e) in input_vec.iter().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(&(e as u8)).expect(&format!("Input character '{}' not in alphabet", e));
+            let char_5bit: u8 = *char_to_5bit.get(e).expect(&format!("Input character '{}' not in alphabet", e));
             bit_array.set(i, char_5bit as u64);
         }
 
