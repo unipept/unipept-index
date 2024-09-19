@@ -24,7 +24,7 @@ impl ProteinText {
     /// Returns the hashmap
     fn create_char_to_5bit_hashmap() -> HashMap<u8, u8> {
         let mut hashmap = HashMap::<u8, u8>::new();
-        for (i, c) in "ACDEFGHIKLMNPQRSTVWY-$".chars().enumerate() {
+        for (i, c) in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars().enumerate() {
             hashmap.insert(c as u8, i as u8);
         }
 
@@ -38,7 +38,7 @@ impl ProteinText {
     /// Returns the vector
     fn create_bit5_to_char() -> Vec<u8> {
         let mut vec = Vec::<u8>::new();
-        for c in "ACDEFGHIKLMNPQRSTVWY-$".chars() {
+        for c in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars() {
             vec.push(c as u8);
         }
         vec
@@ -58,7 +58,8 @@ impl ProteinText {
 
         let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(&(c as u8)).expect("Input character not in alphabet");
+            let char_5bit: u8 =
+                *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
             bit_array.set(i, char_5bit as u64);
         }
 
@@ -79,7 +80,8 @@ impl ProteinText {
 
         let mut bit_array = BitArray::with_capacity(input_vec.len(), 5);
         for (i, e) in input_vec.iter().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(e).expect("Input character not in alphabet");
+            let char_5bit: u8 =
+                *char_to_5bit.get(e).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
             bit_array.set(i, char_5bit as u64);
         }
 
@@ -131,7 +133,10 @@ impl ProteinText {
     /// * `index` - The index of the character to change.
     /// * `value` - The character to fill in as `u8`.
     pub fn set(&mut self, index: usize, value: u8) {
-        let char_5bit: u8 = *self.char_to_5bit.get(&value).expect("Input character not in alphabet");
+        let char_5bit: u8 = *self
+            .char_to_5bit
+            .get(&value)
+            .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
         self.bit_array.set(index, char_5bit as u64);
     }
 
@@ -445,7 +450,7 @@ mod tests {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
 
-        for c in "ACDEFGHIKLMNPQRSTVWY-$".chars() {
+        for c in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars() {
             let char_5bit = char_to_5bit.get(&(c as u8)).unwrap();
             assert_eq!(c as u8, bit5_to_char[*char_5bit as usize]);
         }
@@ -477,7 +482,8 @@ mod tests {
 
         let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(&(c as u8)).expect("Input character not in alphabet");
+            let char_5bit: u8 =
+                *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
             bit_array.set(i, char_5bit as u64);
         }
 
@@ -592,7 +598,7 @@ mod tests {
         let mut reader = std::io::BufReader::new(&data[..]);
         let compressed_text = load_compressed_text(&mut reader).unwrap();
 
-        for (i, c) in "CDEFGHIKLM".chars().enumerate() {
+        for (i, c) in "BCDEFGHIKL".chars().enumerate() {
             assert_eq!(compressed_text.get(i), c as u8);
         }
     }
