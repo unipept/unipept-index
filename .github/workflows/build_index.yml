@@ -1,0 +1,82 @@
+name: Build index binaries
+
+on:
+  schedule:
+    # Run on the first day of every month at midnight UTC
+    - cron: '0 0 1 * *'
+  push:
+    branches:
+      - feature/build_index_action
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Check out the most recent version of the repository with submodules
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      # Set up Rust toolchain
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Compile Rust code
+      - name: Compile Rust code
+        run: cargo build --release
+
+      # Create a directory "build"
+      - name: Create build directory
+        run: mkdir -p build/input
+
+      # Download the file "suffix-array.zip" from the most recent release of "unipept-database"
+      - name: Download suffix-array.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest_release_url=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep "browser_download_url.*suffix-array.zip" | cut -d '"' -f 4)
+          release_date=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep '"published_at":' | cut -d '"' -f 4 | cut -d'T' -f1)
+          release_date_formatted=$(date -d $release_date "+%Y-%m-%d")
+          SP_VERSION="SP_$release_date_formatted"
+          echo "SP_VERSION=$SP_VERSION" >> $GITHUB_ENV
+          curl -L -o build/suffix-array.zip $latest_release_url
+
+      # Extract the contents of the output folder from the zip into a folder "build/input"
+      - name: Extract zip contents
+        run: |
+          unzip build/suffix-array.zip '*' -d build/input
+
+      # Make a directory with the SP_VERSION and process files
+      - name: Process files
+        run: |
+          mkdir -p build/$SP_VERSION
+          lz4 -d build/input/uniprot_entries.tsv.lz4 | cut -f2,4,7,8 > build/$SP_VERSION/proteins.tsv
+          lz4 -d build/input/taxons.tsv.lz4 > build/$SP_VERSION/taxons.tsv
+
+      # Step 8: Run the sa-builder command
+      - name: Run sa-builder
+        run: |
+          prefix="build/$SP_VERSION"
+          ./target/release/sa-builder -d "$prefix/proteins.tsv" -o "$prefix/sa_sparse3_compressed.bin" -s 3 -a lib-div-suf-sort -c
+          
+      # Zip the contents of the build/$SP_VERSION directory
+      - name: Zip build contents
+        run: |
+          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin"
+
+      # Create a GitHub release and upload the zip file
+      - name: Upload or Update Release
+        id: upload_or_update_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
+          tag_name: index-${{ env.SP_VERSION }}
+          name: Index ${{ env.SP_VERSION }}
+          commitish: ${{ github.sha }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
