@@ -4,3 +4,6 @@ data/
 libsais64-rs/libsais
 
 .DS_Store
+
+*.iml
+.idea/
