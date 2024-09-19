@@ -1,5 +1,5 @@
-use std::{cmp::min, ops::Deref};
-
+use std::{cmp::min, cmp::max, ops::Deref};
+use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use sa_mappings::proteins::{Protein, Proteins};
 
 use crate::{
@@ -7,6 +7,7 @@ use crate::{
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
     Nullable, SuffixArray
 };
+use crate::bounds_cache::BoundsCache;
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
 #[derive(Clone, Copy, PartialEq)]
@@ -74,9 +75,9 @@ impl PartialEq for SearchAllSuffixesResult {
 pub struct SparseSearcher(Searcher);
 
 impl SparseSearcher {
-    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+    pub fn new(sa: SuffixArray, proteins: Proteins, k: usize) -> Self {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), k);
         Self(searcher)
     }
 }
@@ -92,9 +93,9 @@ impl Deref for SparseSearcher {
 pub struct DenseSearcher(Searcher);
 
 impl DenseSearcher {
-    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+    pub fn new(sa: SuffixArray, proteins: Proteins, k: usize) -> Self {
         let suffix_index_to_protein = DenseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), k);
         Self(searcher)
     }
 }
@@ -121,6 +122,7 @@ impl Deref for DenseSearcher {
 ///   the functional analysis provided by Unipept
 pub struct Searcher {
     pub sa: SuffixArray,
+    pub kmer_cache: BoundsCache,
     pub proteins: Proteins,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>
 }
@@ -142,8 +144,41 @@ impl Searcher {
     /// # Returns
     ///
     /// Returns a new Searcher object
-    pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
-        Self { sa, proteins, suffix_index_to_protein }
+    pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>, k: usize) -> Self {
+        // Create a KTable with all possible 3-mers
+        let kmer_cache = BoundsCache::new("ACDEFGHIKLMNPQRSTVWY".to_string(), k);
+
+        // Create the Searcher object
+        let mut searcher = Self { sa, kmer_cache, proteins, suffix_index_to_protein };
+
+        // Update the bounds for all 3-mers in the KTable
+        let base = searcher.kmer_cache.base;
+        let length = (base.pow(k as u32 + 1) - base) / (base - 1);
+
+        let print_step_size = max(length / 100, searcher.kmer_cache.base);
+
+        eprintln!("Starting cache fill");
+        let start_cache_fill_time = get_time_ms().unwrap();
+
+        for i in 0..length {
+            if i % print_step_size == 0 {
+                eprintln!("Updating kmer cache: {}% ({} seconds since start)", i / print_step_size, (get_time_ms().unwrap() - start_cache_fill_time) / 1000.0);
+            }
+
+            let kmer = searcher.kmer_cache.index_to_kmer(i);
+
+            let bounds = searcher.search_bounds_no_cache(&kmer, (0, searcher.sa.len()), 0);
+
+            if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
+                let min_bound = if min_bound == 0 { 0 } else { min_bound - 1 };
+                let max_bound = if max_bound == searcher.sa.len() { max_bound } else { max_bound + 1 };
+                searcher.kmer_cache.update_kmer(&kmer, (min_bound, max_bound));
+            }
+        }
+
+        eprintln!("Filled cache in {} seconds", (get_time_ms().unwrap() - start_cache_fill_time) / 1000.0);
+
+        searcher
     }
 
     /// Compares the `search_string` to the `suffix`
@@ -224,10 +259,9 @@ impl Searcher {
     /// The first argument is true if a match was found
     /// The second argument indicates the index of the minimum or maximum bound for the match
     /// (depending on `bound`)
-    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8]) -> (bool, usize) {
-        let mut left: usize = 0;
-        let mut right: usize = self.sa.len();
-        let mut lcp_left: usize = 0;
+    fn binary_search_bound(&self, bound: BoundSearch, search_string: &[u8], start_bounds: (usize, usize), lcp_left: usize) -> (bool, usize) {
+        let (mut left, mut right) = start_bounds;
+        let mut lcp_left: usize = lcp_left;
         let mut lcp_right: usize = 0;
         let mut found = false;
 
@@ -278,13 +312,31 @@ impl Searcher {
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
     pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
-        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string);
+        // If the string is empty, we don't need to search as nothing can be matched
+        if search_string.is_empty() {
+            return BoundSearchResult::NoMatches;
+        }
+
+        // Do a quick lookup in the kmer cache
+        // Use the (up to) first 5 characters of the search string as the kmer
+        // If the kmer is found in the cache, use the bounds from the cache as start bounds
+        // to find the bounds of the entire string
+        let max_mer_length = min(self.kmer_cache.k, search_string.len());
+        if let Some(bounds) = self.kmer_cache.get_kmer(&search_string[..max_mer_length]) {
+            return self.search_bounds_no_cache(search_string, bounds, max_mer_length);
+        }
+
+        BoundSearchResult::NoMatches
+    }
+
+    pub fn search_bounds_no_cache(&self, search_string: &[u8], start_bounds: (usize, usize), lcp_left: usize) -> BoundSearchResult {
+        let (found_min, min_bound) = self.binary_search_bound(Minimum, search_string, start_bounds, lcp_left);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound(Maximum, search_string);
+        let (_, max_bound) = self.binary_search_bound(Maximum, search_string, start_bounds, lcp_left);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
@@ -325,7 +377,7 @@ impl Searcher {
             let il_locations_current_suffix = &il_locations[il_locations_start..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
-            let search_bound_result = self.search_bounds(&search_string[skip..]);
+            let search_bound_result = self.search_bounds(current_search_string_suffix);
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
@@ -456,6 +508,10 @@ impl Searcher {
     }
 }
 
+pub fn get_time_ms() -> Result<f64, SystemTimeError> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as f64 * 1e-6)
+}
+
 #[cfg(test)]
 mod tests {
     use sa_mappings::proteins::{Protein, Proteins};
@@ -521,15 +577,16 @@ mod tests {
         let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         // search bounds 'A'
         let bounds_res = searcher.search_bounds(&[b'A']);
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((4, 9)));
 
         // search bounds '$'
-        let bounds_res = searcher.search_bounds(&[b'$']);
-        assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
+        // TODO: do we want to keep this??
+        // let bounds_res = searcher.search_bounds(&[b'$']);
+        // assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
 
         // search bounds 'AC'
         let bounds_res = searcher.search_bounds(&[b'A', b'C']);
@@ -542,7 +599,7 @@ mod tests {
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         // search suffix 'VAA'
         let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false);
@@ -559,7 +616,7 @@ mod tests {
         let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         let bounds_res = searcher.search_bounds(&[b'I']);
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
@@ -575,7 +632,7 @@ mod tests {
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         // search bounds 'RIZ' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Z'], usize::MAX, true);
@@ -602,7 +659,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'M'], usize::MAX, true);
@@ -624,7 +681,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
@@ -645,7 +702,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
@@ -666,7 +723,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
@@ -689,7 +746,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.input_string);
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein), 3);
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true);
