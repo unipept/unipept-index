@@ -24,7 +24,7 @@ impl ProteinText {
     /// Returns the hashmap
     fn create_char_to_5bit_hashmap() -> HashMap<u8, u8> {
         let mut hashmap = HashMap::<u8, u8>::new();
-        for (i, c) in "ACDEFGHIKLMNPQRSTVWY-$".chars().enumerate() {
+        for (i, c) in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars().enumerate() {
             hashmap.insert(c as u8, i as u8);
         }
 
@@ -38,7 +38,7 @@ impl ProteinText {
     /// Returns the vector
     fn create_bit5_to_char() -> Vec<u8> {
         let mut vec = Vec::<u8>::new();
-        for c in "ACDEFGHIKLMNPQRSTVWY-$".chars() {
+        for c in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars() {
             vec.push(c as u8);
         }
         vec
@@ -445,7 +445,7 @@ mod tests {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
 
-        for c in "ACDEFGHIKLMNPQRSTVWY-$".chars() {
+        for c in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars() {
             let char_5bit = char_to_5bit.get(&(c as u8)).unwrap();
             assert_eq!(c as u8, bit5_to_char[*char_5bit as usize]);
         }
