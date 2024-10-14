@@ -15,6 +15,10 @@ pub fn bitpack_text(text: &Vec<u8>, sparseness_factor: u8) -> Vec<i64> {
     let num_ints = (text.len() + (sparseness_factor-1)) / sparseness_factor;
     let mut text_packed = vec![0; num_ints];
 
+    if text.len() == 0 {
+        return text_packed;
+    }
+
     for i in 0..(num_ints-1) {
         let ti = i * sparseness_factor;
         let mut element = 0i64;

@@ -60,7 +60,8 @@ pub fn build_ssa(
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => {
             let mut packed_text = bitpack_text(text, sparseness_factor);
-            libsais64_rs::sais64_long(&mut packed_text, 1 << (BITS_PER_CHAR * sparseness_factor as usize))
+            
+            libsais64_rs::sais64_long(&mut packed_text, 1 << (BITS_PER_CHAR * sparseness_factor as usize), sparseness_factor)
         },
         SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text)
     }
