@@ -9,7 +9,7 @@ fn get_rank(c: u8) -> u8 {
     }
 }
 
-const BITS_PER_CHAR: usize = 5;
+pub const BITS_PER_CHAR: usize = 5;
 pub fn bitpack_text(text: &Vec<u8>, sparseness_factor: u8) -> Vec<i64> {
     let sparseness_factor = sparseness_factor as usize;
     let num_ints = (text.len() + (sparseness_factor-1)) / sparseness_factor;
