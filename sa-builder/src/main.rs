@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::BufWriter,
     time::{SystemTime, SystemTimeError, UNIX_EPOCH}
 };
