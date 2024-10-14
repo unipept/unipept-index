@@ -21,9 +21,8 @@ fn main() {
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
     let start_proteins_time = get_time_ms().unwrap();
-    /*let mut data = Proteins::try_from_database_file_uncompressed(&database_file)
-        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));*/
-    let mut data = fs::read_to_string(database_file).expect("Data file does not exist").into_bytes();
+    let mut data = Proteins::try_from_database_file_uncompressed(&database_file)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     eprintln!(
         "✅ Successfully loaded the proteins in {} seconds!",
         (get_time_ms().unwrap() - start_proteins_time) / 1000.0
