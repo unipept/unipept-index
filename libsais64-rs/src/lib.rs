@@ -13,15 +13,15 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 ///
 /// Returns Some with the suffix array build over the text if construction succeeds
 /// Returns None if construction of the suffix array failed
-pub fn sais64(text: &[u8]) -> Option<Vec<i64>> {
+pub fn sais64_long(text: &mut Vec<i64>, alphabet_size: i64) -> Option<Vec<i64>> {
     let mut sa = vec![0; text.len()];
-    let exit_code = unsafe { libsais64(text.as_ptr(), sa.as_mut_ptr(), text.len() as i64, 0, std::ptr::null_mut()) };
+    let exit_code = unsafe { libsais64_long(text.as_mut_ptr(), sa.as_mut_ptr(), text.len() as i64, alphabet_size, 0) };
     if exit_code == 0 { Some(sa) } else { None }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::sais64;
+    use crate::sais64_long;
 
     #[test]
     fn check_build_sa_with_libsais64() {
