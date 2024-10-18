@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+use std::ptr::null_mut;
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 /// Builds the suffix array over the `text` using the libsais64 algorithm
@@ -13,9 +14,9 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 ///
 /// Returns Some with the suffix array build over the text if construction succeeds
 /// Returns None if construction of the suffix array failed
-pub fn sais64_long(text: &mut Vec<i64>, alphabet_size: i64, sparseness_factor: u8) -> Option<Vec<i64>> {
+pub fn sais64(text: &Vec<u16>, sparseness_factor: u8) -> Option<Vec<i64>> {
     let mut sa = vec![0; text.len()];
-    let exit_code = unsafe { libsais64_long(text.as_mut_ptr(), sa.as_mut_ptr(), text.len() as i64, alphabet_size, 0) };
+    let exit_code = unsafe { libsais16x64(text.as_ptr(), sa.as_mut_ptr(), text.len() as i64, 0, null_mut()) };
     if exit_code == 0 {
         let sparseness_factor = sparseness_factor as i64;
         for elem in sa.iter_mut() {
