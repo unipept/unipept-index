@@ -17,30 +17,16 @@ pub mod bitpacking;
 ///
 /// Returns Some with the suffix array build over the text if construction succeeds
 /// Returns None if construction of the suffix array failed
-pub fn sais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
-    let sparseness_factor = sparseness_factor as usize;
-    let mut libsais_sparseness = sparseness_factor;
-    let mut sa;
+pub fn sais64(text: &Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &str> {
     let exit_code;
+    let mut sa;
 
-    if sparseness_factor * BITS_PER_CHAR <= 16 {
+    if libsais_sparseness * BITS_PER_CHAR <= 16 {
         // bitpacked values fit in uint16_t
         let packed_text = bitpack_text_16(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
         exit_code = unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
     } else {
-        // bitpacked values do not fit in uint16_t, use 32-bit text
-        // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
-        // max 28 out of 32 bits used, because a bucket is created for every element of the alfabet 8 * 2^28).
-        libsais_sparseness = 28 / BITS_PER_CHAR;
-        while sparseness_factor % libsais_sparseness != 0 && libsais_sparseness * BITS_PER_CHAR > 16 {
-            libsais_sparseness -= 1;
-        }
-
-        if libsais_sparseness * BITS_PER_CHAR <= 16 {
-            return Err("invalid sparseness factor");
-        }
-
         let packed_text = bitpack_text_32(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
         let k = 1 << (libsais_sparseness * BITS_PER_CHAR);

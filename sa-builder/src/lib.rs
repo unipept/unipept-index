@@ -54,13 +54,37 @@ pub fn build_ssa(
 
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
-        SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(&text, sparseness_factor)?,
+        SAConstructionAlgorithm::LibSais => libsais64(&text, sparseness_factor)?,
         SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
     };
 
     // make the SA sparse and decrease the vector size if we have sampling (sampling_rate > 1)
     if *construction_algorithm == SAConstructionAlgorithm::LibDivSufSort {
         sample_sa(&mut sa, sparseness_factor);
+    }
+
+    Ok(sa)
+}
+
+const MAX_SPARSENESS: usize = 5;
+fn libsais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
+    let sparseness_factor = sparseness_factor as usize;
+
+    // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
+    // max 28 out of 32 bits used, because a bucket is created for every element of the alfabet 8 * 2^28).
+    let mut libsais_sparseness = MAX_SPARSENESS;
+    while sparseness_factor % libsais_sparseness != 0 {
+        libsais_sparseness -= 1;
+    }
+    let sample_rate = sparseness_factor / libsais_sparseness;
+    println!("  Sparseness factor: {}", sparseness_factor);
+    println!("  Libsais sparseness factor: {}", libsais_sparseness);
+    println!("  Sample rate: {}", sample_rate);
+
+    let mut sa = libsais64_rs::sais64(&text, libsais_sparseness)?;
+
+    if sample_rate > 1 {
+        sample_sa(&mut sa, sample_rate as u8);
     }
 
     Ok(sa)
