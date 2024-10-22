@@ -31,7 +31,8 @@ pub fn sais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
     } else {
         // bitpacked values do not fit in uint16_t, use 32-bit text
         // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
-        libsais_sparseness = 32 / BITS_PER_CHAR;
+        // max 28 out of 32 bits used, because a bucket is created for every element of the alfabet 8 * 2^28).
+        libsais_sparseness = 28 / BITS_PER_CHAR;
         while sparseness_factor % libsais_sparseness != 0 && libsais_sparseness * BITS_PER_CHAR > 16 {
             libsais_sparseness -= 1;
         }
