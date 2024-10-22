@@ -1,8 +1,5 @@
 use std::error::Error;
-use crate::bitpacking::bitpack_text;
 use clap::{Parser, ValueEnum};
-
-pub mod bitpacking;
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
@@ -57,14 +54,10 @@ pub fn build_ssa(
 
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
-        SAConstructionAlgorithm::LibSais => {
-            let packed_text = bitpack_text(text, sparseness_factor);
-            
-            libsais64_rs::sais64(&packed_text, sparseness_factor)
-        },
-        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text)
+        SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(&text, sparseness_factor)?,
+        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
     }
-    .ok_or("Building suffix array failed")?;
+    ;
 
     // make the SA sparse and decrease the vector size if we have sampling (sampling_rate > 1)
     if *construction_algorithm == SAConstructionAlgorithm::LibDivSufSort {
