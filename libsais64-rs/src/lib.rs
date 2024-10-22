@@ -37,7 +37,7 @@ pub fn sais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
             libsais_sparseness -= 1;
         }
 
-        if sparseness_factor % libsais_sparseness != 0 {
+        if libsais_sparseness * BITS_PER_CHAR <= 16 {
             return Err("invalid sparseness factor");
         }
 

@@ -56,8 +56,7 @@ pub fn build_ssa(
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(&text, sparseness_factor)?,
         SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
-    }
-    ;
+    };
 
     // make the SA sparse and decrease the vector size if we have sampling (sampling_rate > 1)
     if *construction_algorithm == SAConstructionAlgorithm::LibDivSufSort {
