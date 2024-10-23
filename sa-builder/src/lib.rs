@@ -77,9 +77,9 @@ fn libsais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
         libsais_sparseness -= 1;
     }
     let sample_rate = sparseness_factor / libsais_sparseness;
-    println!("  Sparseness factor: {}", sparseness_factor);
-    println!("  Libsais sparseness factor: {}", libsais_sparseness);
-    println!("  Sample rate: {}", sample_rate);
+    eprintln!("\tSparseness factor: {}", sparseness_factor);
+    eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
+    eprintln!("\tSample rate: {}", sample_rate);
 
     let mut sa = libsais64_rs::sais64(&text, libsais_sparseness)?;
 

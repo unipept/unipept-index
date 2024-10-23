@@ -3,7 +3,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 use std::ptr::null_mut;
-use crate::bitpacking::{bitpack_text_16, bitpack_text_32, BITS_PER_CHAR};
+use crate::bitpacking::{bitpack_text_16, bitpack_text_32, bitpack_text_8, BITS_PER_CHAR};
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 pub mod bitpacking;
@@ -21,7 +21,13 @@ pub fn sais64(text: &Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &st
     let exit_code;
     let mut sa;
 
-    if libsais_sparseness * BITS_PER_CHAR <= 16 {
+    let required_bits = libsais_sparseness * BITS_PER_CHAR;
+    if required_bits <= 8 {
+        // bitpacked values fit in uint8_t
+        let packed_text = bitpack_text_8(text, libsais_sparseness);
+        sa = vec![0; packed_text.len()];
+        exit_code = unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
+    } else if required_bits <= 16 {
         // bitpacked values fit in uint16_t
         let packed_text = bitpack_text_16(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
@@ -44,7 +50,7 @@ pub fn sais64(text: &Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &st
 
 #[cfg(test)]
 mod tests {
-    use crate::sais64_long;
+    use crate::sais64;
 
     #[test]
     fn check_build_sa_with_libsais64() {
@@ -55,7 +61,7 @@ mod tests {
             80975,                      // ANAN
             65536                       // A$
         ].to_vec();
-        let sa = sais64_long(&mut text, 1 << (bits_per_char * sparseness_factor), sparseness_factor);
+        let sa = sais64(&mut text, sparseness_factor);
         assert_eq!(sa, Some(vec![12, 8, 0, 4]));
     }
 }
