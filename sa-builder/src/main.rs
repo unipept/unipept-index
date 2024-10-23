@@ -38,7 +38,6 @@ fn main() {
         (get_time_ms().unwrap() - start_ssa_time) / 1000.0
     );
     eprintln!("\tAmount of items: {}", sa.len());
-    eprintln!("\tSample rate: {}", sparseness_factor);
 
     // open the output file
     let mut file =
