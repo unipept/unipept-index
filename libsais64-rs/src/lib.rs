@@ -8,7 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 pub mod bitpacking;
 
-/// Builds the suffix array over the `text` using the libsais64 algorithm
+/// Builds the suffix array over the `text` using the libsais algorithm
 ///
 /// # Arguments
 /// * `text` - The text used for suffix array construction
@@ -24,7 +24,7 @@ pub fn sais64(text: &Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &st
     let required_bits = libsais_sparseness * BITS_PER_CHAR;
     if required_bits <= 8 {
         // bitpacked values fit in uint8_t
-        let packed_text = bitpack_text_8(text, libsais_sparseness);
+        let packed_text = if libsais_sparseness == 1 { text } else { &bitpack_text_8(text, libsais_sparseness) };
         sa = vec![0; packed_text.len()];
         exit_code = unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
     } else if required_bits <= 16 {
@@ -54,14 +54,10 @@ mod tests {
 
     #[test]
     fn check_build_sa_with_libsais64() {
-        let bits_per_char = 5;
         let sparseness_factor = 4;
-        let mut text = [100834,   // BANA
-            493603,                     // NA-B
-            80975,                      // ANAN
-            65536                       // A$
-        ].to_vec();
+        let mut text = "BANANA-BANANA$".as_bytes().to_vec();
         let sa = sais64(&mut text, sparseness_factor);
-        assert_eq!(sa, Some(vec![12, 8, 0, 4]));
+        let correct_sa: Vec<i64> = vec![12, 8, 0, 4];
+        assert_eq!(sa, Ok(correct_sa));
     }
 }
