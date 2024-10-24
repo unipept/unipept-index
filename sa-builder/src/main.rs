@@ -5,7 +5,7 @@ use std::{
 };
 
 use clap::Parser;
-use sa_builder::{build_ssa, Arguments};
+use sa_builder::{Arguments, build_ssa};
 use sa_compression::dump_compressed_suffix_array;
 use sa_index::binary::dump_suffix_array;
 use sa_mappings::proteins::Proteins;

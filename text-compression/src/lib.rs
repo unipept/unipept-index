@@ -4,7 +4,7 @@ use std::{
     io::{BufRead, Write}
 };
 
-use bitarray::{data_to_writer, Binary, BitArray};
+use bitarray::{Binary, BitArray, data_to_writer};
 
 /// Structure representing the proteins, stored in a bit array using 5 bits per amino acid.
 pub struct ProteinText {

@@ -1,4 +1,5 @@
 use std::error::Error;
+
 use clap::{Parser, ValueEnum};
 
 /// Build a (sparse, compressed) suffix array from the given text
@@ -55,7 +56,9 @@ pub fn build_ssa(
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64(text, sparseness_factor)?,
-        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
+        SAConstructionAlgorithm::LibDivSufSort => {
+            libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
+        }
     };
 
     // make the SA sparse and decrease the vector size if we have sampling (sampling_rate > 1)

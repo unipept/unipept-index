@@ -6,18 +6,18 @@ use std::{
 };
 
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, State},
     http::StatusCode,
-    routing::post,
-    Json, Router
+    routing::post
 };
 use clap::Parser;
 use sa_compression::load_compressed_suffix_array;
 use sa_index::{
+    SuffixArray,
     binary::load_suffix_array,
-    peptide_search::{search_all_peptides, SearchResult},
-    sa_searcher::SparseSearcher,
-    SuffixArray
+    peptide_search::{SearchResult, search_all_peptides},
+    sa_searcher::SparseSearcher
 };
 use sa_mappings::proteins::Proteins;
 use serde::Deserialize;

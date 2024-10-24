@@ -112,10 +112,10 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
+        Nullable,
         suffix_to_protein_index::{
             DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle
-        },
-        Nullable
+        }
     };
 
     fn build_text() -> ProteinText {
