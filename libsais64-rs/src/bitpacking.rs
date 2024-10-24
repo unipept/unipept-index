@@ -80,7 +80,7 @@ pub fn bitpack_text_16(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u16> {
 
 }
 
-// Bitpack text in a vector of u16 elements. BITS_PER_CHAR * sparseness_factor <= 32.
+// Bitpack text in a vector of u32 elements. BITS_PER_CHAR * sparseness_factor <= 32.
 pub fn bitpack_text_32(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u32> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 32);
 
