@@ -13,24 +13,23 @@ fn get_rank(c: u8) -> u8 {
 pub const BITS_PER_CHAR: usize = 5;
 
 // Bitpack text in a vector of u8 elements. BITS_PER_CHAR * sparseness_factor <= 8.
-pub fn bitpack_text_8(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u8> {
+pub fn bitpack_text_8(text: &[u8], sparseness_factor: usize) -> Vec<u8> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 8);
 
     let num_ints = (text.len() + (sparseness_factor-1)) / sparseness_factor;
     let mut text_packed = vec![0; num_ints];
 
-    if text.len() == 0 {
+    if text.is_empty() {
         return text_packed;
     }
 
-    for i in 0..(num_ints-1) {
+    for (i, element) in text_packed.iter_mut().enumerate().take(num_ints-1) {
         let ti = i * sparseness_factor;
-        let mut element = 0u8;
+        *element = 0u8;
         for j in 0..sparseness_factor {
             let rank_c = get_rank(text[ti + j]);
-            element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
+            *element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
         }
-        text_packed[i] = element;
     }
 
     // Handle the last element
@@ -47,24 +46,23 @@ pub fn bitpack_text_8(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u8> {
 }
 
 // Bitpack text in a vector of u16 elements. BITS_PER_CHAR * sparseness_factor <= 16.
-pub fn bitpack_text_16(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u16> {
+pub fn bitpack_text_16(text: &[u8], sparseness_factor: usize) -> Vec<u16> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 16);
 
     let num_ints = (text.len() + (sparseness_factor-1)) / sparseness_factor;
     let mut text_packed = vec![0; num_ints];
 
-    if text.len() == 0 {
+    if text.is_empty() {
         return text_packed;
     }
 
-    for i in 0..(num_ints-1) {
+    for (i, element) in text_packed.iter_mut().enumerate().take(num_ints-1) {
         let ti = i * sparseness_factor;
-        let mut element = 0u16;
+        *element = 0u16;
         for j in 0..sparseness_factor {
             let rank_c = get_rank(text[ti + j]) as u16;
-            element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
+            *element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
         }
-        text_packed[i] = element;
     }
 
     // Handle the last element
@@ -81,24 +79,23 @@ pub fn bitpack_text_16(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u16> {
 }
 
 // Bitpack text in a vector of u32 elements. BITS_PER_CHAR * sparseness_factor <= 32.
-pub fn bitpack_text_32(text: &Vec<u8>, sparseness_factor: usize) -> Vec<u32> {
+pub fn bitpack_text_32(text: &[u8], sparseness_factor: usize) -> Vec<u32> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 32);
 
     let num_ints = (text.len() + (sparseness_factor-1)) / sparseness_factor;
     let mut text_packed = vec![0; num_ints];
 
-    if text.len() == 0 {
+    if text.is_empty() {
         return text_packed;
     }
 
-    for i in 0..(num_ints-1) {
+    for (i, element) in text_packed.iter_mut().enumerate().take(num_ints-1) {
         let ti = i * sparseness_factor;
-        let mut element = 0u32;
+        *element = 0u32;
         for j in 0..sparseness_factor {
             let rank_c = get_rank(text[ti + j]) as u32;
-            element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
+            *element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
         }
-        text_packed[i] = element;
     }
 
     // Handle the last element

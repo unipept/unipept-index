@@ -54,7 +54,7 @@ pub fn build_ssa(
 
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
-        SAConstructionAlgorithm::LibSais => libsais64(&text, sparseness_factor)?,
+        SAConstructionAlgorithm::LibSais => libsais64(text, sparseness_factor)?,
         SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
     };
 
@@ -82,7 +82,7 @@ fn libsais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
     eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
     eprintln!("\tSample rate: {}", sample_rate);
 
-    let mut sa = libsais64_rs::sais64(&text, libsais_sparseness)?;
+    let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
 
     if sample_rate > 1 {
         sample_sa(&mut sa, sample_rate as u8);
