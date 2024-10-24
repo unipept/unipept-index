@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, Write}
 };
 
-use bitarray::{data_to_writer, Binary, BitArray};
+use bitarray::{Binary, BitArray, data_to_writer};
 use sa_index::SuffixArray;
 
 /// Writes the compressed suffix array to a writer.

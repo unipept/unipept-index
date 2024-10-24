@@ -1,5 +1,5 @@
 use criterion::black_box;
-use fa_compression::algorithm2::{decode, encode, CompressionTable};
+use fa_compression::algorithm2::{CompressionTable, decode, encode};
 
 use super::util::generate_annotation;
 

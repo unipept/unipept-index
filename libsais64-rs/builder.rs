@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // clone the c library
     Command::new("git")
-        .args(["clone", "https://github.com/IlyaGrebnov/libsais.git", "--depth=1"])
+        .args(["clone", "git@github.com:unipept/unipept-libsais.git", "libsais", "--depth=1"])
         .status()
         .expect("Failed to clone the libsais repository");
 

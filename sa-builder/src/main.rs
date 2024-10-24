@@ -5,7 +5,7 @@ use std::{
 };
 
 use clap::Parser;
-use sa_builder::{build_ssa, Arguments};
+use sa_builder::{Arguments, build_ssa};
 use sa_compression::dump_compressed_suffix_array;
 use sa_index::binary::dump_suffix_array;
 use sa_mappings::proteins::Proteins;
@@ -38,7 +38,6 @@ fn main() {
         (get_time_ms().unwrap() - start_ssa_time) / 1000.0
     );
     eprintln!("\tAmount of items: {}", sa.len());
-    eprintln!("\tSample rate: {}", sparseness_factor);
 
     // open the output file
     let mut file =
