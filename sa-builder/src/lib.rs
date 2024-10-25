@@ -46,18 +46,18 @@ pub enum SAConstructionAlgorithm {
 ///
 /// The errors that occurred during the building of the suffix array itself
 pub fn build_ssa(
-    text: &mut Vec<u8>,
+    mut text: Vec<u8>,
     construction_algorithm: &SAConstructionAlgorithm,
     sparseness_factor: u8
 ) -> Result<Vec<i64>, Box<dyn Error>> {
     // translate all L's to a I
-    translate_l_to_i(text);
+    translate_l_to_i(&mut text);
 
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64(text, sparseness_factor)?,
         SAConstructionAlgorithm::LibDivSufSort => {
-            libdivsufsort_rs::divsufsort64(text).ok_or("Building suffix array failed")?
+            libdivsufsort_rs::divsufsort64(&mut text).ok_or("Building suffix array failed")?
         }
     };
 
@@ -71,7 +71,7 @@ pub fn build_ssa(
 
 // Max sparseness for libsais because it creates a bucket for each element of the alphabet (2 ^ (sparseness * bits_per_char) buckets).
 const MAX_SPARSENESS: usize = 5;
-fn libsais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
+fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
     let sparseness_factor = sparseness_factor as usize;
 
     // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness

@@ -21,8 +21,9 @@ fn main() {
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
     let start_proteins_time = get_time_ms().unwrap();
-    let mut data = Proteins::try_from_database_file_uncompressed(&database_file)
+    let data = Proteins::try_from_database_file_uncompressed(&database_file)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    let bits_per_value = (data.len() as f64).log2().ceil() as usize;
     eprintln!(
         "✅ Successfully loaded the proteins in {} seconds!",
         (get_time_ms().unwrap() - start_proteins_time) / 1000.0
@@ -31,7 +32,7 @@ fn main() {
     eprintln!();
     eprintln!("📋 Started building the suffix array...");
     let start_ssa_time = get_time_ms().unwrap();
-    let sa = build_ssa(&mut data, &construction_algorithm, sparseness_factor)
+    let sa = build_ssa(data, &construction_algorithm, sparseness_factor)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     eprintln!(
         "✅ Successfully built the suffix array in {} seconds!",
@@ -48,8 +49,6 @@ fn main() {
     let start_dump_time = get_time_ms().unwrap();
 
     if compress_sa {
-        let bits_per_value = (data.len() as f64).log2().ceil() as usize;
-
         if let Err(err) = dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file) {
             eprint_and_exit(err.to_string().as_str());
         };
