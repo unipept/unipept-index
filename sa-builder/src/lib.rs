@@ -70,7 +70,7 @@ pub fn build_ssa(
 }
 
 // Max sparseness for libsais because it creates a bucket for each element of the alphabet (2 ^ (sparseness * bits_per_char) buckets).
-const MAX_SPARSENESS: usize = 6;
+const MAX_SPARSENESS: usize = 5;
 fn libsais64(text: &Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &str> {
     let sparseness_factor = sparseness_factor as usize;
 
