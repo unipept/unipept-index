@@ -57,7 +57,7 @@ pub fn build_ssa(
     let mut sa = match construction_algorithm {
         SAConstructionAlgorithm::LibSais => libsais64(text, sparseness_factor)?,
         SAConstructionAlgorithm::LibDivSufSort => {
-            libdivsufsort_rs::divsufsort64(&mut text).ok_or("Building suffix array failed")?
+            libdivsufsort_rs::divsufsort64(&text).ok_or("Building suffix array failed")?
         }
     };
 
