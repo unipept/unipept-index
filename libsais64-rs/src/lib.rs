@@ -25,11 +25,7 @@ pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'st
     let required_bits = libsais_sparseness * BITS_PER_CHAR;
     if required_bits <= 8 {
         // bitpacked values fit in uint8_t
-        let packed_text = if libsais_sparseness == 1 {
-            text
-        } else {
-            bitpack_text_8(text, libsais_sparseness)
-        };
+        let packed_text = if libsais_sparseness == 1 { text } else { bitpack_text_8(text, libsais_sparseness) };
 
         sa = vec![0; packed_text.len()];
         exit_code =
