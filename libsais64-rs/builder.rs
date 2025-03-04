@@ -49,25 +49,25 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
 
 fn main() -> Result<(), Box<dyn Error>> {
     // remove the old libsais folder
-    Command::new("rm").args(["-rf", "libsais"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
+    Command::new("rm").args(["-rf", "libsais-packed"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
 
     // clone the c library
     Command::new("git")
-        .args(["clone", "https://github.com/unipept/unipept-libsais.git", "libsais", "--depth=1"])
+        .args(["clone", "git@github.com:unipept/libsais-packed.git", "libsais-packed", "--depth=1"])
         .status()
-        .expect("Failed to clone the libsais repository");
+        .expect("Failed to clone the libsais-packed repository");
 
     // compile the c library
-    Command::new("rm").args(["libsais/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    Command::new("rm").args(["libsais-packed/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
     exit_status_to_result(
         "cmake",
-        Command::new("cmake").args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais", "-Blibsais"]).status()?
+        Command::new("cmake").args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais-packed", "-Blibsais-packed"]).status()?
     )?;
-    exit_status_to_result("make", Command::new("make").args(["-C", "libsais"]).status()?)?;
+    exit_status_to_result("make", Command::new("make").args(["-C", "libsais-packed"]).status()?)?;
 
-    // link the c libsais library to rust
+    // link the c libsais-packed library to rust
     let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais").display());
+    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais-packed").display());
     println!("cargo:rustc-link-lib=static=libsais");
 
     // The bindgen::Builder is the main entry point
