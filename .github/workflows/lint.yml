@@ -4,30 +4,21 @@ name: Lint
 
 jobs:
   lint:
-    name: Clippy + rustfmt
+    name: Run Clippy
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      
-      - name: Install minimal nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          components: rustfmt, clippy
-          override: true
 
-      - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          command: fmt
-          args: --all -- --check
+          toolchain: stable
+          components: clippy
 
-      - name: Run cargo clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
