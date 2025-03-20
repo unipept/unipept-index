@@ -46,22 +46,50 @@ pub enum SAConstructionAlgorithm {
 ///
 /// The errors that occurred during the building of the suffix array itself
 pub fn build_ssa(
-    text: &mut Vec<u8>,
+    mut text: Vec<u8>,
     construction_algorithm: &SAConstructionAlgorithm,
     sparseness_factor: u8
 ) -> Result<Vec<i64>, Box<dyn Error>> {
     // translate all L's to a I
-    translate_l_to_i(text);
+    translate_l_to_i(&mut text);
 
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
-        SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(text),
-        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text)
-    }
-    .ok_or("Building suffix array failed")?;
+        SAConstructionAlgorithm::LibSais => libsais64(text, sparseness_factor)?,
+        SAConstructionAlgorithm::LibDivSufSort => {
+            libdivsufsort_rs::divsufsort64(&text).ok_or("Building suffix array failed")?
+        }
+    };
 
     // make the SA sparse and decrease the vector size if we have sampling (sampling_rate > 1)
-    sample_sa(&mut sa, sparseness_factor);
+    if *construction_algorithm == SAConstructionAlgorithm::LibDivSufSort {
+        sample_sa(&mut sa, sparseness_factor);
+    }
+
+    Ok(sa)
+}
+
+// Max sparseness for libsais because it creates a bucket for each element of the alphabet (2 ^ (sparseness * bits_per_char) buckets).
+const MAX_SPARSENESS: usize = 5;
+fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+    let sparseness_factor = sparseness_factor as usize;
+
+    // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
+    // max 28 out of 32 bits used, because a bucket is created for every element of the alfabet 8 * 2^28).
+    let mut libsais_sparseness = MAX_SPARSENESS;
+    while sparseness_factor % libsais_sparseness != 0 {
+        libsais_sparseness -= 1;
+    }
+    let sample_rate = sparseness_factor / libsais_sparseness;
+    eprintln!("\tSparseness factor: {}", sparseness_factor);
+    eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
+    eprintln!("\tSample rate: {}", sample_rate);
+
+    let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
+
+    if sample_rate > 1 {
+        sample_sa(&mut sa, sample_rate as u8);
+    }
 
     Ok(sa)
 }
@@ -147,42 +175,42 @@ mod tests {
     #[test]
     fn test_build_ssa_libsais() {
         let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
         assert_eq!(sa, vec![11, 10, 7, 0, 3, 5, 8, 1, 4, 6, 9, 2]);
     }
 
     #[test]
     fn test_build_ssa_libsais_empty() {
         let mut text = b"".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
         assert_eq!(sa, vec![]);
     }
 
     #[test]
     fn test_build_ssa_libsais_sparse() {
         let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibSais, 2).unwrap();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 2).unwrap();
         assert_eq!(sa, vec![10, 0, 8, 4, 6, 2]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort() {
         let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
         assert_eq!(sa, vec![11, 10, 7, 0, 3, 5, 8, 1, 4, 6, 9, 2]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort_empty() {
         let mut text = b"".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
         assert_eq!(sa, vec![]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort_sparse() {
         let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibDivSufSort, 2).unwrap();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 2).unwrap();
         assert_eq!(sa, vec![10, 0, 8, 4, 6, 2]);
     }
 

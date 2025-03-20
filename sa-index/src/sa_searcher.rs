@@ -4,9 +4,9 @@ use sa_mappings::proteins::{Protein, Proteins, SEPARATION_CHARACTER, TERMINATION
 use text_compression::ProteinTextSlice;
 
 use crate::{
+    Nullable, SuffixArray,
     sa_searcher::BoundSearch::{Maximum, Minimum},
-    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
-    Nullable, SuffixArray
+    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex}
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -495,9 +495,9 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
+        SuffixArray,
         sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
-        suffix_to_protein_index::SparseSuffixToProtein,
-        SuffixArray
+        suffix_to_protein_index::SparseSuffixToProtein
     };
 
     #[test]
