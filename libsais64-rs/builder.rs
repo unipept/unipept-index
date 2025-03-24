@@ -53,23 +53,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // clone the c library
     Command::new("git")
-        .args(["clone", "git@github.com:unipept/libsais-packed.git", "libsais-packed", "--depth=1"])
+        .args(["clone", "https://github.com/unipept/libsais-packed.git", "libsais-packed", "--depth=1"])
         .status()
         .expect("Failed to clone the libsais-packed repository");
 
     // compile the c library
-    Command::new("rm").args(["libsais-packed/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    Command::new("rm").args(["-f", "libsais-packed/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
     exit_status_to_result(
         "cmake",
         Command::new("cmake").args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais-packed", "-Blibsais-packed"]).status()?
     )?;
     exit_status_to_result("make", Command::new("make").args(["-C", "libsais-packed"]).status()?)?;
-
+    
     // link the c libsais-packed library to rust
     let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais-packed").display());
     println!("cargo:rustc-link-lib=static=libsais");
-
+    
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Finish the builder and generate the bindings.
         .generate()?;
-
+    
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     let out_path = PathBuf::from(env::var("OUT_DIR")?);
     bindings.write_to_file(out_path.join("bindings.rs"))?;
