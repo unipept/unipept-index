@@ -18,7 +18,7 @@ Options:
   -o, --output <OUTPUT>
           Output location where to store the suffix array
   -s, --sparseness-factor <SPARSENESS_FACTOR>
-          The sparseness_factor used on the suffix array (default value 1, which means every value in the SA is used) [default: 1]
+          The sparseness_factor used on the suffix array (default value 1, which means every value in the SA is used). Internally, a library call will be performed with a maximum sparseness of 5 (because of memory usage). If a higher sparsity is desired, the largest divisor smaller than or equal to 5 is used for the library call. Then, the SA is filtered to achieve the desired sparsity. [default: 1]
   -a, --construction-algorithm <CONSTRUCTION_ALGORITHM>
           The algorithm used to construct the suffix array (default value LibSais) [default: lib-sais] [possible values: lib-div-suf-sort, lib-sais]
   -c, --compress-sa

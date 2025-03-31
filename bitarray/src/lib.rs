@@ -60,7 +60,7 @@ impl BitArray {
         if start_block_offset + self.bits_per_value <= 64 {
             // Shift the value to the right so that the relevant bits are in the least significant
             // position Then mask out the irrelevant bits
-            return self.data[start_block] >> (64 - start_block_offset - self.bits_per_value) & self.mask;
+            return (self.data[start_block] >> (64 - start_block_offset - self.bits_per_value)) & self.mask;
         }
 
         let end_block = (index + 1) * self.bits_per_value / 64;

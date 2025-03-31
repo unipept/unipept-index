@@ -4,9 +4,9 @@ use sa_mappings::proteins::{Protein, Proteins, SEPARATION_CHARACTER, TERMINATION
 use text_compression::ProteinTextSlice;
 
 use crate::{
+    Nullable, SuffixArray,
     sa_searcher::BoundSearch::{Maximum, Minimum},
-    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex},
-    Nullable, SuffixArray
+    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex}
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -495,9 +495,9 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
+        SuffixArray,
         sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
-        suffix_to_protein_index::SparseSuffixToProtein,
-        SuffixArray
+        suffix_to_protein_index::SparseSuffixToProtein
     };
 
     #[test]
@@ -560,15 +560,15 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'A'
-        let bounds_res = searcher.search_bounds(&[b'A']);
+        let bounds_res = searcher.search_bounds(b"A");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((4, 9)));
 
         // search bounds '$'
-        let bounds_res = searcher.search_bounds(&[b'$']);
+        let bounds_res = searcher.search_bounds(b"$");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
 
         // search bounds 'AC'
-        let bounds_res = searcher.search_bounds(&[b'A', b'C']);
+        let bounds_res = searcher.search_bounds(b"AC");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((6, 8)));
     }
 
@@ -581,11 +581,11 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search suffix 'VAA'
-        let found_suffixes = searcher.search_matching_suffixes(&[b'V', b'A', b'A'], usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
 
         // search suffix 'AC'
-        let found_suffixes = searcher.search_matching_suffixes(&[b'A', b'C'], usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"AC", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![5, 11]));
     }
 
@@ -597,11 +597,11 @@ mod tests {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.text);
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
-        let bounds_res = searcher.search_bounds(&[b'I']);
+        let bounds_res = searcher.search_bounds(b"I");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
 
         // search bounds 'RIZ' with equal I and L
-        let bounds_res = searcher.search_bounds(&[b'R', b'I', b'Y']);
+        let bounds_res = searcher.search_bounds(b"RIY");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((17, 18)));
     }
 
@@ -614,11 +614,11 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'RIZ' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Y'], usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
         // search bounds 'RIZ' without equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'R', b'I', b'Y'], usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
@@ -642,7 +642,7 @@ mod tests {
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'M'], usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"IM", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0]));
     }
 
@@ -664,7 +664,7 @@ mod tests {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.text);
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I'], usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"I", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
     }
 
@@ -686,7 +686,7 @@ mod tests {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.text);
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
 
@@ -710,7 +710,7 @@ mod tests {
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2]));
     }
 
@@ -733,7 +733,7 @@ mod tests {
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(&[b'I', b'I'], usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
     }
 
@@ -755,10 +755,10 @@ mod tests {
         let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.text);
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
-        let found_suffixes_1 = searcher.search_matching_suffixes(&[b'P', b'A', b'A'], usize::MAX, false, true);
+        let found_suffixes_1 = searcher.search_matching_suffixes(b"PAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_1, SearchAllSuffixesResult::SearchResult(vec![0]));
 
-        let found_suffixes_2 = searcher.search_matching_suffixes(&[b'A', b'P', b'A', b'A'], usize::MAX, false, true);
+        let found_suffixes_2 = searcher.search_matching_suffixes(b"APAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_2, SearchAllSuffixesResult::SearchResult(vec![9]));
     }
 }

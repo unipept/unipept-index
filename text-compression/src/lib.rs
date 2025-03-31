@@ -4,7 +4,7 @@ use std::{
     io::{BufRead, Write}
 };
 
-use bitarray::{data_to_writer, Binary, BitArray};
+use bitarray::{Binary, BitArray, data_to_writer};
 
 /// Structure representing the proteins, stored in a bit array using 5 bits per amino acid.
 pub struct ProteinText {
@@ -300,7 +300,7 @@ pub struct ProteinTextSliceIterator<'a> {
     index: usize
 }
 
-impl<'a> Iterator for ProteinTextSliceIterator<'a> {
+impl Iterator for ProteinTextSliceIterator<'_> {
     type Item = u8;
 
     /// Get the next character in the `ProteinTextSlice`.
@@ -318,7 +318,7 @@ impl<'a> Iterator for ProteinTextSliceIterator<'a> {
     }
 }
 
-impl<'a> Iterator for ProteinTextIterator<'a> {
+impl Iterator for ProteinTextIterator<'_> {
     type Item = u8;
 
     /// Get the next character in the `ProteinText`.
@@ -513,7 +513,7 @@ mod tests {
         let input_string = "ACACA-CAC$";
         let start = 1;
         let end = 5;
-        let text = ProteinText::from_string(&input_string);
+        let text = ProteinText::from_string(input_string);
         let text_slice = text.slice(start, end);
 
         for (i, c) in input_string[start..end].chars().enumerate() {
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn test_equals_slice() {
         let input_string = "ACICA-CAC$";
-        let text = ProteinText::from_string(&input_string);
+        let text = ProteinText::from_string(input_string);
         let text_slice = text.slice(1, 5);
         let eq_slice_true = [b'C', b'I', b'C', b'A'];
         let eq_slice_false = [b'C', b'C', b'C', b'A'];
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn test_check_il_locations() {
         let input_string = "ACILA-CAC$";
-        let text = ProteinText::from_string(&input_string);
+        let text = ProteinText::from_string(input_string);
         let text_slice = text.slice(1, 5);
         let il_locations = [1, 2];
         let il_true = [b'C', b'I', b'L', b'A'];
@@ -589,11 +589,8 @@ mod tests {
 
     #[test]
     fn test_load_compressed_text() {
-        let data = vec![
-            // size of the text
-            10, 0, 0, 0, 0, 0, 0, 0, // compressed text
-            0, 128, 74, 232, 152, 66, 134, 8,
-        ];
+        let data = [10, 0, 0, 0, 0, 0, 0, 0, // compressed text
+            0, 128, 74, 232, 152, 66, 134, 8];
 
         let mut reader = std::io::BufReader::new(&data[..]);
         let compressed_text = load_compressed_text(&mut reader).unwrap();
@@ -631,7 +628,6 @@ mod tests {
         let mut reader = FailingReader { valid_read_count: 0 };
         let right_buffer: [u8; 0] = [];
         assert_eq!(reader.fill_buf().unwrap(), &right_buffer);
-        assert_eq!(reader.consume(0), ());
         let mut buffer = [0_u8; 1];
         assert!(reader.read(&mut buffer).is_err());
     }
