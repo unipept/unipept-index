@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_arguments() {
-        let args = Arguments::parse_from(&[
+        let args = Arguments::parse_from([
             "sa-builder",
             "--database-file",
             "database.fa",
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(args.output, "output.fa");
         assert_eq!(args.sparseness_factor, 2);
         assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);
-        assert_eq!(args.compress_sa, true);
+        assert!(args.compress_sa);
     }
 
     #[test]
@@ -174,42 +174,42 @@ mod tests {
 
     #[test]
     fn test_build_ssa_libsais() {
-        let mut text = b"ABRACADABRA$".to_vec();
+        let text = b"ABRACADABRA$".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
         assert_eq!(sa, vec![11, 10, 7, 0, 3, 5, 8, 1, 4, 6, 9, 2]);
     }
 
     #[test]
     fn test_build_ssa_libsais_empty() {
-        let mut text = b"".to_vec();
+        let text = b"".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
         assert_eq!(sa, vec![]);
     }
 
     #[test]
     fn test_build_ssa_libsais_sparse() {
-        let mut text = b"ABRACADABRA$".to_vec();
+        let text = b"ABRACADABRA$".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 2).unwrap();
         assert_eq!(sa, vec![10, 0, 8, 4, 6, 2]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort() {
-        let mut text = b"ABRACADABRA$".to_vec();
+        let text = b"ABRACADABRA$".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
         assert_eq!(sa, vec![11, 10, 7, 0, 3, 5, 8, 1, 4, 6, 9, 2]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort_empty() {
-        let mut text = b"".to_vec();
+        let text = b"".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
         assert_eq!(sa, vec![]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort_sparse() {
-        let mut text = b"ABRACADABRA$".to_vec();
+        let text = b"ABRACADABRA$".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 2).unwrap();
         assert_eq!(sa, vec![10, 0, 8, 4, 6, 2]);
     }

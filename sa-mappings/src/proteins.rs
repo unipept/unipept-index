@@ -187,13 +187,13 @@ mod tests {
         let database_file = tmp_dir.path().join("database.tsv");
         let mut file = File::create(&database_file).unwrap();
 
-        file.write("P12345\t1\tMLPGLALLLLAAWTARALEV\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
+        file.write_all("P12345\t1\tMLPGLALLLLAAWTARALEV\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
             .unwrap();
-        file.write("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
+        file.write_all("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
             .unwrap();
-        file.write("P67890\t6\tKWDSDPSGTKTCIDT\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
+        file.write_all("P67890\t6\tKWDSDPSGTKTCIDT\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
             .unwrap();
-        file.write(
+        file.write_all(
             "P13579\t17\tKEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n"
                 .as_bytes()
         )
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn test_new_proteins() {
         let input_string = "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG";
-        let text = ProteinText::from_string(&input_string);
+        let text = ProteinText::from_string(input_string);
         let proteins = Proteins {
             text,
             proteins: vec![
@@ -253,7 +253,7 @@ mod tests {
 
         let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
-        let taxa = vec![1, 2, 6, 17];
+        let taxa = [1, 2, 6, 17];
         for (i, protein) in proteins.proteins.iter().enumerate() {
             assert_eq!(protein.taxon_id, taxa[i]);
         }
@@ -282,7 +282,7 @@ mod tests {
 
         let proteins = Proteins::try_from_database_file_without_annotations(database_file.to_str().unwrap()).unwrap();
 
-        let expected = 'L' as u8;
+        let expected = b'L';
         assert_eq!(proteins.get(4), expected);
     }
 }

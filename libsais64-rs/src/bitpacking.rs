@@ -14,7 +14,7 @@ pub const BITS_PER_CHAR: usize = 5;
 pub fn bitpack_text_8(text: Vec<u8>, sparseness_factor: usize) -> Vec<u8> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 8);
 
-    let num_ints = (text.len() + (sparseness_factor - 1)) / sparseness_factor;
+    let num_ints = text.len().div_ceil(sparseness_factor);
     let mut text_packed = vec![0; num_ints];
 
     if text.is_empty() {
@@ -46,7 +46,7 @@ pub fn bitpack_text_8(text: Vec<u8>, sparseness_factor: usize) -> Vec<u8> {
 pub fn bitpack_text_16(text: Vec<u8>, sparseness_factor: usize) -> Vec<u16> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 16);
 
-    let num_ints = (text.len() + (sparseness_factor - 1)) / sparseness_factor;
+    let num_ints = text.len().div_ceil(sparseness_factor);
     let mut text_packed = vec![0; num_ints];
 
     if text.is_empty() {
@@ -78,7 +78,7 @@ pub fn bitpack_text_16(text: Vec<u8>, sparseness_factor: usize) -> Vec<u16> {
 pub fn bitpack_text_32(text: Vec<u8>, sparseness_factor: usize) -> Vec<u32> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 32);
 
-    let num_ints = (text.len() + (sparseness_factor - 1)) / sparseness_factor;
+    let num_ints = text.len().div_ceil(sparseness_factor);
     let mut text_packed = vec![0; num_ints];
 
     if text.is_empty() {

@@ -115,11 +115,11 @@ mod tests {
     #[test]
     fn test_suffix_array_compressed() {
         let mut bitarray = BitArray::with_capacity(5, 40);
-        bitarray.set(0, 1 as u64);
-        bitarray.set(1, 2 as u64);
-        bitarray.set(2, 3 as u64);
-        bitarray.set(3, 4 as u64);
-        bitarray.set(4, 5 as u64);
+        bitarray.set(0, 1_u64);
+        bitarray.set(1, 2_u64);
+        bitarray.set(2, 3_u64);
+        bitarray.set(3, 4_u64);
+        bitarray.set(4, 5_u64);
 
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.len(), 5);
@@ -163,16 +163,16 @@ mod tests {
     #[test]
     fn test_suffix_array_is_empty() {
         let sa = SuffixArray::Original(vec![], 1);
-        assert_eq!(sa.is_empty(), true);
+        assert!(sa.is_empty());
 
         let bitarray = BitArray::with_capacity(0, 0);
         let sa = SuffixArray::Compressed(bitarray, 1);
-        assert_eq!(sa.is_empty(), true);
+        assert!(sa.is_empty());
     }
 
     #[test]
     fn test_nullable_is_null() {
-        assert_eq!(u32::NULL.is_null(), true);
-        assert_eq!(0u32.is_null(), false);
+        assert!(u32::NULL.is_null());
+        assert!(!0u32.is_null());
     }
 }

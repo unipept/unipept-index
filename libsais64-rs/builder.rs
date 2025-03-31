@@ -13,7 +13,7 @@ struct CompileError<'a> {
     exit_code: Option<i32>
 }
 
-impl<'a> Display for CompileError<'a> {
+impl Display for CompileError<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let end_text = if let Some(code) = self.exit_code {
             format!("with exit code {}", code)
@@ -25,7 +25,7 @@ impl<'a> Display for CompileError<'a> {
     }
 }
 
-impl<'a> Error for CompileError<'a> {}
+impl Error for CompileError<'_> {}
 
 /// Handles the exit statuses of the executed bash commands
 ///

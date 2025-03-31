@@ -184,12 +184,9 @@ mod tests {
 
     #[test]
     fn test_load_compressed_suffix_array() {
-        let data = vec![
-            // sparseness factor
-            1, // size of the suffix array
+        let data = [1, // size of the suffix array
             10, 0, 0, 0, 0, 0, 0, 0, // compressed suffix array
-            8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9,
-        ];
+            8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9];
 
         let mut reader = std::io::BufReader::new(&data[..]);
         let compressed_suffix_array = load_compressed_suffix_array(&mut reader, 8).unwrap();
@@ -236,7 +233,6 @@ mod tests {
         let mut reader = FailingReader { valid_read_count: 0 };
         let right_buffer: [u8; 0] = [];
         assert_eq!(reader.fill_buf().unwrap(), &right_buffer);
-        assert_eq!(reader.consume(0), ());
         let mut buffer = [0_u8; 1];
         assert!(reader.read(&mut buffer).is_err());
     }
