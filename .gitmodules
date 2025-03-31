@@ -1,3 +1,0 @@
-[submodule "libsais-packed"]
-	path = libsais64-rs/libsais-packed
-	url = git@github.com:unipept/libsais-packed.git
