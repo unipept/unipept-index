@@ -19,7 +19,7 @@ pub struct Arguments {
     /// The algorithm used to construct the suffix array (default value LibSais)
     #[arg(short('a'), long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
     pub construction_algorithm: SAConstructionAlgorithm,
-    /// If the suffix array should be compressed (default value true)
+    /// If the suffix array should be compressed (default value false)
     #[arg(short, long, default_value_t = false)]
     pub compress_sa: bool
 }
