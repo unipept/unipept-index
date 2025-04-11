@@ -32,22 +32,22 @@ jobs:
       - name: Create build directory
         run: mkdir -p build/input
 
-      # Download the file "suffix-array.zip" from the most recent release of "unipept-database"
-      - name: Download suffix-array.zip
+      # Download the file "suffix_array.zip" from the most recent release of "unipept-database"
+      - name: Download suffix_array.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          latest_release_url=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep "browser_download_url.*suffix-array.zip" | cut -d '"' -f 4)
+          latest_release_url=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep "browser_download_url.*suffix_array.zip" | cut -d '"' -f 4)
           release_date=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep '"published_at":' | cut -d '"' -f 4 | cut -d'T' -f1)
           release_date_formatted=$(date -d $release_date "+%Y-%m-%d")
           SP_VERSION="SP_$release_date_formatted"
           echo "SP_VERSION=$SP_VERSION" >> $GITHUB_ENV
-          curl -L -o build/suffix-array.zip $latest_release_url
+          curl -L -o build/suffix_array.zip $latest_release_url
 
       # Extract the contents of the output folder from the zip into a folder "build/input"
       - name: Extract zip contents
         run: |
-          unzip build/suffix-array.zip '*' -d build/input
+          unzip build/suffix_array.zip '*' -d build/input
 
       # Make a directory with the SP_VERSION and process files
       - name: Process files
