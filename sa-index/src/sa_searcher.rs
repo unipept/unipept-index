@@ -100,6 +100,14 @@ impl BitVecSearcher {
     }
 }
 
+impl Deref for BitVecSearcher {
+    type Target = Searcher;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 pub struct DenseSearcher(Searcher);
 
 impl DenseSearcher {
