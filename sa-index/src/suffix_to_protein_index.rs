@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinText;
-
+use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
 use crate::Nullable;
 
 /// Enum used to define the commandline arguments and choose which index style is used
@@ -39,6 +39,13 @@ pub struct SparseSuffixToProtein {
     mapping: Vec<i64>
 }
 
+/// Mapping that uses O(n) memory (1-2 bits per suffix) with n the size of the input text, with retrieval 
+/// of the protein in O(1)
+#[derive(Debug)]
+pub struct BitVecSuffixToProtein {
+    rank: Rank9<BitVector<u64>>
+}
+
 impl SuffixToProteinIndex for DenseSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         self.mapping[suffix as usize]
@@ -55,6 +62,16 @@ impl SuffixToProteinIndex for SparseSuffixToProtein {
             return u32::NULL;
         }
         protein_index as u32
+    }
+}
+
+impl SuffixToProteinIndex for BitVecSuffixToProtein {
+    fn suffix_to_protein(&self, suffix: i64) -> u32 {
+        let suffix: u64 = suffix.try_into().unwrap();
+        if self.rank.get_bit(suffix) {
+            return u32::NULL;
+        }
+        self.rank.rank1(suffix).try_into().unwrap()
     }
 }
 
@@ -105,6 +122,34 @@ impl SparseSuffixToProtein {
     }
 }
 
+impl BitVecSuffixToProtein {
+    /// Creates a new BitVecSuffixToProtein mapping
+    /// 
+    /// # Arguments
+    /// * `text` - the text over which we want to create the mapping
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a new BitVecSuffixToProtein build over the provided text
+    pub fn new(text: &ProteinText) -> Self {
+        let num_bits = text.len();
+
+        // Create a BitVec (dynamic) first
+        let mut bits = BitVector::with_capacity(num_bits as u64);
+
+        // Set bits
+        for c in text.iter() {
+            bits.push_bit(c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER);
+        }
+
+        // Convert into BitVector
+        let bitvector = BitVector::from(bits);
+        let rank = Rank9::new(bitvector);
+
+        BitVecSuffixToProtein { rank }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::ValueEnum;
@@ -114,7 +159,7 @@ mod tests {
     use crate::{
         Nullable,
         suffix_to_protein_index::{
-            DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle
+            DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein, SuffixToProteinIndex, SuffixToProteinMappingStyle
         }
     };
 
@@ -167,6 +212,18 @@ mod tests {
     fn test_search_sparse() {
         let u8_text = &build_text();
         let index = SparseSuffixToProtein::new(u8_text);
+        assert_eq!(index.suffix_to_protein(5), 1);
+        assert_eq!(index.suffix_to_protein(7), 2);
+        // suffix that starts with SEPARATION_CHARACTER
+        assert_eq!(index.suffix_to_protein(3), u32::NULL);
+        // suffix that starts with TERMINATION_CHARACTER
+        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+    }
+
+    #[test]
+    fn test_search_bitvec() {
+        let u8_text = &build_text();
+        let index = BitVecSuffixToProtein::new(u8_text);
         assert_eq!(index.suffix_to_protein(5), 1);
         assert_eq!(index.suffix_to_protein(7), 2);
         // suffix that starts with SEPARATION_CHARACTER
