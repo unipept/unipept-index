@@ -513,7 +513,7 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
-        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher}, suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein}, SuffixArray
+        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher}, suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}, SuffixArray
     };
 
     #[test]
@@ -572,7 +572,7 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
 
-        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.text);
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(&proteins.text);
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search bounds 'A'
@@ -593,7 +593,24 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
 
-        let suffix_index_to_protein = BitVecSuffixToProtein::new(&proteins.text);
+        let suffix_index_to_protein = SparseSuffixToProtein::new(&proteins.text);
+        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+
+        // search suffix 'VAA'
+        let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
+
+        // search suffix 'AC'
+        let found_suffixes = searcher.search_matching_suffixes(b"AC", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![5, 11]));
+    }
+
+    #[test]
+    fn test_search_dense() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
+
+        let suffix_index_to_protein = DenseSuffixToProtein::new(&proteins.text);
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
 
         // search suffix 'VAA'
