@@ -142,9 +142,7 @@ impl BitVecSuffixToProtein {
             bits.push_bit(c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER);
         }
 
-        // Convert into BitVector
-        let bitvector = BitVector::from(bits);
-        let rank = Rank9::new(bitvector);
+        let rank = Rank9::new(bits);
 
         BitVecSuffixToProtein { rank }
     }
