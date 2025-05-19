@@ -98,7 +98,7 @@ mod tests {
     impl Write for FailingWriter {
         fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
             if self.valid_write_count == 0 {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Write failed"));
+                return Err(std::io::Error::other("Write failed"));
             }
 
             self.valid_write_count -= 1;
@@ -118,7 +118,7 @@ mod tests {
     impl Read for FailingReader {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             if self.valid_read_count == 0 {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Read failed"));
+                return Err(std::io::Error::other("Read failed"));
             }
 
             self.valid_read_count -= 1;
