@@ -9,8 +9,10 @@ use std::{
 
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
+use serde::{Serialize, Deserialize};
 
 /// A fixed-size bit array implementation.
+#[derive(Serialize, Deserialize)]
 pub struct BitArray {
     /// The underlying data storage for the bit array.
     data: Vec<u64>,

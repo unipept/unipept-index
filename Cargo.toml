@@ -8,5 +8,7 @@ members = [ "bitarray",
     "sa-compression",
     "sa-index",
     "sa-mappings",
-    "sa-server"
+    "sa-server",
+    "fm-index",
+    "fm-builder"
 ]

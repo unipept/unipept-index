@@ -102,7 +102,7 @@ fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static 
 /// # Returns
 ///
 /// The text with all L's translated to I's
-fn translate_l_to_i(text: &mut [u8]) {
+pub fn translate_l_to_i(text: &mut [u8]) {
     for character in text.iter_mut() {
         if *character == b'L' {
             *character = b'I'
