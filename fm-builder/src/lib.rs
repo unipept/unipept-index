@@ -31,7 +31,6 @@ pub fn build_fm(
     info!("------------Building bidirectional FM-index----------------");
     env_logger::init();
 
-    // translate all L's to a I
     info!("Translating L to I in text...");
     translate_l_to_i(&mut text);
 
@@ -60,6 +59,18 @@ pub fn build_fm(
         let _ = ssa_occs.get_block(i).write_block::<_, LittleEndian>(&mut ssa_occs_file);
     }
     info!("\tWritten {}", output_path.with_extension("ssa_occ").to_str().unwrap());
+
+    info!("Reversing text...");
+    text.reverse();
+
+    info!("Building suffix array of reversed text...");
+    let sa_rev: Vec<i64> = libsais64_rs::sais64(text.clone(), 1)?;
+
+    info!("Building BWT of reversed text...");
+    let bwt_rev: Vec<u8> = build_bwt(&text, &sa_rev);
+    let bwt_rev_file = BufWriter::new(File::create(output_path.with_extension("rev.bwt"))?);
+    bwt_rev_file.into_inner()?.write_all(&bwt_rev)?;
+    info!("\tWritten {}", output_path.with_extension("rev.bwt").to_str().unwrap());
 
     Ok(())
 }

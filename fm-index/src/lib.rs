@@ -17,9 +17,16 @@ use bincode::deserialize_from;
 #[derive(Serialize, Deserialize)]
 struct Counts(Vec<usize>);
 
+pub struct FMIndexRange {
+    pub begin: usize,
+    pub end: usize,
+    pub begin_rev: usize,
+    pub end_rev: usize
+}
+
 pub struct FMIndex {
-    bwt_wavelet: WaveletMatrix<Rank9Sel>,
-    bwt: Vec<u8>,
+    bwt: WaveletMatrix<Rank9Sel>,
+    bwt_rev: WaveletMatrix<Rank9Sel>,
     counts: Vec<usize>,
     ssa: Vec<i64>,
     ssa_occs: Rank9<BitVector<u64>>
@@ -38,7 +45,13 @@ impl FMIndex {
         let mut bwt = Vec::new();
         BufReader::new(File::open(base_path.with_extension("bwt"))?)
             .read_to_end(&mut bwt)?;
-        let bwt_wavelet = Self::build_wavelet_matrix(bwt.clone())?;
+        let bwt = Self::build_wavelet_matrix(bwt)?;
+
+        // Load BWT of reverse text
+        let mut bwt_rev = Vec::new();
+        BufReader::new(File::open(base_path.with_extension("rev.bwt"))?)
+            .read_to_end(&mut bwt_rev)?;
+        let bwt_rev = Self::build_wavelet_matrix(bwt_rev)?;
 
         // Load SSA
         let ssa_file = BufReader::new(File::open(base_path.with_extension("ssa"))?);
@@ -62,35 +75,72 @@ impl FMIndex {
         // Add rank/select support:
         let ssa_occs = Rank9::new(ssa_occs);
 
+        // 
+
         Ok(Self {
-            bwt_wavelet,
             bwt,
+            bwt_rev,
             counts,
             ssa,
             ssa_occs
         })
     }
     
-    pub fn extend(&self, c: u8, sp: usize, ep: usize) -> (usize, usize) {
-        let new_sp = self.c(c) + self.rank(c, sp).unwrap();
-        let new_ep = self.c(c) + self.rank(c, ep).unwrap();
-        (new_sp, new_ep)
+    pub fn left_extension(&self, c: u8, range: FMIndexRange) -> FMIndexRange {
+        let FMIndexRange { begin, end, begin_rev, end_rev: _ } = range;
+        
+        let new_begin = self.lf(c, begin);
+        let new_end = self.lf(c, end);
+
+        let mut new_begin_rev = begin_rev;
+        for smaller_c in 0..c {
+            new_begin_rev += self.rank(smaller_c, end) - self.rank(smaller_c, begin);
+        }
+        let new_end_rev = new_begin_rev + (new_end - new_begin);
+        
+        FMIndexRange { begin: new_begin, end: new_end, begin_rev: new_begin_rev, end_rev: new_end_rev }
     }
 
+    pub fn right_extension(&self, c: u8, range: FMIndexRange) -> FMIndexRange {
+        let FMIndexRange { begin, end: _, begin_rev, end_rev } = range;
+        
+        let new_begin_rev = self.lf_rev(c, begin_rev);
+        let new_end_rev = self.lf_rev(c, end_rev);
+
+        let mut new_begin = begin;
+        for smaller_c in 0..c {
+            new_begin += self.rank_rev(smaller_c, end_rev) - self.rank_rev(smaller_c, begin_rev);
+        }
+        let new_end = new_begin + (new_end_rev - new_begin_rev);
+        
+        FMIndexRange { begin: new_begin, end: new_end, begin_rev: new_begin_rev, end_rev: new_end_rev }
+    }
+
+    fn lf(&self, symbol: u8, pos: usize) -> usize {
+        self.c(symbol) + self.rank(symbol, pos)
+    }
+
+    fn lf_rev(&self, symbol: u8, pos: usize) -> usize {
+        self.c(symbol) + self.rank_rev(symbol, pos)
+    }
     
-    pub fn rank(&self, symbol: u8, pos: usize) -> Option<usize> {
-        self.bwt_wavelet.rank(pos, symbol as usize)
+    fn rank(&self, symbol: u8, pos: usize) -> usize {
+        self.bwt.rank(pos, symbol as usize).unwrap()
     }
 
-    pub fn c(&self, symbol: u8) -> usize {
+    fn rank_rev(&self, symbol: u8, pos: usize) -> usize {
+        self.bwt_rev.rank(pos, symbol as usize).unwrap()
+    }
+
+    fn c(&self, symbol: u8) -> usize {
         self.counts[symbol as usize]
     }
 
     pub fn locate(&self, mut i: usize) -> usize {
         let mut steps = 0;
         while !self.ssa_occs.get_bit(i as u64) {
-            let c = self.bwt_wavelet.access(i).unwrap();
-            i = self.c(c as u8) + self.bwt_wavelet.rank(i, c).unwrap();
+            let c = self.bwt.access(i).unwrap();
+            i = self.c(c as u8) + self.bwt.rank(i, c).unwrap();
             steps += 1;
         }
         
