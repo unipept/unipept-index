@@ -1,20 +1,27 @@
 use std::path::Path;
-use fm_index::{FMIndex, FMIndexRange};
+use fm_index::search_scheme::SearchScheme;
+use fm_index::fm_index::FMIndex;
+use fm_index::search::approximate_search;
 use std::error::Error;
+use std::fs;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let base_path = Path::new("../test_files/uniprot");
     let fm_index = FMIndex::from_files(base_path)?;
 
-    let range = FMIndexRange { begin: 0, end: 1001, begin_rev: 0, end_rev: 1001 };
-    let range = fm_index.left_extension(b'E', range);
-    let range = fm_index.right_extension(b'P', range);
-    let range = fm_index.left_extension(b'P', range);
-    println!("'PEP' occurs in BWT range: {}..{}", range.begin, range.end);
+    let searches_path = Path::new("../test_files/kuch_k+2_searches.txt");
+    let search_scheme = SearchScheme::from_file(searches_path)?;
+    search_scheme.validate()?;
+    let matches = approximate_search(&fm_index, b"RETEGRADE".to_vec(), search_scheme)?;
 
-    for i in range.begin..range.end {
-        let pos = fm_index.locate(i);
-        println!("'PEP' occurs in position: {}", pos);
+    let input_path = Path::new("../test_files/uniprot_entries.1000.txt");
+    let text = String::from_utf8(fs::read(input_path)?)?;
+    for m in matches {
+        println!("{}", m);
+        for t in m..(m+5) {
+            print!("{}", text.chars().nth(t).unwrap());
+        }
+        println!();
     }
 
     Ok(())
