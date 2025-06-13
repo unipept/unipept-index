@@ -1,5 +1,6 @@
 use sa_builder::{translate_l_to_i};
 use succinct::storage::BlockType;
+use std::char;
 use std::error::Error;
 use std::path::Path;
 use std::io::{BufWriter, Write};
@@ -34,8 +35,14 @@ pub fn build_fm(
     info!("Translating L to I in text...");
     translate_l_to_i(&mut text);
 
+    info!("Transforming text and building alphabet file");
+    let (char_to_id, alph_size) = transform_text(&mut text);
+    let alph_file = BufWriter::new(File::create(output_path.with_extension("alph"))?);
+    let _ = serialize_into(alph_file, &char_to_id).unwrap();
+    info!("\tWritten {}", output_path.with_extension("alph").to_str().unwrap());
+
     info!("Building counts table");
-    let counts: Vec<usize> = build_counts(&text);
+    let counts = build_counts(&text, alph_size);
     let counts_file = BufWriter::new(File::create(output_path.with_extension("counts"))?);
     let _ = serialize_into(counts_file, &counts).unwrap();
     info!("\tWritten {}", output_path.with_extension("counts").to_str().unwrap());
@@ -109,18 +116,40 @@ fn build_bwt(text: &Vec<u8>, sa: &Vec<i64>) -> Vec<u8> {
         .collect()
 }
 
-fn build_counts(text: &Vec<u8>) -> Vec<usize> {
+fn build_counts(text: &Vec<u8>, alph_size: u8) -> Vec<usize> {
     let mut freqs = [0usize; 256];
     for &c in text {
         freqs[c as usize] += 1;
     }
 
-    let mut counts = vec![0; 256];
+    let mut counts = Vec::with_capacity(alph_size as usize);
     let mut total = 0;
-    for i in 0..256 {
-        counts[i] = total;
-        total += freqs[i];
+    for i in 0..alph_size {
+        counts.push(total);
+        total += freqs[i as usize];
     }
 
     counts
+}
+
+fn transform_text(text: &mut Vec<u8>) -> (Vec<u8>, u8) {
+    let mut occs = [false; 256];
+    for &c in text.iter() {
+        occs[c as usize] = true;
+    }
+
+    let mut char_to_id: Vec<u8> = vec![0;256];
+    let mut id = 0;
+    for i in 0..256 {
+        if occs[i] {
+            char_to_id[i] = id;
+            id += 1;
+        }
+    }
+
+    for c in text.iter_mut() {
+        *c = char_to_id[*c as usize];
+    }
+
+    (char_to_id, id)
 }

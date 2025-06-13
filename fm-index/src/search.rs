@@ -6,7 +6,6 @@ use crate::banded_matrix::BandedMatrix;
 use std::collections::HashSet;
 use std::error::Error;
 
-const ALPHABET_SIZE: u8 = 128;
 
 pub struct FMOcc {
     pub range: FMIndexRange,
@@ -19,10 +18,12 @@ pub struct FMMatchToExplore {
     pub c: u8
 }
 
-pub fn approximate_search(fm_index: &FMIndex, pattern: Vec<u8>, search_scheme: SearchScheme) -> Result<HashSet<usize>, Box<dyn Error>> {
+pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_scheme: SearchScheme) -> Result<HashSet<usize>, Box<dyn Error>> {
 
     let mut matches: HashSet<usize> = HashSet::new();
 
+    translate_l_to_i(&mut pattern);
+    let pattern = fm_index.map_pattern(&pattern);
     let pattern = SearchPattern::new(pattern, search_scheme.get_parts_amount() as usize)?;
 
     for search in search_scheme.into_iter() {
@@ -33,7 +34,7 @@ pub fn approximate_search(fm_index: &FMIndex, pattern: Vec<u8>, search_scheme: S
         let mut occs: Vec<FMOcc> = Vec::new();
 
         approximate_search_rec(&fm_index, search, start_occ, &pattern, 0, &mut occs);
-
+        
         for occ in occs {
             matches.extend(fm_index.locate_matches(occ.range));
         }
@@ -53,14 +54,14 @@ fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, patte
     let width = search.get_upperbound(idx) - occ.mismatches;
     let mut bandedmatrix = BandedMatrix::new(part_size, width, occ.mismatches);
 
-    let mut stack: Vec<FMMatchToExplore> = Vec::with_capacity(ALPHABET_SIZE as usize * pattern.len());
+    let mut stack: Vec<FMMatchToExplore> = Vec::with_capacity(fm_index.get_alphabet_size() as usize * pattern.len());
     extend_match(fm_index, &occ.range, 0, &mut stack, direction);
 
     while !stack.is_empty() {
 
         let current_pos = stack.pop().unwrap();
 
-        let part: &Vec<u8> = &pattern.get_part(search.get_part(idx));
+        let part: &Vec<u8> = &pattern.get_part(search.get_part(idx), direction);
         let mismatches = bandedmatrix.update_matrix_row(part, current_pos.depth, current_pos.c);
         if mismatches <= search.get_upperbound(idx) {
 
@@ -86,7 +87,8 @@ fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, patte
 }
 
 fn extend_match(fm_index: &FMIndex, range: &FMIndexRange, depth: usize, stack: &mut Vec<FMMatchToExplore>, direction_left: bool) {
-    for c in 0..=ALPHABET_SIZE {
+    let alphabet_size = fm_index.get_alphabet_size();
+    for c in 0..alphabet_size {
         let new_range = if direction_left { 
             fm_index.left_extension(c, range.clone())
         } else {
@@ -95,6 +97,14 @@ fn extend_match(fm_index: &FMIndex, range: &FMIndexRange, depth: usize, stack: &
 
         if ! new_range.empty() {
             stack.push(FMMatchToExplore { range: new_range.clone(), depth: depth + 1, c: c });
+        }
+    }
+}
+
+pub fn translate_l_to_i(text: &mut [u8]) {
+    for character in text.iter_mut() {
+        if *character == b'L' {
+            *character = b'I'
         }
     }
 }

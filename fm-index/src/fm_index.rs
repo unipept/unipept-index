@@ -37,7 +37,8 @@ pub struct FMIndex {
     bwt_rev: WaveletMatrix<Rank9Sel>,
     counts: Vec<usize>,
     ssa: Vec<i64>,
-    ssa_occs: Rank9<BitVector<u64>>
+    ssa_occs: Rank9<BitVector<u64>>,
+    char_to_id: Vec<u8>
 }
 
 impl FMIndex {
@@ -65,6 +66,10 @@ impl FMIndex {
         let ssa_file = BufReader::new(File::open(base_path.with_extension("ssa"))?);
         let ssa: Vec<i64> = deserialize_from(ssa_file)?;
 
+        // Load char_to_id mapping
+        let alph_file = BufReader::new(File::open(base_path.with_extension("alph"))?);
+        let char_to_id: Vec<u8> = deserialize_from(alph_file)?;
+
         // Load counts
         let counts_file = BufReader::new(File::open(base_path.with_extension("counts"))?);
         let counts: Vec<usize> = deserialize_from(counts_file)?;
@@ -88,7 +93,8 @@ impl FMIndex {
             bwt_rev,
             counts,
             ssa,
-            ssa_occs
+            ssa_occs,
+            char_to_id
         })
     }
 
@@ -158,5 +164,18 @@ impl FMIndex {
         }
         
         (*self.ssa.get(self.ssa_occs.rank1(i as u64) as usize - 1).unwrap() as usize + steps) % self.bwt.len()
+    }
+
+    pub fn get_alphabet_size(&self) -> u8 {
+        self.counts.len() as u8
+    }
+
+    pub fn map_pattern(&self, pattern: &Vec<u8>) -> Vec<u8> {
+        let mut mapped_pattern = Vec::with_capacity(pattern.len());
+        for &c in pattern {
+            mapped_pattern.push(self.char_to_id[c as usize]);
+        }
+
+        mapped_pattern
     }
 }

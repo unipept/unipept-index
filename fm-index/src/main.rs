@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let searches_path = Path::new("../test_files/kuch_k+2_searches.txt");
     let search_scheme = SearchScheme::from_file(searches_path)?;
     search_scheme.validate()?;
-    let matches = approximate_search(&fm_index, b"RETEGRADE".to_vec(), search_scheme)?;
+    let matches = approximate_search(&fm_index, b"ICQQADTVLAKKRVDLHMTREEMLTER".to_vec(), search_scheme)?;
 
     let input_path = Path::new("../test_files/uniprot_entries.1000.txt");
     let text = String::from_utf8(fs::read(input_path)?)?;

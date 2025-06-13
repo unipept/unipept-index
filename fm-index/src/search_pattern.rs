@@ -39,8 +39,10 @@ impl SearchPattern {
 
     }
 
-    pub fn get_part(&self, index: u8) -> Vec<u8> {
-        self.parts.get(index as usize).unwrap().clone()
+    pub fn get_part(&self, index: u8, direction_left: bool) -> Vec<u8> {
+        let mut part = self.parts.get(index as usize).unwrap().clone();
+        if direction_left { part.reverse() };
+        part
     }
 
     pub fn get_part_len(&self, index: u8) -> usize {
