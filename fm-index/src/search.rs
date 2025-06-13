@@ -5,6 +5,7 @@ use crate::search_pattern::SearchPattern;
 use crate::banded_matrix::BandedMatrix;
 use std::collections::HashSet;
 use std::error::Error;
+use rayon::prelude::*;
 
 
 pub struct FMOcc {
@@ -18,7 +19,20 @@ pub struct FMMatchToExplore {
     pub c: u8
 }
 
-pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_scheme: SearchScheme) -> Result<HashSet<usize>, Box<dyn Error>> {
+pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: SearchScheme) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
+
+    let results: HashSet<usize> = patterns
+        .into_par_iter() // Parallel iterator from rayon
+        .map(|pattern| approximate_search(fm_index, pattern, &search_scheme))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+
+    Ok(results)
+}
+
+pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_scheme: &SearchScheme) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
 
     let mut matches: HashSet<usize> = HashSet::new();
 

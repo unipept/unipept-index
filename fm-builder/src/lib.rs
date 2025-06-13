@@ -1,6 +1,5 @@
 use sa_builder::{translate_l_to_i};
 use succinct::storage::BlockType;
-use std::char;
 use std::error::Error;
 use std::path::Path;
 use std::io::{BufWriter, Write};

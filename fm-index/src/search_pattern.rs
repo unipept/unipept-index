@@ -7,7 +7,7 @@ pub struct SearchPattern {
 
 impl SearchPattern {
     
-    pub fn new(pattern: Vec<u8>, parts_amount: usize) -> Result<Self, Box<dyn Error>> {
+    pub fn new(pattern: Vec<u8>, parts_amount: usize) -> Result<Self, Box<dyn Error + Send + Sync>> {
 
         if parts_amount == 0 {
             return Err("parts_amount must be greater than 0".into());
