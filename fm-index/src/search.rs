@@ -21,13 +21,18 @@ pub struct FMMatchToExplore {
 
 pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: SearchScheme) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
 
-    let results: HashSet<usize> = patterns
+    let matches: HashSet<usize> = patterns
         .into_par_iter() // Parallel iterator from rayon
         .map(|pattern| approximate_search(fm_index, pattern, &search_scheme))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
         .collect();
+
+    let mut results: HashSet<usize> = HashSet::new();
+    for m in matches.iter() {
+        results.insert(fm_index.locate(*m));
+    }
 
     Ok(results)
 }
@@ -50,7 +55,7 @@ pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_schem
         approximate_search_rec(&fm_index, search, start_occ, &pattern, 0, &mut occs);
         
         for occ in occs {
-            matches.extend(fm_index.locate_matches(occ.range));
+            matches.extend(occ.range.begin..occ.range.end);
         }
     }
 

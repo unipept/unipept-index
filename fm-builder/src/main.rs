@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // let text  = b"BANANA$".to_vec();
 
     let base_path = Path::new("../test_files/uniprot.100M");
-    build_fm(text, 3, base_path)?;
+    build_fm(text, 8, base_path)?;
 
     Ok(())
 }

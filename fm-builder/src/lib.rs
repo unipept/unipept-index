@@ -7,6 +7,7 @@ use std::fs::{File};
 use succinct::{BitVec, BitVecMut, BitVector};
 use byteorder::LittleEndian;
 use log::info;
+use std::mem::drop;
 
 use bincode::serialize_into;
 
@@ -54,6 +55,7 @@ pub fn build_fm(
     let bwt_file = BufWriter::new(File::create(output_path.with_extension("bwt"))?);
     bwt_file.into_inner()?.write_all(&bwt)?;
     info!("\tWritten {}", output_path.with_extension("bwt").to_str().unwrap());
+    drop(bwt);
 
     info!("Sampling suffix array");
     let ssa_occs = sample_sa(&mut sa, sparseness_factor);
@@ -65,6 +67,8 @@ pub fn build_fm(
         let _ = ssa_occs.get_block(i).write_block::<_, LittleEndian>(&mut ssa_occs_file);
     }
     info!("\tWritten {}", output_path.with_extension("ssa_occ").to_str().unwrap());
+    drop(sa);
+    drop(ssa_occs);
 
     info!("Reversing text...");
     text.reverse();

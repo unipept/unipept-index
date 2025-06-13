@@ -44,7 +44,7 @@ pub struct FMIndex {
 impl FMIndex {
 
     fn build_wavelet_matrix(bwt: Vec<u8>) -> Result<WaveletMatrix<Rank9Sel>, Box<dyn Error>> {
-        let mut seq: CompactVector = CompactVector::with_capacity(bwt.len(), 8)?;
+        let mut seq: CompactVector = CompactVector::with_capacity(bwt.len(), 5)?;
         seq.extend(bwt.into_iter().map(|e| e as usize))?;
         WaveletMatrix::<Rank9Sel>::new(seq).map_err(|_| "Could not create Wavelet Matrix".into())
     }
@@ -159,7 +159,7 @@ impl FMIndex {
         let mut steps = 0;
         while !self.ssa_occs.get_bit(i as u64) {
             let c = self.bwt.access(i).unwrap();
-            i = self.c(c as u8) + self.bwt.rank(i, c).unwrap();
+            i = self.lf(c as u8, i);
             steps += 1;
         }
         
