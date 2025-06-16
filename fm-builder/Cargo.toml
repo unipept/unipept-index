@@ -15,5 +15,5 @@ sa-builder = { path = "../sa-builder" }
 bincode = "1.3"
 succinct = { version = "0.5" }
 byteorder = "1.5"
-log = "0.4"
-env_logger = "0.10"
+clap = { version = "4.4.8", features = ["derive"] }
+sa-mappings = { path = "../sa-mappings" }

@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let fm_index = FMIndex::from_files(base_path)?;
     println!("Index loaded");
 
-    let searches_path = Path::new("../search_schemes/kuch_k+1/1/searches.txt");
+    let searches_path = Path::new("../search_schemes/kuch_k+1/searches.txt");
     let search_scheme = SearchScheme::from_file(searches_path)?;
     search_scheme.validate()?;
 

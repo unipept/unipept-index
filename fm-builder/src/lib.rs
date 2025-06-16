@@ -6,10 +6,25 @@ use std::io::{BufWriter, Write};
 use std::fs::{File};
 use succinct::{BitVec, BitVecMut, BitVector};
 use byteorder::LittleEndian;
-use log::info;
 use std::mem::drop;
 
 use bincode::serialize_into;
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+pub struct Arguments {
+    /// File with the proteins used. All the proteins are expected to be
+    /// concatenated.
+    #[arg(short, long)]
+    pub database_file: String,
+    /// Output location where to store the FM-index
+    #[arg(short, long)]
+    pub output: String,
+    /// The sparseness_factor used on the suffix array samples
+    #[arg(short, long, default_value_t = 8)]
+    pub sparseness_factor: u8
+}
 
 /// Build a FM-index from the given text
 ///
@@ -29,58 +44,57 @@ pub fn build_fm(
     sparseness_factor: u8,
     output_path: &Path
 ) -> Result<(), Box<dyn Error>> {
-    info!("------------Building bidirectional FM-index----------------");
-    env_logger::init();
+    eprintln!("Building bidirectional FM-index");
 
-    info!("Translating L to I in text...");
+    eprintln!("\tTranslating L to I in text...");
     translate_l_to_i(&mut text);
 
-    info!("Transforming text and building alphabet file");
+    eprintln!("\tTransforming text and building alphabet file");
     let (char_to_id, alph_size) = transform_text(&mut text);
     let alph_file = BufWriter::new(File::create(output_path.with_extension("alph"))?);
     let _ = serialize_into(alph_file, &char_to_id).unwrap();
-    info!("\tWritten {}", output_path.with_extension("alph").to_str().unwrap());
+    eprintln!("\t\tWritten {}", output_path.with_extension("alph").to_str().unwrap());
 
-    info!("Building counts table");
+    eprintln!("\tBuilding counts table");
     let counts = build_counts(&text, alph_size);
     let counts_file = BufWriter::new(File::create(output_path.with_extension("counts"))?);
     let _ = serialize_into(counts_file, &counts).unwrap();
-    info!("\tWritten {}", output_path.with_extension("counts").to_str().unwrap());
+    eprintln!("\t\tWritten {}", output_path.with_extension("counts").to_str().unwrap());
 
-    info!("Building suffix array");
+    eprintln!("\tBuilding suffix array");
     let mut sa: Vec<i64> = libsais64_rs::sais64(text.clone(), 1)?;
     
-    info!("Building BWT...");
+    eprintln!("\tBuilding BWT...");
     let bwt: Vec<u8> = build_bwt(&text, &sa);
     let bwt_file = BufWriter::new(File::create(output_path.with_extension("bwt"))?);
     bwt_file.into_inner()?.write_all(&bwt)?;
-    info!("\tWritten {}", output_path.with_extension("bwt").to_str().unwrap());
+    eprintln!("\t\tWritten {}", output_path.with_extension("bwt").to_str().unwrap());
     drop(bwt);
 
-    info!("Sampling suffix array");
+    eprintln!("\tSampling suffix array");
     let ssa_occs = sample_sa(&mut sa, sparseness_factor);
     let sa_file: BufWriter<File> = BufWriter::new(File::create(output_path.with_extension("ssa"))?);
     let _ = serialize_into(sa_file, &sa);
-    info!("\tWritten {}", output_path.with_extension("ssa").to_str().unwrap());
+    eprintln!("\t\tWritten {}", output_path.with_extension("ssa").to_str().unwrap());
     let mut ssa_occs_file: BufWriter<File> = BufWriter::new(File::create(output_path.with_extension("ssa_occ"))?);
     for i in 0..ssa_occs.block_len() {
         let _ = ssa_occs.get_block(i).write_block::<_, LittleEndian>(&mut ssa_occs_file);
     }
-    info!("\tWritten {}", output_path.with_extension("ssa_occ").to_str().unwrap());
+    eprintln!("\t\tWritten {}", output_path.with_extension("ssa_occ").to_str().unwrap());
     drop(sa);
     drop(ssa_occs);
 
-    info!("Reversing text...");
+    eprintln!("\tReversing text...");
     text.reverse();
 
-    info!("Building suffix array of reversed text...");
+    eprintln!("\tBuilding suffix array of reversed text...");
     let sa_rev: Vec<i64> = libsais64_rs::sais64(text.clone(), 1)?;
 
-    info!("Building BWT of reversed text...");
+    eprintln!("\tBuilding BWT of reversed text...");
     let bwt_rev: Vec<u8> = build_bwt(&text, &sa_rev);
     let bwt_rev_file = BufWriter::new(File::create(output_path.with_extension("rev.bwt"))?);
     bwt_rev_file.into_inner()?.write_all(&bwt_rev)?;
-    info!("\tWritten {}", output_path.with_extension("rev.bwt").to_str().unwrap());
+    eprintln!("\t\tWritten {}", output_path.with_extension("rev.bwt").to_str().unwrap());
 
     Ok(())
 }
