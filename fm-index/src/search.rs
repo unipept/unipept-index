@@ -10,7 +10,8 @@ use rayon::prelude::*;
 
 pub struct FMOcc {
     pub range: FMIndexRange,
-    pub mismatches: u8
+    pub mismatches: u8,
+    pub match_length: usize
 }
 
 pub struct FMMatchToExplore {
@@ -19,9 +20,15 @@ pub struct FMMatchToExplore {
     pub c: u8
 }
 
-pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: SearchScheme) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FMMatch {
+    pub start_position: usize,
+    pub length: usize
+}
 
-    let matches: HashSet<usize> = patterns
+pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: SearchScheme) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
+
+    let matches: HashSet<FMMatch> = patterns
         .into_par_iter() // Parallel iterator from rayon
         .map(|pattern| approximate_search(fm_index, pattern, &search_scheme))
         .collect::<Result<Vec<_>, _>>()?
@@ -29,17 +36,12 @@ pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme
         .flatten()
         .collect();
 
-    let mut results: HashSet<usize> = HashSet::new();
-    for m in matches.iter() {
-        results.insert(fm_index.locate(*m));
-    }
-
-    Ok(results)
+    Ok(matches)
 }
 
-pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_scheme: &SearchScheme) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
+pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_scheme: &SearchScheme) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
 
-    let mut matches: HashSet<usize> = HashSet::new();
+    let mut matches: HashSet<FMMatch> = HashSet::new();
 
     translate_l_to_i(&mut pattern);
     let pattern = fm_index.map_pattern(&pattern);
@@ -48,14 +50,16 @@ pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_schem
     for search in search_scheme.into_iter() {
 
         let range = FMIndexRange { begin: 0, end: fm_index.len(), begin_rev: 0, end_rev: fm_index.len() };
-        let start_occ = FMOcc { range, mismatches: 0};
+        let start_occ = FMOcc { range, mismatches: 0, match_length: 0 };
 
         let mut occs: Vec<FMOcc> = Vec::new();
 
         approximate_search_rec(&fm_index, search, start_occ, &pattern, 0, &mut occs);
         
         for occ in occs {
-            matches.extend(occ.range.begin..occ.range.end);
+            for pos in occ.range.begin..occ.range.end {
+                let _ = matches.insert(FMMatch { start_position: fm_index.locate(pos), length: occ.match_length });
+            }
         }
     }
 
@@ -92,7 +96,8 @@ fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, patte
 
                 if distance <= search.get_upperbound(idx) && distance >= search.get_lowerbound(idx) {
 
-                    let next_occ = FMOcc { range: current_pos.range, mismatches: distance };
+                    let matched_length: usize = occ.match_length + current_pos.depth;
+                    let next_occ = FMOcc { range: current_pos.range, mismatches: distance, match_length: matched_length };
 
                     if idx == search.len() - 1 {
                         occs.push(next_occ);
