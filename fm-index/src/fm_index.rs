@@ -1,14 +1,12 @@
 use succinct::storage::BlockType;
-use sucds::char_sequences::WaveletMatrix;
-use sucds::int_vectors::CompactVector;
-use sucds::bit_vectors::Rank9Sel;
+use qwt::{QWT256, RankUnsigned, AccessUnsigned};
 use std::error::Error;
 use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector};
 use succinct::rank::Rank9;
 use byteorder::LittleEndian;
 
 use std::fs::{File};
-use std::io::{BufReader, Read};
+use std::io::BufReader;
 use std::path::Path;
 
 use serde::{Serialize, Deserialize};
@@ -33,8 +31,8 @@ impl FMIndexRange {
 }
 
 pub struct FMIndex {
-    bwt: WaveletMatrix<Rank9Sel>,
-    bwt_rev: WaveletMatrix<Rank9Sel>,
+    bwt: QWT256<u8>,
+    bwt_rev: QWT256<u8>,
     counts: Vec<usize>,
     ssa: Vec<i64>,
     ssa_occs: Rank9<BitVector<u64>>,
@@ -43,28 +41,16 @@ pub struct FMIndex {
 
 impl FMIndex {
 
-    fn build_wavelet_matrix(bwt: Vec<u8>) -> Result<WaveletMatrix<Rank9Sel>, Box<dyn Error>> {
-        let mut seq: CompactVector = CompactVector::with_capacity(bwt.len(), 5)?;
-        seq.extend(bwt.into_iter().map(|e| e as usize))?;
-        WaveletMatrix::<Rank9Sel>::new(seq).map_err(|_| "Could not create Wavelet Matrix".into())
-    }
-
     pub fn from_files(base_path: &Path) -> Result<Self, Box<dyn Error>> {
         // Load BWT
         eprintln!("\tLoading BWT...");
-        let mut bwt = Vec::new();
-        BufReader::new(File::open(base_path.with_extension("bwt"))?)
-            .read_to_end(&mut bwt)?;
-        eprintln!("\tBuilding Wavelet matrix for BWT...");
-        let bwt = Self::build_wavelet_matrix(bwt)?;
+        let bwt_file = BufReader::new(File::open(base_path.with_extension("bwt"))?);
+        let bwt: QWT256<u8> = deserialize_from(bwt_file)?;
 
         // Load BWT of reverse text
         eprintln!("\tLoading BWT of reversed text...");
-        let mut bwt_rev = Vec::new();
-        BufReader::new(File::open(base_path.with_extension("rev.bwt"))?)
-            .read_to_end(&mut bwt_rev)?;
-        eprintln!("\tBuilding Wavelet matrix for reverse BWT...");
-        let bwt_rev = Self::build_wavelet_matrix(bwt_rev)?;
+        let bwt_rev_file = BufReader::new(File::open(base_path.with_extension("rev.bwt"))?);
+        let bwt_rev: QWT256<u8> = deserialize_from(bwt_rev_file)?;
 
         // Load SSA
         eprintln!("\tLoading SSA...");
@@ -153,11 +139,11 @@ impl FMIndex {
     }
     
     fn rank(&self, symbol: u8, pos: usize) -> usize {
-        self.bwt.rank(pos, symbol as usize).unwrap()
+        self.bwt.rank(symbol, pos).unwrap()
     }
 
     fn rank_rev(&self, symbol: u8, pos: usize) -> usize {
-        self.bwt_rev.rank(pos, symbol as usize).unwrap()
+        self.bwt_rev.rank(symbol, pos).unwrap()
     }
 
     fn c(&self, symbol: u8) -> usize {
@@ -167,7 +153,7 @@ impl FMIndex {
     pub fn locate(&self, mut i: usize) -> usize {
         let mut steps = 0;
         while !self.ssa_occs.get_bit(i as u64) {
-            let c = self.bwt.access(i).unwrap();
+            let c = self.bwt.get(i).unwrap();
             i = self.lf(c as u8, i);
             steps += 1;
         }

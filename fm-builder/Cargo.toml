@@ -17,3 +17,4 @@ succinct = { version = "0.5" }
 byteorder = "1.5"
 clap = { version = "4.4.8", features = ["derive"] }
 sa-mappings = { path = "../sa-mappings" }
+qwt = { version = "0.3.1", default-features = false }

@@ -2,11 +2,12 @@ use sa_builder::{translate_l_to_i};
 use succinct::storage::BlockType;
 use std::error::Error;
 use std::path::Path;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::fs::{File};
 use succinct::{BitVec, BitVecMut, BitVector};
 use byteorder::LittleEndian;
 use std::mem::drop;
+use qwt::QWT256;
 
 use bincode::serialize_into;
 
@@ -65,9 +66,9 @@ pub fn build_fm(
     let mut sa: Vec<i64> = libsais64_rs::sais64(text.clone(), 1)?;
     
     eprintln!("\tBuilding BWT...");
-    let bwt: Vec<u8> = build_bwt(&text, &sa);
+    let bwt = build_bwt(&text, &sa);
     let bwt_file = BufWriter::new(File::create(output_path.with_extension("bwt"))?);
-    bwt_file.into_inner()?.write_all(&bwt)?;
+    let _ = serialize_into(bwt_file, &bwt).unwrap();
     eprintln!("\t\tWritten {}", output_path.with_extension("bwt").to_str().unwrap());
     drop(bwt);
 
@@ -91,9 +92,9 @@ pub fn build_fm(
     let sa_rev: Vec<i64> = libsais64_rs::sais64(text.clone(), 1)?;
 
     eprintln!("\tBuilding BWT of reversed text...");
-    let bwt_rev: Vec<u8> = build_bwt(&text, &sa_rev);
+    let bwt_rev = build_bwt(&text, &sa_rev);
     let bwt_rev_file = BufWriter::new(File::create(output_path.with_extension("rev.bwt"))?);
-    bwt_rev_file.into_inner()?.write_all(&bwt_rev)?;
+    let _ = serialize_into(bwt_rev_file, &bwt_rev).unwrap();
     eprintln!("\t\tWritten {}", output_path.with_extension("rev.bwt").to_str().unwrap());
 
     Ok(())
@@ -127,10 +128,12 @@ pub fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) -> BitVector {
     ssa_occs
 }
 
-fn build_bwt(text: &Vec<u8>, sa: &Vec<i64>) -> Vec<u8> {
-    sa.iter()
+fn build_bwt(text: &Vec<u8>, sa: &Vec<i64>) -> QWT256<u8> {
+    let bwt: Vec<u8> = sa.iter()
         .map(|&i| if i == 0 { text[text.len() - 1] } else { text[i as usize - 1] })
-        .collect()
+        .collect();
+
+    QWT256::from(bwt)
 }
 
 fn build_counts(text: &Vec<u8>, alph_size: u8) -> Vec<usize> {
