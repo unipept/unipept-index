@@ -51,30 +51,38 @@ impl FMIndex {
 
     pub fn from_files(base_path: &Path) -> Result<Self, Box<dyn Error>> {
         // Load BWT
+        eprintln!("\tLoading BWT...");
         let mut bwt = Vec::new();
         BufReader::new(File::open(base_path.with_extension("bwt"))?)
             .read_to_end(&mut bwt)?;
+        eprintln!("\tBuilding Wavelet matrix for BWT...");
         let bwt = Self::build_wavelet_matrix(bwt)?;
 
         // Load BWT of reverse text
+        eprintln!("\tLoading BWT of reversed text...");
         let mut bwt_rev = Vec::new();
         BufReader::new(File::open(base_path.with_extension("rev.bwt"))?)
             .read_to_end(&mut bwt_rev)?;
+        eprintln!("\tBuilding Wavelet matrix for reverse BWT...");
         let bwt_rev = Self::build_wavelet_matrix(bwt_rev)?;
 
         // Load SSA
+        eprintln!("\tLoading SSA...");
         let ssa_file = BufReader::new(File::open(base_path.with_extension("ssa"))?);
         let ssa: Vec<i64> = deserialize_from(ssa_file)?;
 
         // Load char_to_id mapping
+        eprintln!("\tLoading Alphabet...");
         let alph_file = BufReader::new(File::open(base_path.with_extension("alph"))?);
         let char_to_id: Vec<u8> = deserialize_from(alph_file)?;
 
         // Load counts
+        eprintln!("\tLoading Counts...");
         let counts_file = BufReader::new(File::open(base_path.with_extension("counts"))?);
         let counts: Vec<usize> = deserialize_from(counts_file)?;
 
         // Load SSA occurences
+        eprintln!("\tLoading SSA occurences...");
         let mut ssa_occs_file = BufReader::new(File::open(base_path.with_extension("ssa_occ"))?);
         let mut ssa_occs = BitVector::new();
         loop {
@@ -85,6 +93,7 @@ impl FMIndex {
             }
         }
 
+        eprintln!("\tBuilding Rank support for SSA occurences...");
         // Add rank/select support:
         let ssa_occs = Rank9::new(ssa_occs);
 
