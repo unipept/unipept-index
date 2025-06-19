@@ -35,6 +35,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let duration = start.elapsed();
     eprintln!("Searching done in {:?}", duration);
 
+    eprintln!("There are {} matches", matches.len());
+
     eprintln!("Reporting matches...");
     let mut writer = io::stdout();
     let input_path = Path::new(TEXT_PATH);
