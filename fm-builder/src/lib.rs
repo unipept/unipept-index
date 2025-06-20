@@ -1,3 +1,20 @@
+//! FM-Index Construction
+//!
+//! This module defines the logic for building a bidirectional FM-index from a given
+//! concatenated sequence file (e.g., protein sequences). The FM-index is stored in
+//! multiple serialized components including the BWT, suffix array samples, and
+//! occurrence bit vectors for fast pattern searching.
+//!
+//! Steps include:
+//! - Character normalization (`L` → `I`)
+//! - Text transformation and alphabet mapping
+//! - Suffix array construction (using `libsais64_rs`)
+//! - Burrows-Wheeler Transform (BWT) computation
+//! - Suffix array sampling and serialization
+//! - Bidirectional FM-index support (reversed text)
+//!
+//! This utility is intended to be run as a CLI application, controlled by the [`Arguments`] struct.
+
 use sa_builder::{translate_l_to_i};
 use succinct::storage::BlockType;
 use std::error::Error;
@@ -13,6 +30,10 @@ use bincode::serialize_into;
 
 use clap::Parser;
 
+/// Command-line arguments for the FM-index builder.
+///
+/// This struct defines the parameters accepted from the command line, such as input
+/// and output file paths, and the sparseness factor for suffix array sampling.
 #[derive(Parser, Debug)]
 pub struct Arguments {
     /// File with the proteins used. All the proteins are expected to be
@@ -128,6 +149,14 @@ pub fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) -> BitVector {
     ssa_occs
 }
 
+/// Constructs the Burrows-Wheeler Transform (BWT) from a suffix array.
+///
+/// # Arguments
+/// * `text` - Original input text.
+/// * `sa` - Suffix array built from the text.
+///
+/// # Returns
+/// A `QWT256<u8>` object representing the BWT.
 fn build_bwt(text: &Vec<u8>, sa: &Vec<i64>) -> QWT256<u8> {
     let bwt: Vec<u8> = sa.iter()
         .map(|&i| if i == 0 { text[text.len() - 1] } else { text[i as usize - 1] })
@@ -136,6 +165,14 @@ fn build_bwt(text: &Vec<u8>, sa: &Vec<i64>) -> QWT256<u8> {
     QWT256::from(bwt)
 }
 
+/// Builds the count table used for FM-index rank support.
+///
+/// # Arguments
+/// * `text` - Transformed input text.
+/// * `alph_size` - Size of the reduced alphabet.
+///
+/// # Returns
+/// A vector where `counts[i]` is the number of symbols in the text less than `i`.
 fn build_counts(text: &Vec<u8>, alph_size: u8) -> Vec<usize> {
     let mut freqs = [0usize; 256];
     for &c in text {
@@ -152,6 +189,14 @@ fn build_counts(text: &Vec<u8>, alph_size: u8) -> Vec<usize> {
     counts
 }
 
+/// Transforms the input text into a reduced integer alphabet and remaps characters.
+///
+/// # Arguments
+/// * `text` - The input text to be transformed (modified in-place).
+///
+/// # Returns
+/// A tuple of (char_to_id, alphabet_size), where `char_to_id` maps original characters
+/// to their compressed form.
 fn transform_text(text: &mut Vec<u8>) -> (Vec<u8>, u8) {
     let mut occs = [false; 256];
     for &c in text.iter() {

@@ -1,3 +1,9 @@
+//! Approximate pattern matching using FM-index and search schemes.
+//!
+//! This module implements parallelized approximate matching for multiple patterns
+//! using an FM-index and flexible search schemes. It supports banded dynamic
+//! programming to handle mismatches and provides mechanisms to locate all valid
+//! matches in the indexed text.
 
 use crate::fm_index::{FMIndex, FMIndexRange};
 use crate::search_scheme::{SearchScheme, Search};
@@ -8,24 +14,51 @@ use std::error::Error;
 use rayon::prelude::*;
 
 
+/// Represents an intermediate occurrence in the FM-index search process.
+/// 
+/// - `range`: The range in the FM-index corresponding to the current match.
+/// - `mismatches`: Number of mismatches encountered so far.
+/// - `match_length`: Length of the currently matched segment.
 pub struct FMOcc {
     pub range: FMIndexRange,
     pub mismatches: u8,
     pub match_length: usize
 }
 
+
+/// Represents a partial match extension during the search traversal.
+/// 
+/// - `range`: Current FM-index range for the partial match.
+/// - `depth`: Current depth of the search.
+/// - `c`: Character used to extend the match.
 pub struct FMMatchToExplore {
     pub range: FMIndexRange,
     pub depth: usize,
     pub c: u8
 }
 
+/// Represents a completed match in the text.
+/// 
+/// - `start_position`: The starting position of the match in the original text.
+/// - `length`: The length of the matched substring.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FMMatch {
     pub start_position: usize,
     pub length: usize
 }
 
+/// Searches for multiple patterns in parallel using the provided FM-index and search scheme.
+///
+/// # Arguments
+/// * `fm_index` - Reference to an FMIndex instance.
+/// * `patterns` - A vector of patterns to search for (each as a `Vec<u8>`).
+/// * `search_scheme` - A search scheme guiding the approximate matching.
+///
+/// # Returns
+/// A `Result` containing a set of `FMMatch` if successful, or an error if any occurs.
+///
+/// # Parallelism
+/// Utilizes Rayon to perform each pattern search in parallel.
 pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: SearchScheme) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
 
     let matches: HashSet<FMMatch> = patterns
@@ -39,6 +72,15 @@ pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme
     Ok(matches)
 }
 
+/// Performs approximate pattern matching for a single pattern using a given search scheme.
+///
+/// # Arguments
+/// * `fm_index` - Reference to an FMIndex instance.
+/// * `pattern` - The pattern to search for (as a `Vec<u8>`).
+/// * `search_scheme` - A reference to a search scheme defining the allowed mismatches.
+///
+/// # Returns
+/// A `Result` containing a set of `FMMatch` instances representing matches.
 pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_scheme: &SearchScheme) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
 
     let mut matches: HashSet<FMMatch> = HashSet::new();
@@ -67,6 +109,17 @@ pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_schem
 
 }
 
+/// Recursively performs approximate matching for a segment of the search scheme.
+///
+/// This function extends matches while keeping track of mismatches using a banded matrix.
+///
+/// # Arguments
+/// * `fm_index` - Reference to the FM-index.
+/// * `search` - The current search object defining direction and bounds.
+/// * `occ` - The current partial match state.
+/// * `pattern` - The structured search pattern split by parts.
+/// * `idx_in_search` - Current index in the search scheme.
+/// * `occs` - Accumulator vector for completed occurrences.
 fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, pattern: &SearchPattern, idx_in_search: u8, occs: &mut Vec<FMOcc>) {
     
     let idx = idx_in_search as usize;
@@ -110,6 +163,14 @@ fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, patte
     }
 }
 
+/// Pushes all valid single-character extensions of the current match onto the stack.
+///
+/// # Arguments
+/// * `fm_index` - Reference to the FM-index.
+/// * `range` - Current FM-index range to extend.
+/// * `depth` - Current search depth.
+/// * `stack` - Stack of matches to explore further.
+/// * `direction_left` - Whether to extend leftward or rightward.
 fn extend_match(fm_index: &FMIndex, range: &FMIndexRange, depth: usize, stack: &mut Vec<FMMatchToExplore>, direction_left: bool) {
     let alphabet_size = fm_index.get_alphabet_size();
     for c in 0..alphabet_size {
@@ -125,6 +186,10 @@ fn extend_match(fm_index: &FMIndex, range: &FMIndexRange, depth: usize, stack: &
     }
 }
 
+/// Translates all 'L' characters in a given sequence to 'I'.
+///
+/// # Arguments
+/// * `text` - A mutable slice of bytes representing the sequence to normalize.
 pub fn translate_l_to_i(text: &mut [u8]) {
     for character in text.iter_mut() {
         if *character == b'L' {

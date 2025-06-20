@@ -27,6 +27,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let peptides = BufReader::new(File::open(PEPTIDES_PATH)?)
         .lines()
         .map(|line| Ok(line?.into_bytes()))
+        .filter(|line| match line {
+            Ok(bytes) => bytes.len() >= 8,
+            Err(_) => true
+        })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
 
     eprintln!("Start searching...");

@@ -1,5 +1,20 @@
+//! Module for managing partitioned search patterns.
+//!
+//! `SearchPattern` is used to divide a pattern into evenly (or almost evenly)
+//! distributed parts for multi-phase or parallel search. This is particularly
+//! useful when applying bidirectional or block-based pattern matching algorithms.
+
 use std::error::Error;
 
+/// A pattern split into multiple parts for segmented searching.
+///
+/// `SearchPattern` splits a given byte pattern into approximately equal-length
+/// chunks. This is helpful in FM-index search scenarios where patterns are
+/// extended part by part.
+///
+/// # Fields
+/// - `parts`: Vector of pattern parts, in original order.
+/// - `length`: Total length of the original pattern.
 pub struct SearchPattern {
     parts: Vec<Vec<u8>>,
     length: usize
@@ -7,6 +22,16 @@ pub struct SearchPattern {
 
 impl SearchPattern {
     
+    /// Creates a new `SearchPattern` by splitting a pattern into `parts_amount` segments.
+    ///
+    /// # Arguments
+    /// * `pattern` - A byte vector representing the full pattern to search.
+    /// * `parts_amount` - Number of parts to split the pattern into.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - `parts_amount` is zero.
+    /// - `parts_amount` is greater than the length of the pattern.
     pub fn new(pattern: Vec<u8>, parts_amount: usize) -> Result<Self, Box<dyn Error + Send + Sync>> {
 
         if parts_amount == 0 {
@@ -39,16 +64,29 @@ impl SearchPattern {
 
     }
 
+    /// Returns the part at the given index, optionally reversed.
+    ///
+    /// # Arguments
+    /// * `index` - The index of the part to retrieve.
+    /// * `direction_left` - Whether the part should be reversed for right-to-left search.
+    ///
+    /// # Panics
+    /// Panics if `index` is out of bounds.
     pub fn get_part(&self, index: u8, direction_left: bool) -> Vec<u8> {
         let mut part = self.parts.get(index as usize).unwrap().clone();
         if direction_left { part.reverse() };
         part
     }
 
+    /// Returns the length of the part at the specified index.
+    ///
+    /// # Panics
+    /// Panics if `index` is out of bounds.
     pub fn get_part_len(&self, index: u8) -> usize {
         self.parts.get(index as usize).unwrap().len()
     }
 
+    /// Returns the total length of the original pattern.
     pub fn len(&self) -> usize {
         self.length
     }
