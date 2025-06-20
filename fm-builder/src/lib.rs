@@ -218,3 +218,67 @@ fn transform_text(text: &mut Vec<u8>) -> (Vec<u8>, u8) {
 
     (char_to_id, id)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use qwt::AccessUnsigned;
+
+    #[test]
+    fn test_transform_text_basic() {
+        let mut text = b"BANANA$".to_vec();
+        let (char_to_id, alph_size) = transform_text(&mut text);
+
+        assert_eq!(alph_size, 4); // B, A, N, $
+        for &c in &text {
+            assert!(c < alph_size);
+        }
+
+        // Check that mapping is consistent
+        let mut seen = HashMap::new();
+        let mapped_chars = &[char_to_id[b'B' as usize], char_to_id[b'A' as usize], char_to_id[b'N' as usize], char_to_id[b'$' as usize]];
+        for (orig, &mapped) in b"BAN$".iter().zip(mapped_chars) {
+            seen.insert(*orig, mapped);
+        }
+
+        for (i, &c) in b"BANANA".iter().enumerate() {
+            assert_eq!(text[i], seen[&c]);
+        }
+    }
+
+    #[test]
+    fn test_build_counts_correctness() {
+        let text = vec![2, 0, 1, 1, 0, 2]; // Already transformed
+        let counts = build_counts(&text, 3);
+
+        assert_eq!(counts, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn test_sample_sa_correctness() {
+        let mut sa = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let sparseness_factor = 3;
+
+        let sampled = sample_sa(&mut sa, sparseness_factor);
+
+        // Should retain only values divisible by 3
+        assert_eq!(sa, vec![0, 3, 6, 9]);
+
+        for i in 0..10 {
+            let expected = i % 3 == 0;
+            assert_eq!(sampled.get_bit(i as u64), expected);
+        }
+    }
+
+    #[test]
+    fn test_build_bwt_basic() {
+        let text = b"BANANA$".to_vec();
+        let sa = vec![6, 5, 3, 1, 0, 4, 2]; // Suffix array for "BANANA$"
+        let bwt: QWT256<u8> = build_bwt(&text, &sa);
+        let bwt_vec: Vec<u8> = (0..bwt.len()).map(|i| bwt.get(i).unwrap()).collect();
+
+        assert_eq!(bwt_vec, vec![b'A', b'N', b'N', b'B', b'$', b'A', b'A']);
+    }
+}

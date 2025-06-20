@@ -177,3 +177,101 @@ impl BandedMatrix {
         self[(row, self.columns - 1)]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_matrix_construction_dimensions() {
+        let pattern_size = 5;
+        let width = 2;
+        let bm = BandedMatrix::new(pattern_size, width, 0);
+
+        assert_eq!(bm.columns, pattern_size + 1);
+        assert_eq!(bm.rows, pattern_size + width as usize + 1);
+        assert_eq!(bm.col_per_row, (2 * width + 1) + 2);
+    }
+
+    #[test]
+    fn test_indexing_set_and_get() {
+        let mut bm = BandedMatrix::new(3, 1, 0);
+        bm[(1, 1)] = 42;
+        assert_eq!(bm[(1, 1)], 42);
+    }
+
+    #[test]
+    fn test_initialization_boundary_values() {
+        let bm = BandedMatrix::new(4, 1, 10);
+        assert_eq!(bm[(0, 0)], 10);
+        assert_eq!(bm[(0, 1)], 11);
+        assert_eq!(bm[(1, 0)], 11);
+    }
+
+    #[test]
+    fn test_get_first_column() {
+        let bm = BandedMatrix::new(5, 2, 0);
+        assert_eq!(bm.get_first_column(0), 1);
+        assert_eq!(bm.get_first_column(2), 1);
+        assert_eq!(bm.get_first_column(4), 2);
+    }
+
+    #[test]
+    fn test_get_last_column() {
+        let bm = BandedMatrix::new(5, 2, 0);
+        assert_eq!(bm.get_last_column(0), 2);
+        assert_eq!(bm.get_last_column(3), 5);
+        assert_eq!(bm.get_last_column(5), 5);
+    }
+
+    #[test]
+    fn test_update_matrix_cell_match_and_mismatch() {
+        let mut bm = BandedMatrix::new(3, 1, 0);
+
+        bm[(0, 0)] = 0;
+        bm[(0, 1)] = 1;
+        bm[(1, 0)] = 1;
+
+        let result_match = bm.update_matrix_cell(false, 1, 1);
+        assert_eq!(result_match, 0); // perfect match
+
+        let result_mismatch = bm.update_matrix_cell(true, 1, 1);
+        assert_eq!(result_mismatch, 1); // mismatch penalty
+    }
+
+    #[test]
+    fn test_update_matrix_row_basic() {
+        let mut bm = BandedMatrix::new(3, 1, 0);
+        let pattern = b"ACG".to_vec();
+        let c = b'A';
+
+        let min_score = bm.update_matrix_row(&pattern, 1, c);
+        assert!(min_score <= 1); // match or mismatch score
+    }
+
+    #[test]
+    fn test_update_matrix_row_out_of_bounds() {
+        let mut bm = BandedMatrix::new(2, 1, 0);
+        let pattern = b"AA".to_vec();
+        let result = bm.update_matrix_row(&pattern, 100, b'A');
+        assert_eq!(result, u8::MAX);
+    }
+
+    #[test]
+    fn test_is_final_column_logic() {
+        let bm = BandedMatrix::new(3, 2, 0);
+        assert!(!bm.is_final_column(0));
+        let last_row = 5;
+        assert!(bm.is_final_column(last_row));
+    }
+
+    #[test]
+    fn test_get_value_in_final_column() {
+        let mut bm = BandedMatrix::new(3, 1, 0);
+        let row = 1;
+        let last_col = bm.columns - 1;
+        bm[(row, last_col)] = 7;
+
+        assert_eq!(bm.get_value_in_final_column(row), 7);
+    }
+}

@@ -54,6 +54,24 @@ impl<'a> Iterator for SearchIter<'a> {
 }
 
 impl Search {
+
+    /// Constructs a new `Search` instance.
+    ///
+    /// A `Search` defines the order in which pattern segments are searched, along with
+    /// lower and upper bounds on the number of allowed mismatches for each segment.
+    ///
+    /// # Arguments
+    ///
+    /// * `order` - A vector specifying the order in which pattern parts are searched.
+    ///   Each value is an index into the partitioned pattern.
+    /// * `min_mismatches` - A vector of the same length as `order`, specifying the minimum
+    ///   number of mismatches allowed for each corresponding pattern segment.
+    /// * `max_mismatches` - A vector of the same length as `order`, specifying the maximum
+    ///   number of mismatches allowed for each corresponding pattern segment.
+    pub fn new(order: Vec<u8>, min_mismatches: Vec<u8>, max_mismatches: Vec<u8>) -> Search {
+        Search { order, min_mismatches, max_mismatches }
+    }
+
     /// Returns an iterator over the search parts.
     pub fn iter(&self) -> SearchIter {
         SearchIter {
@@ -164,6 +182,23 @@ pub struct SearchScheme {
 
 impl SearchScheme {
 
+    /// Creates a new `SearchScheme` from a list of individual `Search` objects.
+    ///
+    /// A `SearchScheme` defines a strategy for approximate string matching, where each `Search`
+    /// specifies partitioning and mismatch bounds for searching a pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `searches` - A vector of `Search` instances, each representing one traversal strategy
+    ///   through a partitioned pattern with allowed mismatches.
+    ///
+    /// # Returns
+    ///
+    /// A `SearchScheme` containing the provided `Search` objects.
+    pub fn new(searches: Vec<Search>) -> SearchScheme {
+        SearchScheme { searches }
+    }
+
     /// Loads a `SearchScheme` from a file path.
     ///
     /// # Format
@@ -244,3 +279,156 @@ impl<'a> IntoIterator for &'a SearchScheme {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_search_iter_yields_correct_tuples() {
+        let search = Search {
+            order: vec![0, 1, 2],
+            min_mismatches: vec![0, 1, 1],
+            max_mismatches: vec![1, 2, 3],
+        };
+
+        let results: Vec<_> = search.iter().collect();
+        assert_eq!(results, vec![
+            (0, 0, 1),
+            (1, 1, 2),
+            (2, 1, 3),
+        ]);
+    }
+
+    #[test]
+    fn test_get_direction_left() {
+        let search = Search {
+            order: vec![2, 1, 0],
+            min_mismatches: vec![0, 0, 0],
+            max_mismatches: vec![0, 0, 0],
+        };
+
+        assert_eq!(search.get_direction_left(0), true); // 1 < 2
+        assert_eq!(search.get_direction_left(1), true); // 0 < 1
+    }
+
+    #[test]
+    fn test_upper_lower_bound_access() {
+        let search = Search {
+            order: vec![0, 1],
+            min_mismatches: vec![1, 2],
+            max_mismatches: vec![3, 4],
+        };
+
+        assert_eq!(search.get_upperbound(0), 3);
+        assert_eq!(search.get_lowerbound(1), 2);
+    }
+
+    #[test]
+    fn test_get_part_and_len() {
+        let search = Search {
+            order: vec![1, 2, 3],
+            min_mismatches: vec![0, 0, 0],
+            max_mismatches: vec![0, 0, 0],
+        };
+
+        assert_eq!(search.get_part(1), 2);
+        assert_eq!(search.len(), 3);
+    }
+
+    #[test]
+    fn test_validate_valid_search() {
+        let search = Search {
+            order: vec![1, 2, 0],
+            min_mismatches: vec![0, 1, 2],
+            max_mismatches: vec![1, 2, 3],
+        };
+
+        assert!(search.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_invalid_length_mismatch() {
+        let search = Search {
+            order: vec![0, 1],
+            min_mismatches: vec![0],
+            max_mismatches: vec![1, 2],
+        };
+
+        let err = search.validate().unwrap_err().to_string();
+        assert!(err.contains("Length mismatch"));
+    }
+
+    #[test]
+    fn test_validate_invalid_bounds_order() {
+        let search = Search {
+            order: vec![0, 1, 2],
+            min_mismatches: vec![0, 2, 1], // decreases
+            max_mismatches: vec![1, 3, 2], // decreases
+        };
+
+        let err = search.validate().unwrap_err().to_string();
+        assert!(err.contains("min_mismatches decreased") || err.contains("max_mismatches decreased"));
+    }
+
+    #[test]
+    fn test_validate_non_contiguous_parts() {
+        let search = Search {
+            order: vec![0, 2, 4],
+            min_mismatches: vec![0, 1, 2],
+            max_mismatches: vec![1, 2, 3],
+        };
+
+        let err = search.validate().unwrap_err().to_string();
+        assert!(err.contains("does not border"));
+    }
+
+    #[test]
+    fn test_parse_braced_numbers_valid() {
+        let input = "{1,2,3}";
+        let parsed = SearchScheme::parse_braced_numbers(input).unwrap();
+        assert_eq!(parsed, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_parse_braced_numbers_invalid_format() {
+        let input = "1,2,3";
+        let err = SearchScheme::parse_braced_numbers(input).unwrap_err().to_string();
+        assert!(err.contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_scheme_validate_all_valid() {
+        let search1 = Search {
+            order: vec![0, 1],
+            min_mismatches: vec![0, 1],
+            max_mismatches: vec![1, 2],
+        };
+        let search2 = Search {
+            order: vec![1, 0],
+            min_mismatches: vec![0, 1],
+            max_mismatches: vec![1, 2],
+        };
+
+        let scheme = SearchScheme {
+            searches: vec![search1, search2],
+        };
+
+        assert!(scheme.validate().is_ok());
+    }
+
+    #[test]
+    fn test_scheme_validate_with_invalid_search() {
+        let search = Search {
+            order: vec![0, 2],
+            min_mismatches: vec![0, 1],
+            max_mismatches: vec![1, 2],
+        };
+
+        let scheme = SearchScheme {
+            searches: vec![search],
+        };
+
+        let err = scheme.validate().unwrap_err().to_string();
+        assert!(err.contains("invalid"));
+    }
+}

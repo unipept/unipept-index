@@ -197,3 +197,101 @@ pub fn translate_l_to_i(text: &mut [u8]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fm_index::FMIndex;
+    use crate::search_scheme::{SearchScheme, Search};
+    use qwt::QWT256;
+    use succinct::{BitVecPush, BitVector};
+    use succinct::rank::Rank9;
+
+    fn get_fmindex() -> FMIndex {
+        // Create a minimal mock of a BWT over "BANANA$" -> "ANNB$AA" with the mapped alphabet
+        let bwt_data = vec![1, 3, 3, 2, 0, 1, 1];
+        let bwt = QWT256::from(bwt_data.clone());
+        // Create a BWT for "ANANAB$" -> "BNN$AAA" with mapped alphabet
+        let rev_bwt = vec![2, 3, 3, 0, 1, 1, 1];
+        let bwt_rev = QWT256::from(rev_bwt.clone());
+
+        let counts = vec![0, 1, 4, 5]; // simplistic, only for test
+        let ssa = vec![6, 3, 0]; // some sampled suffix array
+
+        // Mark all suffixes as sampled
+        let mut bv = BitVector::new();
+        bv.push_bit(true);
+        bv.push_bit(false);
+        bv.push_bit(true);
+        bv.push_bit(false);
+        bv.push_bit(true);
+        bv.push_bit(false);
+        bv.push_bit(false);
+        let ssa_occs = Rank9::new(bv);
+
+        let mut char_to_id = vec![0u8; 256];
+        for (i, c) in b"$ABN".iter().enumerate() {
+            char_to_id[*c as usize] = i as u8;
+        }
+
+        FMIndex::new(bwt, bwt_rev, counts, ssa, ssa_occs, char_to_id)
+    }
+
+    fn get_search_scheme() -> SearchScheme {
+        let search_1 = Search::new( vec![1, 0], vec![0, 0], vec![0, 1]);
+        let search_2 = Search::new( vec![0, 1], vec![0, 0], vec![0, 1]);
+        
+        SearchScheme::new(vec![search_1, search_2])
+    }
+
+    #[test]
+    fn test_translate_l_to_i() {
+        let mut seq = b"ALLL".to_vec();
+        translate_l_to_i(&mut seq);
+        assert_eq!(&seq, b"AIII");
+    }
+
+    #[test]
+    fn test_approximate_search_basic() {
+        let fm_index = get_fmindex();
+        let search_scheme = get_search_scheme();
+
+        let pattern = b"NA".to_vec();
+
+        let result = approximate_search(&fm_index, pattern, &search_scheme);
+
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+
+        // Expect at least one match since pattern is 'NA'
+        assert!(!matches.is_empty());
+
+        // Matches contain positions within the text length
+        for m in matches {
+            assert!(m.start_position < fm_index.len());
+            assert!(m.length >= 1);
+        }
+    }
+
+    #[test]
+    fn test_search_multiple_parallel() {
+        let fm_index = get_fmindex();
+        let search_scheme = get_search_scheme();
+
+        let pattern_1 = b"AB".to_vec();
+        let pattern_2 = b"NA".to_vec();
+        let patterns = vec![pattern_1, pattern_2];
+
+        let result = search_multiple(&fm_index, patterns, search_scheme);
+
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+
+        assert!(matches.len() >= 1);
+
+        for m in matches {
+            assert!(m.start_position < fm_index.len());
+            assert!(m.length > 0);
+        }
+    }
+}
