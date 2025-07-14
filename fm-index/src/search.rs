@@ -11,6 +11,7 @@ use crate::search_pattern::SearchPattern;
 use crate::banded_matrix::BandedMatrix;
 use std::collections::HashSet;
 use std::error::Error;
+use std::hash::Hash;
 use rayon::prelude::*;
 
 
@@ -59,15 +60,101 @@ pub struct FMMatch {
 ///
 /// # Parallelism
 /// Utilizes Rayon to perform each pattern search in parallel.
-pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: SearchScheme) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
+pub fn search_multiple(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: &SearchScheme) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
 
-    let matches: HashSet<FMMatch> = patterns
-        .into_par_iter() // Parallel iterator from rayon
-        .map(|pattern| approximate_search(fm_index, pattern, &search_scheme))
-        .collect::<Result<Vec<_>, _>>()?
+    let matches: HashSet<FMMatch> = search_multiple_grouped(fm_index, patterns, search_scheme)?
         .into_iter()
         .flatten()
         .collect();
+
+    Ok(matches)
+}
+
+/// Searches for multiple patterns in parallel using the provided FM-index and search scheme.
+///
+/// # Arguments
+/// * `fm_index` - Reference to an FMIndex instance.
+/// * `patterns` - A vector of patterns to search for (each as a `Vec<u8>`).
+/// * `search_scheme` - A search scheme guiding the approximate matching.
+///
+/// # Returns
+/// A `Result` containing a vector of sets of `FMMatch` if successful, or an error if any occurs.
+/// Each set contains the matches for one pattern.
+///
+/// # Parallelism
+/// Utilizes Rayon to perform each pattern search in parallel.
+pub fn search_multiple_grouped(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, search_scheme: &SearchScheme) -> Result<Vec<HashSet<FMMatch>>, Box<dyn Error + Send + Sync>> {
+    let matches: Vec<HashSet<FMMatch>> = patterns
+        .into_par_iter() // Parallel iterator from rayon
+        .map(|pattern| approximate_search(fm_index, pattern, search_scheme))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(matches)
+}
+
+/// Searches for multiple patterns using exact matching on the FM-index.
+/// 
+/// # Arguments
+/// * `fm_index` - Reference to the FMIndex instance.
+/// * `patterns` - Vector of patterns to search for (each as a `Vec<u8>`).
+/// 
+/// # Returns
+/// A `Result` containing a set of positions (`usize`) in the original text where exact matches start.
+/// 
+/// # Parallelism
+/// Uses Rayon to perform all pattern searches in parallel for increased throughput.
+pub fn search_multiple_exact(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
+    let matches: HashSet<usize> = search_multiple_exact_grouped(fm_index, patterns)?
+        .into_iter()
+        .flatten()
+        .collect();
+
+    Ok(matches)
+}
+
+/// Searches for multiple patterns using exact matching on the FM-index.
+/// 
+/// # Arguments
+/// * `fm_index` - Reference to the FMIndex instance.
+/// * `patterns` - Vector of patterns to search for (each as a `Vec<u8>`).
+/// 
+/// # Returns
+/// A `Result` containing a vector of sets of positions (`usize`) in the original text where exact matches start.
+/// Each set contains the matches for one pattern.
+/// 
+/// # Parallelism
+/// Uses Rayon to perform all pattern searches in parallel for increased throughput.
+pub fn search_multiple_exact_grouped(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<Vec<HashSet<usize>>, Box<dyn Error + Send + Sync>> {
+    let matches: Vec<HashSet<usize>> = patterns
+        .into_par_iter() // Parallel iterator from rayon
+        .map(|pattern| exact_search(fm_index, pattern))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(matches)
+}
+
+
+/// Searches for exact matches of a single pattern in the FM-index.
+/// 
+/// # Arguments
+/// * `fm_index` - Reference to the FMIndex instance.
+/// * `pattern` - The pattern to search (as a `Vec<u8>`).
+/// 
+/// # Returns
+/// A `Result` containing a set of positions (`usize`) where the exact match was found in the original text.
+pub fn exact_search(fm_index: &FMIndex, mut pattern: Vec<u8>) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
+
+    let mut matches: HashSet<usize> = HashSet::new();
+
+    translate_l_to_i(&mut pattern);
+    let pattern = fm_index.map_pattern(&pattern);
+
+    let range = FMIndexRange { begin: 0, end: fm_index.len(), begin_rev: 0, end_rev: 0 };
+    let new_range = fm_index.match_exact(range, pattern);
+
+    for pos in new_range.begin..new_range.end {
+        let _ = matches.insert(fm_index.locate(pos));
+    }
 
     Ok(matches)
 }
@@ -282,7 +369,7 @@ mod tests {
         let pattern_2 = b"NA".to_vec();
         let patterns = vec![pattern_1, pattern_2];
 
-        let result = search_multiple(&fm_index, patterns, search_scheme);
+        let result = search_multiple(&fm_index, patterns, &search_scheme);
 
         assert!(result.is_ok());
         let matches = result.unwrap();
@@ -293,5 +380,49 @@ mod tests {
             assert!(m.start_position < fm_index.len());
             assert!(m.length > 0);
         }
+    }
+
+    #[test]
+    fn test_exact_search_single() {
+        let fm_index = get_fmindex();
+
+        let pattern = b"NA".to_vec(); // should appear in the mock text "BANANA$"
+
+        let result = exact_search(&fm_index, pattern);
+        assert!(result.is_ok());
+
+        let matches = result.unwrap();
+
+        assert!(!matches.is_empty());
+        for pos in matches {
+            assert!(pos < fm_index.len());
+        }
+    }
+
+    #[test]
+    fn test_search_multiple_exact_parallel() {
+        let fm_index = get_fmindex();
+
+        let patterns = vec![
+            b"NA".to_vec(),
+            b"BA".to_vec(),
+            b"AN".to_vec()
+        ];
+
+        let result = search_multiple_exact(&fm_index, patterns);
+        assert!(result.is_ok());
+
+        let matches = result.unwrap();
+        assert!(matches.iter().all(|&pos| pos < fm_index.len()));
+    }
+
+    #[test]
+    fn test_search_multiple_exact_empty() {
+        let fm_index = get_fmindex();
+        let patterns = vec![];
+
+        let result = search_multiple_exact(&fm_index, patterns);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 }

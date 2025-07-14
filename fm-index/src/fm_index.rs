@@ -146,6 +146,38 @@ impl FMIndex {
     pub fn locate_matches(&self, range: FMIndexRange) -> Vec<usize> {
         (range.begin..range.end).map(|i| self.locate(i)).collect()
     }
+
+    /// Performs an exact match search for a given pattern starting from an initial range.
+    ///
+    /// This function applies the backward search algorithm over the FM-index, progressively
+    /// narrowing the search range using LF-mapping for each character in the pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `range` - The initial `FMIndexRange`, typically spanning the full index for full pattern search.
+    /// * `pattern` - The pattern to match, represented as a vector of alphabet-mapped symbols.
+    ///
+    /// # Returns
+    ///
+    /// An `FMIndexRange` representing the new range corresponding to the matched suffixes.
+    /// If the returned range is empty (`range.empty()`), the pattern was not found.
+    /// begin_rev and end_rev of the given FMIndexRange is not adjusted.
+    pub fn match_exact(&self, range: FMIndexRange, pattern: Vec<u8>) -> FMIndexRange {
+
+        let FMIndexRange { mut begin, mut end, begin_rev, end_rev} = range;
+
+        let mut i = 0;
+        while i < pattern.len() && end > begin {
+            let c = pattern[i];
+            begin = self.lf(c, begin);
+            end = self.lf(c, end);
+
+            i += 1;
+        }
+
+        FMIndexRange { begin, end, begin_rev, end_rev }
+
+    }
     
     /// Extends a match range to the left by one character `c` using the LF-mapping.
     ///
@@ -349,5 +381,30 @@ mod tests {
 
         let extended_back = fm.right_extension(c, extended.clone());
         assert!(extended_back.begin <= extended_back.end);
+    }
+
+    #[test]
+    fn test_match_exact() {
+        let fm = get_fmindex();
+
+        let full_range = FMIndexRange {
+            begin: 0,
+            end: fm.len(),
+            begin_rev: 0,
+            end_rev: fm.len(),
+        };
+
+        // Search for "ANA" in "BANANA"
+        let pattern = b"ANA".to_vec();
+        let mapped = fm.map_pattern(&pattern);
+
+        let result_range = fm.match_exact(full_range, mapped);
+
+        // "ANA" occurs twice in "BANANA": at positions 1 and 3
+        assert!(!result_range.empty());
+        let positions = fm.locate_matches(result_range);
+        assert_eq!(positions.len(), 2);
+        assert!(positions.contains(&1));
+        assert!(positions.contains(&3));
     }
 }
