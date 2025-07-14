@@ -61,7 +61,7 @@ fn exact_search(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<(), Box<dy
 fn parameter_search(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<(), Box<dyn Error>> {
 
     let mut search_schemes = vec![None];
-    for i in 0..3 {
+    for i in 1..3 {
         let path_str = format!("../search_schemes/kuch_k+1/{}/searches.txt", i);
         println!("{}", &path_str);
         let searches_path = Path::new(&path_str);
