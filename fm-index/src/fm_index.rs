@@ -46,6 +46,10 @@ impl FMIndexRange {
     pub fn empty(&self) -> bool {
         self.begin >= self.end
     }
+
+    pub fn len(&self) -> usize {
+        self.end - self.begin
+    }
 }
 
 /// FM-index structure.
@@ -162,7 +166,7 @@ impl FMIndex {
     /// An `FMIndexRange` representing the new range corresponding to the matched suffixes.
     /// If the returned range is empty (`range.empty()`), the pattern was not found.
     /// begin_rev and end_rev of the given FMIndexRange is not adjusted.
-    pub fn match_exact(&self, range: FMIndexRange, pattern: Vec<u8>) -> FMIndexRange {
+    pub fn match_exact(&self, range: FMIndexRange, pattern: &Vec<u8>) -> FMIndexRange {
 
         let FMIndexRange { mut begin, mut end, begin_rev, end_rev} = range;
 
@@ -398,7 +402,7 @@ mod tests {
         let pattern = b"ANA".to_vec();
         let mapped = fm.map_pattern(&pattern);
 
-        let result_range = fm.match_exact(full_range, mapped);
+        let result_range = fm.match_exact(full_range, &mapped);
 
         // "ANA" occurs twice in "BANANA": at positions 1 and 3
         assert!(!result_range.empty());

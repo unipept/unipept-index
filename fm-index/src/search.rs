@@ -99,12 +99,12 @@ pub fn search_multiple_grouped(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, searc
 /// * `patterns` - Vector of patterns to search for (each as a `Vec<u8>`).
 /// 
 /// # Returns
-/// A `Result` containing a set of positions (`usize`) in the original text where exact matches start.
+/// A `Result` containing a set of positions (`FMMatch`) in the original text where exact matches start.
 /// 
 /// # Parallelism
 /// Uses Rayon to perform all pattern searches in parallel for increased throughput.
-pub fn search_multiple_exact(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
-    let matches: HashSet<usize> = search_multiple_exact_grouped(fm_index, patterns)?
+pub fn search_multiple_exact(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
+    let matches: HashSet<FMMatch> = search_multiple_exact_grouped(fm_index, patterns)?
         .into_iter()
         .flatten()
         .collect();
@@ -119,13 +119,13 @@ pub fn search_multiple_exact(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Resu
 /// * `patterns` - Vector of patterns to search for (each as a `Vec<u8>`).
 /// 
 /// # Returns
-/// A `Result` containing a vector of sets of positions (`usize`) in the original text where exact matches start.
+/// A `Result` containing a vector of sets of positions (`FMMatch`) in the original text where exact matches start.
 /// Each set contains the matches for one pattern.
 /// 
 /// # Parallelism
 /// Uses Rayon to perform all pattern searches in parallel for increased throughput.
-pub fn search_multiple_exact_grouped(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<Vec<HashSet<usize>>, Box<dyn Error + Send + Sync>> {
-    let matches: Vec<HashSet<usize>> = patterns
+pub fn search_multiple_exact_grouped(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<Vec<HashSet<FMMatch>>, Box<dyn Error + Send + Sync>> {
+    let matches: Vec<HashSet<FMMatch>> = patterns
         .into_par_iter() // Parallel iterator from rayon
         .map(|pattern| exact_search(fm_index, pattern))
         .collect::<Result<Vec<_>, _>>()?;
@@ -141,19 +141,19 @@ pub fn search_multiple_exact_grouped(fm_index: &FMIndex, patterns: Vec<Vec<u8>>)
 /// * `pattern` - The pattern to search (as a `Vec<u8>`).
 /// 
 /// # Returns
-/// A `Result` containing a set of positions (`usize`) where the exact match was found in the original text.
-pub fn exact_search(fm_index: &FMIndex, mut pattern: Vec<u8>) -> Result<HashSet<usize>, Box<dyn Error + Send + Sync>> {
+/// A `Result` containing a set of positions (`FMMatch`) where the exact match was found in the original text.
+pub fn exact_search(fm_index: &FMIndex, mut pattern: Vec<u8>) -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
 
-    let mut matches: HashSet<usize> = HashSet::new();
+    let mut matches: HashSet<FMMatch> = HashSet::new();
 
     translate_l_to_i(&mut pattern);
     let pattern = fm_index.map_pattern(&pattern);
 
     let range = FMIndexRange { begin: 0, end: fm_index.len(), begin_rev: 0, end_rev: 0 };
-    let new_range = fm_index.match_exact(range, pattern);
+    let new_range = fm_index.match_exact(range, &pattern);
 
     for pos in new_range.begin..new_range.end {
-        let _ = matches.insert(fm_index.locate(pos));
+        let _ = matches.insert(FMMatch { start_position: fm_index.locate(pos), length: pattern.len() });
     }
 
     Ok(matches)
@@ -395,7 +395,7 @@ mod tests {
 
         assert!(!matches.is_empty());
         for pos in matches {
-            assert!(pos < fm_index.len());
+            assert!(pos.start_position < fm_index.len());
         }
     }
 
@@ -413,7 +413,7 @@ mod tests {
         assert!(result.is_ok());
 
         let matches = result.unwrap();
-        assert!(matches.iter().all(|&pos| pos < fm_index.len()));
+        assert!(matches.iter().all(|&pos| pos.start_position < fm_index.len()));
     }
 
     #[test]
