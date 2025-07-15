@@ -79,6 +79,23 @@ impl SearchPattern {
         part
     }
 
+    /// Returns the character at the given part and char index, taking the search direction into account.
+    ///
+    /// # Arguments
+    /// * `index` - The part index in which the character is.
+    /// * `direction_left` - Whether the part is search from right to left or not.
+    ///
+    /// # Panics
+    /// Panics if `index` is out of bounds.
+    pub fn get_c(&self, index: u8, direction_left: bool, c_idx: u8) -> u8 {
+        let part = self.parts.get(index as usize).unwrap().clone();
+        if direction_left { 
+            part[part.len() - 1 - c_idx as usize]
+        } else {
+            part[c_idx as usize]
+        }
+    }
+
     /// Returns the length of the part at the specified index.
     ///
     /// # Panics

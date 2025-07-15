@@ -93,6 +93,9 @@ impl Search {
 
     /// Gets the maximum number of mismatches allowed at the specified part index.
     pub fn get_upperbound(&self, idx: usize) -> u8 {
+        if idx == self.max_mismatches.len() {
+            return self.max_mismatches[idx-1];
+        }
         self.max_mismatches[idx]
     }
 

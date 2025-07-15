@@ -20,6 +20,7 @@ use rayon::prelude::*;
 /// - `range`: The range in the FM-index corresponding to the current match.
 /// - `mismatches`: Number of mismatches encountered so far.
 /// - `match_length`: Length of the currently matched segment.
+#[derive(Clone)]
 pub struct FMOcc {
     pub range: FMIndexRange,
     pub mismatches: u8,
@@ -183,7 +184,7 @@ pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_schem
 
         let mut occs: Vec<FMOcc> = Vec::new();
 
-        approximate_search_rec(&fm_index, search, start_occ, &pattern, 0, &mut occs);
+        approximate_search_rec(&fm_index, search, start_occ, &pattern, 0, 0, &mut occs);
         
         for occ in occs {
             for pos in occ.range.begin..occ.range.end {
@@ -196,6 +197,7 @@ pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_schem
 
 }
 
+
 /// Recursively performs approximate matching for a segment of the search scheme.
 ///
 /// This function extends matches while keeping track of mismatches using a banded matrix.
@@ -207,44 +209,66 @@ pub fn approximate_search(fm_index: &FMIndex, mut pattern: Vec<u8>, search_schem
 /// * `pattern` - The structured search pattern split by parts.
 /// * `idx_in_search` - Current index in the search scheme.
 /// * `occs` - Accumulator vector for completed occurrences.
-fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, pattern: &SearchPattern, idx_in_search: u8, occs: &mut Vec<FMOcc>) {
-    
-    let idx = idx_in_search as usize;
-    let direction = search.get_direction_left(idx);
-    let part_idx = search.get_part(idx);
+fn approximate_search_rec(fm_index: &FMIndex, search: &Search, occ: FMOcc, pattern: &SearchPattern, part_in_search: u8, c_idx: u8, occs: &mut Vec<FMOcc>) {
 
-    let part_size = pattern.get_part_len(part_idx);
-    let width = search.get_upperbound(idx) - occ.mismatches;
-    let mut bandedmatrix = BandedMatrix::new(part_size, width, occ.mismatches);
+    let mut part_in_search = part_in_search as usize;
+    let mut c_idx = c_idx;
 
-    let mut stack: Vec<FMMatchToExplore> = Vec::with_capacity(fm_index.get_alphabet_size() as usize * pattern.len());
-    extend_match(fm_index, &occ.range, 0, &mut stack, direction);
+    if occ.mismatches > search.get_upperbound(part_in_search) {
+        return;
+    }
 
-    while !stack.is_empty() {
+    if search.len() != part_in_search && pattern.get_part_len(search.get_part(part_in_search)) == c_idx as usize {
+        part_in_search += 1;
+        c_idx = 0;
+    }
 
-        let current_pos = stack.pop().unwrap();
+    let alphabet_size = fm_index.get_alphabet_size();
 
-        let part: &Vec<u8> = &pattern.get_part(search.get_part(idx), direction);
-        let mismatches = bandedmatrix.update_matrix_row(part, current_pos.depth, current_pos.c);
-        if mismatches <= search.get_upperbound(idx) {
+    if search.len() == part_in_search {
+        occs.push(occ.clone());
 
-            extend_match(fm_index, &current_pos.range, current_pos.depth, &mut stack, direction);
+        let direction_left = search.get_direction_left(part_in_search - 1 as usize);
+        for c in 0..alphabet_size {
+            let new_range = if direction_left { 
+                fm_index.left_extension(c, occ.range.clone())
+            } else {
+                fm_index.right_extension(c, occ.range.clone())
+            };
 
-            if bandedmatrix.is_final_column(current_pos.depth) {
+            if ! new_range.empty() {
+                // Change interval and increase mismatches and match length => insertion
+                approximate_search_rec(fm_index, search, FMOcc { range: new_range.clone(), mismatches: occ.mismatches + 1, match_length: occ.match_length + 1 }, pattern, part_in_search as u8, c_idx, occs);
+            }
+        }
 
-                let distance: u8 = bandedmatrix.get_value_in_final_column(current_pos.depth);
+        return;
+    }
 
-                if distance <= search.get_upperbound(idx) && distance >= search.get_lowerbound(idx) {
+    let part_idx = search.get_part(part_in_search);
+    let direction_left = search.get_direction_left(part_idx as usize);
+    let c_to_match: u8 = pattern.get_c(part_idx, direction_left, c_idx);
 
-                    let matched_length: usize = occ.match_length + current_pos.depth;
-                    let next_occ = FMOcc { range: current_pos.range, mismatches: distance, match_length: matched_length };
+    // Do not change the interval and increase matched pattern => deletion
+    approximate_search_rec(fm_index, search, FMOcc { range: occ.range.clone(), mismatches: occ.mismatches + 1, match_length: occ.match_length }, pattern, part_in_search as u8, c_idx + 1, occs);
 
-                    if idx == search.len() - 1 {
-                        occs.push(next_occ);
-                    } else {
-                        approximate_search_rec(fm_index, search, next_occ, pattern, idx_in_search + 1, occs);
-                    }
-                }
+    for c in 0..alphabet_size {
+        let new_range = if direction_left { 
+            fm_index.left_extension(c, occ.range.clone())
+        } else {
+            fm_index.right_extension(c, occ.range.clone())
+        };
+
+        if ! new_range.empty() {
+            // Change interval and increase mismatches and match length => insertion
+            approximate_search_rec(fm_index, search, FMOcc { range: new_range.clone(), mismatches: occ.mismatches + 1, match_length: occ.match_length + 1 }, pattern, part_in_search as u8, c_idx, occs);
+
+            if c_to_match == c {
+                // Match
+                approximate_search_rec(fm_index, search, FMOcc { range: new_range, mismatches: occ.mismatches, match_length: occ.match_length + 1 }, pattern, part_in_search as u8, c_idx + 1, occs);
+            } else {
+                // Mismatch
+                approximate_search_rec(fm_index, search, FMOcc { range: new_range, mismatches: occ.mismatches + 1, match_length: occ.match_length + 1 }, pattern, part_in_search as u8, c_idx + 1, occs);
             }
         }
     }
