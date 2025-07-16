@@ -171,9 +171,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut sorted_matches: Vec<_> = matches_per_ed[ed as usize].clone().into_iter().collect();
         sorted_matches.sort_by_key(|m| m.start_position);
 
+        let mut matches_intext: HashSet<&str> = HashSet::new();
         for m in sorted_matches {
             let end = m.start_position + m.length;
-            writeln!(writer, "{}", &text[m.start_position..end])?;
+            let _ = matches_intext.insert(&text[m.start_position..end]);
+        }
+
+        for m in matches_intext {
+            writeln!(writer, "{}", m)?;
         }
     }
     
