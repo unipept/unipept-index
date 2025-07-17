@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::Path;
 use fm_index::search_scheme::SearchScheme;
 use fm_index::fm_index::FMIndex;
-use fm_index::search::{search_multiple, search_multiple_exact, search_multiple_exact_grouped, search_multiple_grouped, FMMatch};
+use fm_index::search::{search_multiple, search_multiple_exact, search_multiple_exact_grouped, search_multiple_grouped, search_multiple_unique, FMMatch};
 use std::error::Error;
 use std::io::{BufRead, Write, self};
 use std::time::Instant;
@@ -126,7 +126,7 @@ fn parameter_search_in_text(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, ed: i32)
     eprintln!("Start searching for ED {}...", ed);
     let start = Instant::now();
     let matches = match search_scheme {
-        Some(scheme) => search_multiple(fm_index, patterns.clone(), &scheme).map_err(|e| e as Box<dyn Error>)?,
+        Some(scheme) => search_multiple_unique(fm_index, patterns.clone(), &scheme).map_err(|e| e as Box<dyn Error>)?,
         None => search_multiple_exact(fm_index, patterns.clone()).map_err(|e| e as Box<dyn Error>)?
     };
     
