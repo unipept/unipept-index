@@ -170,13 +170,13 @@ impl FMIndex {
 
         let FMIndexRange { mut begin, mut end, begin_rev, end_rev} = range;
 
-        let mut i = 0;
-        while i < pattern.len() && end > begin {
-            let c = pattern[i];
+        let mut i: i32 = (pattern.len() - 1) as i32;
+        while i >= 0 && end > begin {
+            let c = pattern[i as usize];
             begin = self.lf(c, begin);
             end = self.lf(c, end);
 
-            i += 1;
+            i -= 1;
         }
 
         FMIndexRange { begin, end, begin_rev, end_rev }
