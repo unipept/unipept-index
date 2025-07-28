@@ -48,6 +48,42 @@ pub struct FMMatch {
     pub length: usize
 }
 
+
+pub fn search_multiple_casanovo(fm_index: &FMIndex, patterns: Vec<Vec<u8>>)  -> Result<HashSet<FMMatch>, Box<dyn Error + Send + Sync>> {
+    let all_patterns = transform_patterns(patterns);
+
+    let matches: HashSet<FMMatch> = search_multiple_exact_grouped(fm_index, all_patterns)?
+        .into_iter()
+        .flatten()
+        .collect();
+
+    Ok(matches)
+}
+
+fn transform_patterns(patterns: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    let mut result = Vec::with_capacity(patterns.len() * 3); 
+
+    for pattern in patterns {
+        let mut transformed_first = pattern.clone();
+        let mut transformed_last = pattern.clone();
+
+        // Invert the first 3 elements (if available)
+        transformed_first[0] = pattern[2];
+        transformed_first[2] = pattern[0];
+
+        let length = pattern.len();
+        transformed_last[length-1] = pattern[length-3];
+        transformed_last[length-3] = pattern[length-1];
+
+        // Push original and transformed versions
+        result.push(pattern);
+        result.push(transformed_first);
+        result.push(transformed_last);
+    }
+
+    result
+}
+
 /// Searches for multiple patterns in parallel using the provided FM-index and search scheme.
 ///
 /// # Arguments

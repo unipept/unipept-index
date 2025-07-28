@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::Path;
 use fm_index::search_scheme::SearchScheme;
 use fm_index::fm_index::FMIndex;
-use fm_index::search::{search_multiple, search_multiple_exact, search_multiple_exact_grouped, search_multiple_grouped, search_multiple_unique, FMMatch};
+use fm_index::search::{search_multiple, search_multiple_casanovo, search_multiple_exact, search_multiple_exact_grouped, search_multiple_grouped, search_multiple_unique, FMMatch};
 use std::error::Error;
 use std::io::{BufRead, Write, self};
 use std::time::Instant;
@@ -45,6 +45,24 @@ fn exact_search(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<(), Box<dy
     eprintln!("Start searching...");
     let start = Instant::now();
     let matches = search_multiple_exact(&fm_index, patterns).map_err(|e| e as Box<dyn Error>)?;
+    let duration = start.elapsed();
+    eprintln!("Searching done in {:?}", duration);
+
+    eprintln!("There are {} matches", matches.len());
+
+    eprintln!("Reporting matches...");
+    let mut writer = io::stdout();
+    for m in matches {
+        writeln!(writer, "{}", m.start_position)?;
+    }
+
+    Ok(())
+}
+
+fn casanovo_search(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<(), Box<dyn Error>> {
+    eprintln!("Start searching...");
+    let start = Instant::now();
+    let matches = search_multiple_casanovo(&fm_index, patterns).map_err(|e| e as Box<dyn Error>)?;
     let duration = start.elapsed();
     eprintln!("Searching done in {:?}", duration);
 
@@ -108,7 +126,7 @@ fn parameter_search(fm_index: &FMIndex, patterns: Vec<Vec<u8>>) -> Result<(), Bo
     Ok(())
 }
 
-fn parameter_search_in_text(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, ed: i32) -> Result<HashSet<FMMatch>, Box<dyn Error>> {
+fn search_in_text(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, ed: i32) -> Result<HashSet<FMMatch>, Box<dyn Error>> {
 
     let mut search_scheme = None;
     if ed > 0 {
@@ -137,7 +155,7 @@ fn parameter_search_in_text(fm_index: &FMIndex, patterns: Vec<Vec<u8>>, ed: i32)
 }
 
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn parameter_search_in_text() -> Result<(), Box<dyn Error>> {
 
     let args: Vec<String> = env::args().collect();
     let output_base = &args[1];
@@ -155,7 +173,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let max_ed=2;
     let mut matches_per_ed: Vec<HashSet<FMMatch>> = Vec::new();
     for ed in 0..=max_ed {
-        matches_per_ed.push(parameter_search_in_text(&fm_index, patterns.clone(), ed)?);
+        matches_per_ed.push(search_in_text(&fm_index, patterns.clone(), ed)?);
     }
     
     drop(fm_index);
@@ -184,4 +202,63 @@ fn main() -> Result<(), Box<dyn Error>> {
     
 
     Ok(())
+}
+
+fn casanovo_search_in_text() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = env::args().collect();
+    let output_base = &args[1];
+
+    let base_path = Path::new(FM_PATH);
+    eprintln!("Start loading index...");
+    let fm_index = FMIndex::from_files(base_path)?;
+    eprintln!("Index loaded");
+
+    let patterns = BufReader::new(File::open(PEPTIDES_PATH)?)
+        .lines()
+        .map(|line| Ok(line?.into_bytes()))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+
+    let matches = search_multiple_exact(&fm_index, patterns.clone()).unwrap();
+    let matches_casanovo = search_multiple_casanovo(&fm_index, patterns).unwrap();
+    
+    drop(fm_index);
+
+    eprintln!("Reporting matches...");
+    let output_path = format!("{}_exact.txt", output_base);
+    let output_path_exact = Path::new(&output_path);
+    let output_path = format!("{}_casanovo.txt", output_base);
+    let output_path_casanovo = Path::new(&output_path);
+
+    let mut writer_exact = File::create(output_path_exact)?;
+    let mut writer_casanovo = File::create(output_path_casanovo)?;
+    let input_path = Path::new(TEXT_PATH);
+    let text = String::from_utf8(fs::read(input_path)?)?;
+
+    let mut sorted_matches: Vec<_> = matches.clone().into_iter().collect();
+    sorted_matches.sort_by_key(|m| m.start_position);
+    let mut matches_intext: HashSet<&str> = HashSet::new();
+    for m in sorted_matches {
+        let end = m.start_position + m.length;
+        let _ = matches_intext.insert(&text[m.start_position..end]);
+    }
+    for m in matches_intext {
+        writeln!(writer_exact, "{}", m)?;
+    }
+
+    let mut sorted_matches: Vec<_> = matches_casanovo.clone().into_iter().collect();
+    sorted_matches.sort_by_key(|m| m.start_position);
+    let mut matches_intext: HashSet<&str> = HashSet::new();
+    for m in sorted_matches {
+        let end = m.start_position + m.length;
+        let _ = matches_intext.insert(&text[m.start_position..end]);
+    }
+    for m in matches_intext {
+        writeln!(writer_casanovo, "{}", m)?;
+    }
+
+    Ok(())
+}
+
+fn main () -> Result<(), Box<dyn Error>> {
+    casanovo_search_in_text()
 }
