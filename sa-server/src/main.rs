@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fs::File,
     io::{BufReader, Read},
-    sync::Arc
+    sync::Arc, usize
 };
 
 use axum::{
@@ -90,6 +90,13 @@ async fn search(
     Ok(Json(search_result))
 }
 
+static FM_PATH: &str = "../test_files/uniprot";
+static SEARCH_SCHEME_PATH: &str = "../search_schemes/kuch_k+1/1/searches.txt";
+static PEPTIDES_PATH: &str = "../test_files/casanovo_peptides_1000.txt";
+static TEXT_PATH: &str = "../test_files/uniprot_entries.100k.txt";
+use std::time::Instant;
+use std::io::{BufRead, Write, self};
+use std::collections::HashSet;
 /// Starts the server with the provided commandline arguments
 ///
 /// # Arguments
@@ -120,8 +127,29 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
 
+    let patterns = BufReader::new(File::open(PEPTIDES_PATH)?)
+        .lines()
+        .map(|line| Ok(line?.into_bytes()))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+
+    eprintln!("Start searching...");
+    let start = Instant::now();
+    let matches = patterns.into_iter() // Parallel iterator from rayon
+        .map(|pattern| {
+            let matches = searcher.search_matching_suffixes(&pattern, usize::MAX, true, false);
+            match matches {
+                sa_index::sa_searcher::SearchAllSuffixesResult::SearchResult(positions) => positions,
+                _ => vec![]
+            }
+}       ).flatten()
+        .collect::<HashSet<i64>>();
+    let duration = start.elapsed();
+    eprintln!("Searching done in {:?}", duration);
+
+    eprintln!("There are {} matches", matches.len());
+
     // build our application with a route
-    let app = Router::new()
+    /*let app = Router::new()
         .route("/search", post(search))
         .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))
         .with_state(searcher);
@@ -130,7 +158,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     eprintln!();
     eprintln!("🚀 Server is ready...");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app).await?;*/
 
     Ok(())
 }
