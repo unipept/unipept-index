@@ -329,15 +329,18 @@ impl Searcher {
     ) -> SearchAllSuffixesResult {
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
-        for (i, &character) in search_string.iter().enumerate() {
-            if character == b'I' || character == b'L' {
-                il_locations.push(i);
+        // Optimization: Skip populating il_locations if equate_il is true, as they are not used.
+        if !equate_il {
+            for (i, &character) in search_string.iter().enumerate() {
+                if character == b'I' || character == b'L' {
+                    il_locations.push(i);
+                }
             }
         }
 
         let mut skip: usize = 0;
+        let mut il_locations_start = 0;
         while skip < self.sa.sample_rate() as usize {
-            let mut il_locations_start = 0;
             while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip {
                 il_locations_start += 1;
             }
@@ -794,4 +797,5 @@ mod tests {
         let found_suffixes_2 = searcher.search_matching_suffixes(b"APAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_2, SearchAllSuffixesResult::SearchResult(vec![9]));
     }
+
 }
