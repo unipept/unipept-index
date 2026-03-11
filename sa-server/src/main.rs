@@ -115,7 +115,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     eprintln!();
     eprintln!("Started loading the proteins...");
-    let proteins = load_proteins_file(&database_file, mmap)?;
+    let proteins = load_proteins_file(&database_file)?;
     eprintln!("Successfully loaded the proteins!");
 
     let searcher = Arc::new(BitVecSearcher::new(suffix_array, proteins));

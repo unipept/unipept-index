@@ -8,7 +8,7 @@ use sa_mappings::proteins::Proteins;
 
 pub fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray, Box<dyn Error>> {
     if use_mmap {
-        load_suffix_array_mmap(std::path::Path::new(file))?;
+        return load_suffix_array_mmap(std::path::Path::new(file));
     }
 
     let mut sa_file = File::open(file)?;
@@ -27,6 +27,6 @@ pub fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray,
     }
 }
 
-pub fn load_proteins_file(file: &str, use_mmap: bool) -> Result<Proteins, Box<dyn Error>> {
-    Proteins::try_from_binary_file(&file, use_mmap)
+pub fn load_proteins_file(file: &str) -> Result<Proteins, Box<dyn Error>> {
+    Proteins::load_from_binary(file)
 }

@@ -541,7 +541,7 @@ mod tests {
         let input_string = "AI-CLACVAA-AC-KCRLY$";
         let text = ProteinText::from_string(input_string);
 
-        Proteins::InMemory {
+        Proteins {
             text,
             proteins: vec![
                 Protein {
@@ -662,7 +662,7 @@ mod tests {
         let input_string = "LMPYY$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins::InMemory {
+        let proteins = Proteins {
             text,
             proteins: vec![Protein {
                 uniprot_id: String::new(),
@@ -685,7 +685,7 @@ mod tests {
         let input_string = "AAILLL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins::InMemory {
+        let proteins = Proteins {
             text,
             proteins: vec![Protein {
                 uniprot_id: String::new(),
@@ -707,7 +707,7 @@ mod tests {
         let input_string = "IIIILL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins::InMemory {
+        let proteins = Proteins {
             text,
             proteins: vec![Protein {
                 uniprot_id: String::new(),
@@ -729,7 +729,7 @@ mod tests {
         let input_string = "IIIILL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins::InMemory {
+        let proteins = Proteins {
             text,
             proteins: vec![Protein {
                 uniprot_id: String::new(),
@@ -753,7 +753,7 @@ mod tests {
         let input_string = "IILLLL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins::InMemory {
+        let proteins = Proteins {
             text,
             proteins: vec![Protein {
                 uniprot_id: String::new(),
@@ -776,7 +776,7 @@ mod tests {
         let input_string = "PAA-AAKPKAPAA$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins::InMemory {
+        let proteins = Proteins {
             text,
             proteins: vec![Protein {
                 uniprot_id: String::new(),

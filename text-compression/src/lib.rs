@@ -5,7 +5,6 @@ use std::{
 };
 
 use bitarray::{Binary, BitArray, data_to_writer};
-use memmap2::Mmap;
 
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
 fn bit_array_byte_size(text_length: usize) -> usize {
@@ -14,27 +13,13 @@ fn bit_array_byte_size(text_length: usize) -> usize {
 }
 
 /// Structure representing the proteins, stored in a bit array using 5 bits per amino acid.
-pub enum ProteinText {
-    /// In-memory representation backed by a `BitArray`.
-    InMemory {
-        /// Bit array holding the sequence of amino acids
-        bit_array: BitArray,
-        /// Hashmap storing the mapping between the character as `u8` and a 5 bit number.
-        char_to_5bit: HashMap<u8, u8>,
-        /// Vector storing the mapping between the 5 bit number and the character as `u8`.
-        bit5_to_char: Vec<u8>
-    },
-    /// Memory-mapped representation: reads 5-bit values directly from a mapped file.
-    MmapBacked {
-        /// The memory-mapped file backing the data.
-        mmap: Mmap,
-        /// Byte offset within the mmap where the BitArray data begins.
-        data_offset: usize,
-        /// Number of amino acids stored.
-        len: usize,
-        /// Vector storing the mapping between the 5 bit number and the character as `u8`.
-        bit5_to_char: Vec<u8>
-    }
+pub struct ProteinText {
+    /// Bit array holding the sequence of amino acids
+    bit_array: BitArray,
+    /// Hashmap storing the mapping between the character as `u8` and a 5 bit number.
+    char_to_5bit: HashMap<u8, u8>,
+    /// Vector storing the mapping between the 5 bit number and the character as `u8`.
+    bit5_to_char: Vec<u8>
 }
 
 impl ProteinText {
@@ -84,7 +69,7 @@ impl ProteinText {
             bit_array.set(i, char_5bit as u64);
         }
 
-        Self::InMemory { bit_array, char_to_5bit, bit5_to_char }
+        Self { bit_array, char_to_5bit, bit5_to_char }
     }
 
     /// Creates the compressed text from a vector.
@@ -106,7 +91,7 @@ impl ProteinText {
             bit_array.set(i, char_5bit as u64);
         }
 
-        Self::InMemory { bit_array, char_to_5bit, bit5_to_char }
+        Self { bit_array, char_to_5bit, bit5_to_char }
     }
 
     /// Creates the compressed text from a bit array.
@@ -120,7 +105,7 @@ impl ProteinText {
     pub fn new(bit_array: BitArray) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
-        Self::InMemory { bit_array, char_to_5bit, bit5_to_char }
+        Self { bit_array, char_to_5bit, bit5_to_char }
     }
 
     /// Creates an instance of `ProteinText` with a given capacity.
@@ -144,51 +129,16 @@ impl ProteinText {
     ///
     /// the character at position `index` as `u8`.
     pub fn get(&self, index: usize) -> u8 {
-        match self {
-            ProteinText::InMemory { bit_array, bit5_to_char, .. } => {
-                let char_5bit = bit_array.get(index) as usize;
-                bit5_to_char[char_5bit]
-            }
-            ProteinText::MmapBacked { mmap, data_offset, bit5_to_char, .. } => {
-                const BITS_PER_VALUE: usize = 5;
-                const MASK: u64 = (1u64 << BITS_PER_VALUE) - 1;
-                let bit_offset = index * BITS_PER_VALUE;
-                let start_block = bit_offset / 64;
-                let start_block_offset = bit_offset % 64;
-                let block_byte_offset = data_offset + start_block * 8;
-
-                let bytes: [u8; 8] = mmap[block_byte_offset..block_byte_offset + 8].try_into().unwrap();
-                let start_val = u64::from_le_bytes(bytes);
-
-                let char_5bit = if start_block_offset + BITS_PER_VALUE <= 64 {
-                    ((start_val >> (64 - start_block_offset - BITS_PER_VALUE)) & MASK) as usize
-                } else {
-                    let end_block_offset = (index + 1) * BITS_PER_VALUE % 64;
-                    let bytes: [u8; 8] = mmap[block_byte_offset + 8..block_byte_offset + 16].try_into().unwrap();
-                    let end_val = u64::from_le_bytes(bytes);
-                    let a = start_val << end_block_offset;
-                    let b = end_val >> (64 - end_block_offset);
-                    ((a | b) & MASK) as usize
-                };
-
-                bit5_to_char[char_5bit]
-            }
-        }
+        let char_5bit = self.bit_array.get(index) as usize;
+        self.bit5_to_char[char_5bit]
     }
 
-    /// Set the character at a given index. Only valid for `InMemory` variant.
+    /// Set the character at a given index.
     pub fn set(&mut self, index: usize, value: u8) {
-        match self {
-            ProteinText::InMemory { bit_array, char_to_5bit, .. } => {
-                let char_5bit: u8 = *char_to_5bit
-                    .get(&value)
-                    .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
-                bit_array.set(index, char_5bit as u64);
-            }
-            ProteinText::MmapBacked { .. } => {
-                panic!("set() is not supported on MmapBacked ProteinText");
-            }
-        }
+        let char_5bit: u8 = *self.char_to_5bit
+            .get(&value)
+            .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
+        self.bit_array.set(index, char_5bit as u64);
     }
 
     /// Queries the length of the text.
@@ -197,10 +147,7 @@ impl ProteinText {
     ///
     /// the length of the text
     pub fn len(&self) -> usize {
-        match self {
-            ProteinText::InMemory { bit_array, .. } => bit_array.len(),
-            ProteinText::MmapBacked { len, .. } => *len
-        }
+        self.bit_array.len()
     }
 
     /// Check if the text is empty (length 0).
@@ -212,22 +159,9 @@ impl ProteinText {
         self.len() == 0
     }
 
-    /// Returns the raw mmap bytes if this is a `MmapBacked` variant, otherwise `None`.
-    pub fn mmap_bytes(&self) -> Option<&[u8]> {
-        match self {
-            ProteinText::MmapBacked { mmap, .. } => Some(mmap),
-            _ => None
-        }
-    }
-
-    /// Clears the `BitArray`, setting all bits to 0. Only valid for `InMemory` variant.
+    /// Clears the `BitArray`, setting all bits to 0.
     pub fn clear(&mut self) {
-        match self {
-            ProteinText::InMemory { bit_array, .. } => bit_array.clear(),
-            ProteinText::MmapBacked { .. } => {
-                panic!("clear() is not supported on MmapBacked ProteinText");
-            }
-        }
+        self.bit_array.clear()
     }
 
     /// Get an iterator over the characters of the text.
@@ -254,20 +188,13 @@ impl ProteinText {
     /// - 8 bytes: text_length (u64 le)
     /// - N bytes: BitArray data where N = ceil(text_length * 5 / 64) * 8
     pub fn write_binary(&self, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
-        match self {
-            ProteinText::InMemory { bit_array, .. } => {
-                let text_length = bit_array.len() as u64;
-                writer.write_all(&text_length.to_le_bytes())?;
-                bit_array.write_binary(writer)?;
-                Ok(())
-            }
-            ProteinText::MmapBacked { .. } => {
-                Err("write_binary is not supported on MmapBacked ProteinText".into())
-            }
-        }
+        let text_length = self.bit_array.len() as u64;
+        writer.write_all(&text_length.to_le_bytes())?;
+        self.bit_array.write_binary(writer)?;
+        Ok(())
     }
 
-    /// Reads a `ProteinText` (InMemory) from a reader in the binary proteins format.
+    /// Reads a `ProteinText` from a reader in the binary proteins format.
     ///
     /// Reads exactly as many bytes as the ProteinText section occupies, leaving the reader
     /// positioned at the start of the next section.
@@ -286,29 +213,6 @@ impl ProteinText {
             .map_err(|_| "Could not parse BitArray data from binary file")?;
 
         Ok(ProteinText::new(bit_array))
-    }
-
-    /// Creates a `ProteinText::MmapBacked` from a memory-mapped file.
-    ///
-    /// Reads `text_length` from `mmap[0..8]` and sets `data_offset = 8`.
-    /// Returns the constructed `ProteinText` and the byte offset immediately after the
-    /// ProteinText section (i.e. `8 + bit_array_byte_size(text_length)`).
-    pub fn from_mmap(mmap: Mmap) -> Result<(Self, usize), Box<dyn Error>> {
-        if mmap.len() < 8 {
-            return Err("Mmap too short to contain text_length".into());
-        }
-        let buf8: [u8; 8] = mmap[0..8].try_into().unwrap();
-        let text_length = u64::from_le_bytes(buf8) as usize;
-        let n_bytes = bit_array_byte_size(text_length);
-        let meta_offset = 8 + n_bytes;
-
-        if mmap.len() < meta_offset {
-            return Err("Mmap too short to contain ProteinText BitArray data".into());
-        }
-
-        let bit5_to_char = ProteinText::create_bit5_to_char();
-        let protein_text = ProteinText::MmapBacked { mmap, data_offset: 8, len: text_length, bit5_to_char };
-        Ok((protein_text, meta_offset))
     }
 }
 

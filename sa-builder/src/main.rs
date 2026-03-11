@@ -22,7 +22,7 @@ fn main() {
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
     let start_proteins_time = get_time_ms().unwrap();
-    let data = Proteins::try_from_database_file_uncompressed(&database_file)
+    let data = Proteins::raw_text_from_tsv(&database_file)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     let bits_per_value = (data.len() as f64).log2().ceil() as usize;
     eprintln!(
@@ -75,7 +75,7 @@ fn main() {
     eprintln!();
     eprintln!("Started writing proteins binary...");
     let start_proteins_bin_time = get_time_ms().unwrap();
-    let proteins = Proteins::try_from_database_file(&database_file)
+    let proteins = Proteins::load_from_tsv(&database_file)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     let mut proteins_file = open_file_buffer(&output_proteins, 100 * 1024 * 1024)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
