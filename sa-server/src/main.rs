@@ -12,7 +12,7 @@ use axum::{
 use clap::Parser;
 use sa_index::{
     peptide_search::{SearchResult, search_all_peptides},
-    sa_searcher::SparseSearcher
+    sa_searcher::BitVecSearcher
 };
 use serde::Deserialize;
 use sa_server::{load_proteins_file, load_suffix_array_file};
@@ -82,7 +82,7 @@ async fn main() {
 ///
 /// Returns the search results from the index as a JSON
 async fn search(
-    State(searcher): State<Arc<SparseSearcher>>,
+    State(searcher): State<Arc<BitVecSearcher>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);
@@ -118,7 +118,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let proteins = load_proteins_file(&database_file, mmap)?;
     eprintln!("Successfully loaded the proteins!");
 
-    let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
+    let searcher = Arc::new(BitVecSearcher::new(suffix_array, proteins));
 
     // build our application with a route
     let app = Router::new()

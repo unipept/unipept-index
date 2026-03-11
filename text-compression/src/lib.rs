@@ -212,6 +212,14 @@ impl ProteinText {
         self.len() == 0
     }
 
+    /// Returns the raw mmap bytes if this is a `MmapBacked` variant, otherwise `None`.
+    pub fn mmap_bytes(&self) -> Option<&[u8]> {
+        match self {
+            ProteinText::MmapBacked { mmap, .. } => Some(mmap),
+            _ => None
+        }
+    }
+
     /// Clears the `BitArray`, setting all bits to 0. Only valid for `InMemory` variant.
     pub fn clear(&mut self) {
         match self {

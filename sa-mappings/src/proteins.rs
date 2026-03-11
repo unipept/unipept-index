@@ -1,7 +1,7 @@
 //! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins
 //! and collections of proteins, respectively.
 
-use std::{error::Error, fs::File, io::{BufReader, Read, Write}, ops::Index, path::Path, str::from_utf8};
+use std::{error::Error, fs::File, io::{BufReader, Read, Write}, path::Path, str::from_utf8};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
@@ -27,19 +27,110 @@ pub struct Protein {
     pub functional_annotations: Vec<u8>
 }
 
-/// A struct that represents a collection of proteins
-pub struct Proteins {
-    /// The input string containing all proteins
-    pub text: ProteinText,
-
-    /// The proteins in the input string
-    pub proteins: Vec<Protein>
-}
-
 impl Protein {
     /// Returns the decoded functional annotations of the protein
     pub fn get_functional_annotations(&self) -> String {
         decode(&self.functional_annotations)
+    }
+}
+
+/// A zero-copy view into a single protein's metadata, borrowing from either an in-memory
+/// `Vec<Protein>` or an mmap byte slice.
+#[derive(Clone, Copy)]
+pub struct ProteinRef<'a> {
+    /// The UniProt accession ID of the protein.
+    pub uniprot_id: &'a str,
+    /// The taxon ID of the protein.
+    pub taxon_id: u32,
+    /// The encoded functional annotations of the protein.
+    pub functional_annotations: &'a [u8]
+}
+
+impl<'a> ProteinRef<'a> {
+    /// Returns the decoded functional annotations of the protein
+    pub fn get_functional_annotations(&self) -> String {
+        decode(self.functional_annotations)
+    }
+}
+
+/// A collection of proteins, either fully in-memory or backed by a memory-mapped file.
+pub enum Proteins {
+    /// All protein metadata is eagerly deserialized into heap memory.
+    InMemory {
+        /// The compressed protein text (amino acid sequences).
+        text: ProteinText,
+        /// The list of proteins.
+        proteins: Vec<Protein>
+    },
+    /// Protein metadata stays in the mmap; fields are resolved on demand via `get()`.
+    MmapBacked {
+        /// The compressed protein text backed by the mmap.
+        text: ProteinText,
+        /// Total number of proteins.
+        protein_count: usize,
+        /// Byte offset within the mmap where the 16-byte fixed table begins.
+        table_offset: usize,
+        /// Byte offset within the mmap where the uniprot ID byte pool begins.
+        uid_pool_offset: usize,
+        /// Byte offset within the mmap where the functional annotations byte pool begins.
+        fa_pool_offset: usize
+    }
+}
+
+impl Proteins {
+    /// Returns a reference to the underlying `ProteinText`.
+    pub fn text(&self) -> &ProteinText {
+        match self {
+            Proteins::InMemory { text, .. } => text,
+            Proteins::MmapBacked { text, .. } => text
+        }
+    }
+
+    /// Returns the number of proteins in the collection.
+    pub fn len(&self) -> usize {
+        match self {
+            Proteins::InMemory { proteins, .. } => proteins.len(),
+            Proteins::MmapBacked { protein_count, .. } => *protein_count
+        }
+    }
+
+    /// Returns true if there are no proteins.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns a zero-copy view of the protein at `index`.
+    pub fn get(&self, index: usize) -> ProteinRef<'_> {
+        match self {
+            Proteins::InMemory { proteins, .. } => {
+                let p = &proteins[index];
+                ProteinRef {
+                    uniprot_id: &p.uniprot_id,
+                    taxon_id: p.taxon_id,
+                    functional_annotations: &p.functional_annotations
+                }
+            }
+            Proteins::MmapBacked { text, table_offset, uid_pool_offset, fa_pool_offset, .. } => {
+                let mmap = text.mmap_bytes().expect("MmapBacked Proteins must have mmap-backed text");
+                let entry_start = table_offset + index * 16;
+                let entry = &mmap[entry_start..entry_start + 16];
+
+                let taxon_id = u32::from_le_bytes(entry[0..4].try_into().unwrap());
+                let uid_offset = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as usize;
+                let uid_len = u16::from_le_bytes(entry[8..10].try_into().unwrap()) as usize;
+                let fa_offset = u32::from_le_bytes(entry[10..14].try_into().unwrap()) as usize;
+                let fa_len = u16::from_le_bytes(entry[14..16].try_into().unwrap()) as usize;
+
+                let uid_pool = &mmap[*uid_pool_offset..*fa_pool_offset];
+                let fa_pool = &mmap[*fa_pool_offset..];
+
+                let uniprot_id =
+                    std::str::from_utf8(&uid_pool[uid_offset..uid_offset + uid_len]).unwrap();
+                let functional_annotations = &fa_pool[fa_offset..fa_offset + fa_len];
+
+                ProteinRef { uniprot_id, taxon_id, functional_annotations }
+            }
+        }
     }
 }
 
@@ -90,7 +181,7 @@ impl Proteins {
         proteins.shrink_to_fit();
 
         let text = ProteinText::from_string(&input_string);
-        Ok(Self { text, proteins })
+        Ok(Self::InMemory { text, proteins })
     }
 
     /// Creates a `ProteinText` which represents all the proteins concatenated from the database file
@@ -181,48 +272,57 @@ impl Proteins {
     /// - uid bytes (concatenated uniprot_ids)
     /// - fa bytes (concatenated functional_annotations)
     pub fn write_binary(&self, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
-        self.text.write_binary(writer)?;
+        match self {
+            Proteins::InMemory { text, proteins } => {
+                text.write_binary(writer)?;
 
-        let protein_count = self.proteins.len() as u64;
-        let uid_bytes_total: u64 = self.proteins.iter().map(|p| p.uniprot_id.len() as u64).sum();
-        let fa_bytes_total: u64 = self.proteins.iter().map(|p| p.functional_annotations.len() as u64).sum();
+                let protein_count = proteins.len() as u64;
+                let uid_bytes_total: u64 =
+                    proteins.iter().map(|p| p.uniprot_id.len() as u64).sum();
+                let fa_bytes_total: u64 =
+                    proteins.iter().map(|p| p.functional_annotations.len() as u64).sum();
 
-        writer.write_all(&protein_count.to_le_bytes())?;
-        writer.write_all(&uid_bytes_total.to_le_bytes())?;
-        writer.write_all(&fa_bytes_total.to_le_bytes())?;
+                writer.write_all(&protein_count.to_le_bytes())?;
+                writer.write_all(&uid_bytes_total.to_le_bytes())?;
+                writer.write_all(&fa_bytes_total.to_le_bytes())?;
 
-        // Write fixed table
-        let mut uid_offset: u32 = 0;
-        let mut fa_offset: u32 = 0;
-        for protein in &self.proteins {
-            let uid_len = protein.uniprot_id.len() as u16;
-            let fa_len = protein.functional_annotations.len() as u16;
-            writer.write_all(&protein.taxon_id.to_le_bytes())?;
-            writer.write_all(&uid_offset.to_le_bytes())?;
-            writer.write_all(&uid_len.to_le_bytes())?;
-            writer.write_all(&fa_offset.to_le_bytes())?;
-            writer.write_all(&fa_len.to_le_bytes())?;
-            uid_offset += uid_len as u32;
-            fa_offset += fa_len as u32;
+                // Write fixed table
+                let mut uid_offset: u32 = 0;
+                let mut fa_offset: u32 = 0;
+                for protein in proteins {
+                    let uid_len = protein.uniprot_id.len() as u16;
+                    let fa_len = protein.functional_annotations.len() as u16;
+                    writer.write_all(&protein.taxon_id.to_le_bytes())?;
+                    writer.write_all(&uid_offset.to_le_bytes())?;
+                    writer.write_all(&uid_len.to_le_bytes())?;
+                    writer.write_all(&fa_offset.to_le_bytes())?;
+                    writer.write_all(&fa_len.to_le_bytes())?;
+                    uid_offset += uid_len as u32;
+                    fa_offset += fa_len as u32;
+                }
+
+                // Write uid data
+                for protein in proteins {
+                    writer.write_all(protein.uniprot_id.as_bytes())?;
+                }
+
+                // Write fa data
+                for protein in proteins {
+                    writer.write_all(&protein.functional_annotations)?;
+                }
+
+                Ok(())
+            }
+            Proteins::MmapBacked { .. } => {
+                Err("write_binary is not supported for MmapBacked Proteins".into())
+            }
         }
-
-        // Write uid data
-        for protein in &self.proteins {
-            writer.write_all(protein.uniprot_id.as_bytes())?;
-        }
-
-        // Write fa data
-        for protein in &self.proteins {
-            writer.write_all(&protein.functional_annotations)?;
-        }
-
-        Ok(())
     }
 
     /// Loads a `Proteins` from a binary file produced by `write_binary`.
     ///
-    /// If `mmap` is true, the ProteinText is backed by a memory-mapped file (zero-copy);
-    /// otherwise it is read into heap memory.
+    /// If `mmap` is true, the ProteinText and protein metadata are backed by a memory-mapped
+    /// file (zero-copy); otherwise everything is read into heap memory.
     pub fn try_from_binary_file(file: &str, mmap: bool) -> Result<Self, Box<dyn Error>> {
         if mmap {
             Self::load_binary_mmap(file)
@@ -238,7 +338,7 @@ impl Proteins {
         let text = ProteinText::read_binary(&mut reader)?;
         let proteins = Self::read_protein_metadata(&mut reader)?;
 
-        Ok(Self { text, proteins })
+        Ok(Self::InMemory { text, proteins })
     }
 
     fn load_binary_mmap(file: &str) -> Result<Self, Box<dyn Error>> {
@@ -247,14 +347,23 @@ impl Proteins {
 
         let (text, meta_offset) = ProteinText::from_mmap(mmap)?;
 
-        // Read protein metadata directly from the mmap bytes
-        let mmap_ref = match &text {
-            ProteinText::MmapBacked { mmap, .. } => mmap,
-            _ => unreachable!()
-        };
-        let proteins = Self::read_protein_metadata_from_bytes(&mmap_ref[meta_offset..])?;
+        // Read the 3 header u64s from the metadata section without copying
+        let mmap_ref = text.mmap_bytes().unwrap();
+        let meta_bytes = &mmap_ref[meta_offset..];
 
-        Ok(Self { text, proteins })
+        if meta_bytes.len() < 24 {
+            return Err("Mmap too short for protein metadata headers".into());
+        }
+
+        let protein_count = u64::from_le_bytes(meta_bytes[0..8].try_into()?) as usize;
+        let uid_bytes_total = u64::from_le_bytes(meta_bytes[8..16].try_into()?) as usize;
+        // fa_bytes_total at [16..24] — not needed for offset calculation
+
+        let table_offset = meta_offset + 24;
+        let uid_pool_offset = table_offset + protein_count * 16;
+        let fa_pool_offset = uid_pool_offset + uid_bytes_total;
+
+        Ok(Self::MmapBacked { text, protein_count, table_offset, uid_pool_offset, fa_pool_offset })
     }
 
     /// Reads the protein metadata section from a reader.
@@ -286,12 +395,6 @@ impl Proteins {
         Self::reconstruct_proteins(&table, &uid_data, &fa_data)
     }
 
-    /// Reads the protein metadata section from a byte slice (e.g. from an mmap).
-    fn read_protein_metadata_from_bytes(bytes: &[u8]) -> Result<Vec<Protein>, Box<dyn Error>> {
-        let mut cursor = std::io::Cursor::new(bytes);
-        Self::read_protein_metadata(&mut cursor)
-    }
-
     fn reconstruct_proteins(
         table: &[[u8; 16]],
         uid_data: &[u8],
@@ -313,14 +416,6 @@ impl Proteins {
         }
 
         Ok(proteins)
-    }
-}
-
-impl Index<usize> for Proteins {
-    type Output = Protein;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.proteins[index]
     }
 }
 
@@ -368,7 +463,7 @@ mod tests {
     fn test_new_proteins() {
         let input_string = "MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG";
         let text = ProteinText::from_string(input_string);
-        let proteins = Proteins {
+        let proteins = Proteins::InMemory {
             text,
             proteins: vec![
                 Protein {
@@ -384,13 +479,13 @@ mod tests {
             ]
         };
 
-        assert_eq!(proteins.proteins.len(), 2);
-        assert_eq!(proteins[0].uniprot_id, "P12345");
-        assert_eq!(proteins[0].taxon_id, 1);
-        assert_eq!(proteins[0].functional_annotations, vec![0xD1, 0x11]);
-        assert_eq!(proteins[1].uniprot_id, "P54321");
-        assert_eq!(proteins[1].taxon_id, 2);
-        assert_eq!(proteins[1].functional_annotations, vec![0xD1, 0x11]);
+        assert_eq!(proteins.len(), 2);
+        assert_eq!(proteins.get(0).uniprot_id, "P12345");
+        assert_eq!(proteins.get(0).taxon_id, 1);
+        assert_eq!(proteins.get(0).functional_annotations, &[0xD1u8, 0x11u8][..]);
+        assert_eq!(proteins.get(1).uniprot_id, "P54321");
+        assert_eq!(proteins.get(1).taxon_id, 2);
+        assert_eq!(proteins.get(1).functional_annotations, &[0xD1u8, 0x11u8][..]);
     }
 
     #[test]
@@ -402,9 +497,9 @@ mod tests {
 
         let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
-        let taxa = [1, 2, 6, 17];
-        for (i, protein) in proteins.proteins.iter().enumerate() {
-            assert_eq!(protein.taxon_id, taxa[i]);
+        let taxa = [1u32, 2, 6, 17];
+        for (i, &taxon) in taxa.iter().enumerate() {
+            assert_eq!(proteins.get(i).taxon_id, taxon);
         }
     }
 
@@ -417,8 +512,11 @@ mod tests {
 
         let proteins = Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
-        for protein in proteins.proteins.iter() {
-            assert_eq!(protein.get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
+        for i in 0..proteins.len() {
+            assert_eq!(
+                proteins.get(i).get_functional_annotations(),
+                "GO:0009279;IPR:IPR016364;IPR:IPR008816"
+            );
         }
     }
 
@@ -429,7 +527,9 @@ mod tests {
 
         let database_file = create_database_file(&tmp_dir);
 
-        let proteins = Proteins::try_from_database_file_without_annotations(database_file.to_str().unwrap()).unwrap();
+        let proteins =
+            Proteins::try_from_database_file_without_annotations(database_file.to_str().unwrap())
+                .unwrap();
 
         let expected = b'L';
         assert_eq!(proteins.get(4), expected);
@@ -440,7 +540,8 @@ mod tests {
         let tmp_dir = TempDir::new("test_binary_roundtrip").unwrap();
         let database_file = create_database_file(&tmp_dir);
 
-        let original = Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
+        let original =
+            Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
         // Write to binary file
         let bin_path = tmp_dir.path().join("proteins.bin");
@@ -451,15 +552,27 @@ mod tests {
         // Load back (non-mmap)
         let loaded = Proteins::try_from_binary_file(bin_path.to_str().unwrap(), false).unwrap();
 
-        assert_eq!(loaded.proteins.len(), original.proteins.len());
-        for (i, (orig, load)) in original.proteins.iter().zip(loaded.proteins.iter()).enumerate() {
+        assert_eq!(loaded.len(), original.len());
+        for i in 0..original.len() {
+            let orig = original.get(i);
+            let load = loaded.get(i);
             assert_eq!(orig.uniprot_id, load.uniprot_id, "uniprot_id mismatch at {}", i);
             assert_eq!(orig.taxon_id, load.taxon_id, "taxon_id mismatch at {}", i);
-            assert_eq!(orig.functional_annotations, load.functional_annotations, "fa mismatch at {}", i);
+            assert_eq!(
+                orig.functional_annotations,
+                load.functional_annotations,
+                "fa mismatch at {}",
+                i
+            );
         }
-        assert_eq!(loaded.text.len(), original.text.len());
-        for i in 0..original.text.len() {
-            assert_eq!(loaded.text.get(i), original.text.get(i), "text mismatch at {}", i);
+        assert_eq!(loaded.text().len(), original.text().len());
+        for i in 0..original.text().len() {
+            assert_eq!(
+                loaded.text().get(i),
+                original.text().get(i),
+                "text mismatch at {}",
+                i
+            );
         }
     }
 
@@ -468,7 +581,8 @@ mod tests {
         let tmp_dir = TempDir::new("test_binary_mmap_roundtrip").unwrap();
         let database_file = create_database_file(&tmp_dir);
 
-        let original = Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
+        let original =
+            Proteins::try_from_database_file(database_file.to_str().unwrap()).unwrap();
 
         // Write to binary file
         let bin_path = tmp_dir.path().join("proteins_mmap.bin");
@@ -479,15 +593,27 @@ mod tests {
         // Load back (mmap)
         let loaded = Proteins::try_from_binary_file(bin_path.to_str().unwrap(), true).unwrap();
 
-        assert_eq!(loaded.proteins.len(), original.proteins.len());
-        for (i, (orig, load)) in original.proteins.iter().zip(loaded.proteins.iter()).enumerate() {
+        assert_eq!(loaded.len(), original.len());
+        for i in 0..original.len() {
+            let orig = original.get(i);
+            let load = loaded.get(i);
             assert_eq!(orig.uniprot_id, load.uniprot_id, "uniprot_id mismatch at {}", i);
             assert_eq!(orig.taxon_id, load.taxon_id, "taxon_id mismatch at {}", i);
-            assert_eq!(orig.functional_annotations, load.functional_annotations, "fa mismatch at {}", i);
+            assert_eq!(
+                orig.functional_annotations,
+                load.functional_annotations,
+                "fa mismatch at {}",
+                i
+            );
         }
-        assert_eq!(loaded.text.len(), original.text.len());
-        for i in 0..original.text.len() {
-            assert_eq!(loaded.text.get(i), original.text.get(i), "text mismatch at {}", i);
+        assert_eq!(loaded.text().len(), original.text().len());
+        for i in 0..original.text().len() {
+            assert_eq!(
+                loaded.text().get(i),
+                original.text().get(i),
+                "text mismatch at {}",
+                i
+            );
         }
     }
 }
