@@ -1180,6 +1180,7 @@ dependencies = [
  "bitarray",
  "bytelines",
  "fa-compression",
+ "memmap2",
  "tempdir",
  "text-compression",
 ]
@@ -1341,6 +1342,7 @@ name = "text-compression"
 version = "0.1.0"
 dependencies = [
  "bitarray",
+ "memmap2",
 ]
 
 [[package]]

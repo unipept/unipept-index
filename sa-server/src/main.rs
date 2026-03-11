@@ -16,18 +16,19 @@ use sa_index::{
 };
 use sa_mappings::proteins::Proteins;
 use serde::Deserialize;
-use sa_server::load_suffix_array_file;
+use sa_server::{load_proteins_file, load_suffix_array_file};
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// File with the proteins used to build the suffix tree. All the proteins are expected to be
-    /// concatenated using a `#`.
+    /// Path to the database file. If --mmap is set, this should point to the binary proteins file
+    /// (.proteins.bin); otherwise it should point to the TSV database file.
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
     index_file: String,
-    /// Use memory-mapped I/O to load the suffix array. This makes startup near-instant by letting
+    /// Use memory-mapped I/O to load the suffix array and ProteinText. When set, --database-file
+    /// must point to a binary proteins file (.proteins.bin). Makes startup near-instant by letting
     /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
     #[arg(short, long, default_value_t = false)]
     mmap: bool
@@ -106,17 +107,17 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let Arguments { database_file, index_file, mmap } = args;
 
     eprintln!();
-    eprintln!("📋 Started loading the suffix array...");
+    eprintln!("Started loading the suffix array...");
     let suffix_array = load_suffix_array_file(&index_file, mmap)?;
-    eprintln!("✅ Successfully loaded the suffix array!");
+    eprintln!("Successfully loaded the suffix array!");
     eprintln!("\tAmount of items: {}", suffix_array.len());
     eprintln!("\tAmount of bits per item: {}", suffix_array.bits_per_value());
     eprintln!("\tSample rate: {}", suffix_array.sample_rate());
 
     eprintln!();
-    eprintln!("📋 Started loading the proteins...");
-    let proteins = Proteins::try_from_database_file(&database_file)?;
-    eprintln!("✅ Successfully loaded the proteins!");
+    eprintln!("Started loading the proteins...");
+    let proteins = load_proteins_file(&database_file, mmap)?;
+    eprintln!("Successfully loaded the proteins!");
 
     let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
 

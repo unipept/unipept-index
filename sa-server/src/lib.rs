@@ -4,6 +4,7 @@ use std::io::{BufReader, Read};
 use sa_compression::load_compressed_suffix_array;
 use sa_index::binary::{load_suffix_array, load_suffix_array_mmap};
 use sa_index::SuffixArray;
+use sa_mappings::proteins::Proteins;
 
 pub fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray, Box<dyn Error>> {
     if use_mmap {
@@ -23,5 +24,13 @@ pub fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray,
         load_suffix_array(&mut reader)
     } else {
         load_compressed_suffix_array(&mut reader, bits_per_value as usize)
+    }
+}
+
+pub fn load_proteins_file(file: &str, use_mmap: bool) -> Result<Proteins, Box<dyn Error>> {
+    if use_mmap {
+        Proteins::try_from_binary_file(&file, true)
+    } else {
+        Proteins::try_from_database_file(&file)
     }
 }

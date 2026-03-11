@@ -69,6 +69,22 @@ fn main() {
         );
         eprintln!("\tAmount of bits per item: 64");
     }
+
+    // Write the proteins binary file
+    eprintln!();
+    eprintln!("Started writing proteins binary...");
+    let start_proteins_bin_time = get_time_ms().unwrap();
+    let proteins = Proteins::try_from_database_file(&database_file)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    let proteins_bin_path = format!("{}.proteins.bin", output);
+    let mut proteins_file = open_file_buffer(&proteins_bin_path, 100 * 1024 * 1024)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    eprintln!(
+        "Successfully wrote proteins binary in {} seconds!",
+        (get_time_ms().unwrap() - start_proteins_bin_time) / 1000.0
+    );
+    eprintln!("\tOutput: {}", proteins_bin_path);
 }
 
 fn open_file_buffer(file: &str, buffer_size: usize) -> std::io::Result<BufWriter<File>> {

@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 bitarray = { path = "../bitarray" }
+memmap2 = "0.9"
