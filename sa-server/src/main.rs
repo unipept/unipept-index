@@ -12,10 +12,11 @@ use axum::{
 use clap::Parser;
 use sa_index::{
     peptide_search::{SearchResult, search_all_peptides},
-    sa_searcher::BitVecSearcher
+    sa_searcher::Searcher,
+    suffix_to_protein_index::BitVecSuffixToProtein
 };
 use serde::Deserialize;
-use sa_server::{load_proteins_file, load_suffix_array_file};
+use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -26,6 +27,10 @@ pub struct Arguments {
     database_file: String,
     #[arg(short, long)]
     index_file: String,
+    /// Path to the prebuilt suffix-to-protein mapping binary file (optional). When omitted the
+    /// mapping is built from the protein text at startup using the BitVec strategy.
+    #[arg(long)]
+    mapping_file: Option<String>,
     /// Use memory-mapped I/O to load the suffix array and ProteinText. When set, --database-file
     /// must point to a binary proteins file (.proteins.bin). Makes startup near-instant by letting
     /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
@@ -82,7 +87,7 @@ async fn main() {
 ///
 /// Returns the search results from the index as a JSON
 async fn search(
-    State(searcher): State<Arc<BitVecSearcher>>,
+    State(searcher): State<Arc<Searcher>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);
@@ -103,7 +108,7 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file, mmap } = args;
+    let Arguments { database_file, index_file, mmap, mapping_file } = args;
 
     eprintln!();
     eprintln!("Started loading the suffix array...");
@@ -118,7 +123,21 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let proteins = load_proteins_file(&database_file)?;
     eprintln!("Successfully loaded the proteins!");
 
-    let searcher = Arc::new(BitVecSearcher::new(suffix_array, proteins));
+    let suffix_index_to_protein = if let Some(path) = mapping_file {
+        eprintln!();
+        eprintln!("Started loading the suffix-to-protein mapping...");
+        let mapping = load_mapping_file(&path)?;
+        eprintln!("Successfully loaded the suffix-to-protein mapping!");
+        mapping
+    } else {
+        eprintln!();
+        eprintln!("Building suffix-to-protein mapping from proteins...");
+        let mapping = Box::new(BitVecSuffixToProtein::new(proteins.text()));
+        eprintln!("Successfully built the suffix-to-protein mapping!");
+        mapping
+    };
+
+    let searcher = Arc::new(Searcher::new(suffix_array, proteins, suffix_index_to_protein));
 
     // build our application with a route
     let app = Router::new()

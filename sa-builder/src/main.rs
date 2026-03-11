@@ -8,6 +8,7 @@ use clap::Parser;
 use sa_builder::{Arguments, build_ssa};
 use sa_compression::dump_compressed_suffix_array;
 use sa_index::binary::dump_suffix_array;
+use sa_index::suffix_to_protein_index::dump_mapping;
 use sa_mappings::proteins::Proteins;
 
 fn main() {
@@ -17,7 +18,9 @@ fn main() {
         output_proteins,
         sparseness_factor,
         construction_algorithm,
-        compress_sa
+        compress_sa,
+        output_mapping,
+        mapping_style
     } = Arguments::parse();
     eprintln!();
     eprintln!("📋 Started loading the proteins...");
@@ -85,6 +88,21 @@ fn main() {
         (get_time_ms().unwrap() - start_proteins_bin_time) / 1000.0
     );
     eprintln!("\tOutput: {}", output_proteins);
+
+    if let Some(mapping_path) = output_mapping {
+        eprintln!();
+        eprintln!("Started writing suffix-to-protein mapping binary...");
+        let start_mapping_time = get_time_ms().unwrap();
+        let mut mapping_file = open_file_buffer(&mapping_path, 100 * 1024 * 1024)
+            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        dump_mapping(&mapping_style, proteins.text(), &mut mapping_file)
+            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        eprintln!(
+            "Successfully wrote mapping binary in {} seconds!",
+            (get_time_ms().unwrap() - start_mapping_time) / 1000.0
+        );
+        eprintln!("\tOutput: {}", mapping_path);
+    }
 }
 
 fn open_file_buffer(file: &str, buffer_size: usize) -> std::io::Result<BufWriter<File>> {
