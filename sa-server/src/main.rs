@@ -1,7 +1,5 @@
 use std::{
     error::Error,
-    fs::File,
-    io::{BufReader, Read},
     sync::Arc
 };
 
@@ -12,15 +10,13 @@ use axum::{
     routing::post
 };
 use clap::Parser;
-use sa_compression::load_compressed_suffix_array;
 use sa_index::{
-    SuffixArray,
-    binary::{load_suffix_array, load_suffix_array_mmap},
     peptide_search::{SearchResult, search_all_peptides},
     sa_searcher::SparseSearcher
 };
 use sa_mappings::proteins::Proteins;
 use serde::Deserialize;
+use sa_server::load_suffix_array_file;
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -137,25 +133,4 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray, Box<dyn Error>> {
-    if use_mmap {
-        load_suffix_array_mmap(std::path::Path::new(file))?;
-    }
-
-    let mut sa_file = File::open(file)?;
-    let mut reader = BufReader::new(&mut sa_file);
-
-    let mut bits_per_value_buffer = [0_u8; 1];
-    reader
-        .read_exact(&mut bits_per_value_buffer)
-        .map_err(|_| "Could not read the flags from the binary file")?;
-    let bits_per_value = bits_per_value_buffer[0];
-
-    if bits_per_value == 64 {
-        load_suffix_array(&mut reader)
-    } else {
-        load_compressed_suffix_array(&mut reader, bits_per_value as usize)
-    }
 }
