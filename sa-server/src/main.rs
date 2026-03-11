@@ -14,7 +14,6 @@ use sa_index::{
     peptide_search::{SearchResult, search_all_peptides},
     sa_searcher::SparseSearcher
 };
-use sa_mappings::proteins::Proteins;
 use serde::Deserialize;
 use sa_server::{load_proteins_file, load_suffix_array_file};
 

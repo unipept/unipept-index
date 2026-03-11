@@ -10,8 +10,11 @@ pub struct Arguments {
     #[arg(short, long)]
     pub database_file: String,
     /// Output location where to store the suffix array
-    #[arg(short, long)]
-    pub output: String,
+    #[arg(long)]
+    pub output_sa: String,
+    /// Output location where to store the proteins binary
+    #[arg(long)]
+    pub output_proteins: String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
     /// the SA is used)
     #[arg(short, long, default_value_t = 1)]
@@ -147,8 +150,10 @@ mod tests {
             "sa-builder",
             "--database-file",
             "database.fa",
-            "--output",
+            "--output-sa",
             "output.fa",
+            "--output-proteins",
+            "output.proteins",
             "--sparseness-factor",
             "2",
             "--construction-algorithm",
@@ -157,7 +162,8 @@ mod tests {
         ]);
 
         assert_eq!(args.database_file, "database.fa");
-        assert_eq!(args.output, "output.fa");
+        assert_eq!(args.output_sa, "output.fa");
+        assert_eq!(args.output_proteins, "output.proteins");
         assert_eq!(args.sparseness_factor, 2);
         assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);
         assert!(args.compress_sa);

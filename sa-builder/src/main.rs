@@ -13,7 +13,8 @@ use sa_mappings::proteins::Proteins;
 fn main() {
     let Arguments {
         database_file,
-        output,
+        output_sa,
+        output_proteins,
         sparseness_factor,
         construction_algorithm,
         compress_sa
@@ -42,7 +43,7 @@ fn main() {
 
     // open the output file
     let mut file =
-        open_file_buffer(&output, 100 * 1024 * 1024).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        open_file_buffer(&output_sa, 100 * 1024 * 1024).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     eprintln!();
     eprintln!("📋 Started dumping the suffix array...");
@@ -76,15 +77,14 @@ fn main() {
     let start_proteins_bin_time = get_time_ms().unwrap();
     let proteins = Proteins::try_from_database_file(&database_file)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-    let proteins_bin_path = format!("{}.proteins.bin", output);
-    let mut proteins_file = open_file_buffer(&proteins_bin_path, 100 * 1024 * 1024)
+    let mut proteins_file = open_file_buffer(&output_proteins, 100 * 1024 * 1024)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     eprintln!(
         "Successfully wrote proteins binary in {} seconds!",
         (get_time_ms().unwrap() - start_proteins_bin_time) / 1000.0
     );
-    eprintln!("\tOutput: {}", proteins_bin_path);
+    eprintln!("\tOutput: {}", output_proteins);
 }
 
 fn open_file_buffer(file: &str, buffer_size: usize) -> std::io::Result<BufWriter<File>> {
