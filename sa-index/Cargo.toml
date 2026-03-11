@@ -8,9 +8,11 @@ edition = "2021"
 [dev-dependencies]
 tempdir = "0.3.7"
 fa-compression = { path = "../fa-compression" }
+sa-compression = { path = "../sa-compression" }
 
 [dependencies]
 clap = { version = "4.4.8", features = ["derive"] }
+memmap2 = "0.9"
 rayon = "1.8.1"
 serde = { version = "1.0.197", features = ["derive"] }
 sa-mappings = { path = "../sa-mappings" }

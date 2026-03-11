@@ -1,7 +1,11 @@
 use std::{
     error::Error,
-    io::{BufRead, Read, Write}
+    fs::File,
+    io::{BufRead, Read, Write},
+    path::Path
 };
+
+use memmap2::Mmap;
 
 use crate::SuffixArray;
 
@@ -142,6 +146,44 @@ pub fn load_suffix_array(reader: &mut impl BufRead) -> Result<SuffixArray, Box<d
     sa.read_binary(reader).map_err(|_| "Could not read the suffix array from the binary file")?;
 
     Ok(SuffixArray::Original(sa, sample_rate))
+}
+
+/// Loads the suffix array from a file using memory-mapped I/O.
+///
+/// This is significantly faster than `load_suffix_array` for large files because it avoids
+/// reading the entire file into memory upfront. Instead, the OS pages in data on demand during
+/// binary search. Works for both compressed and uncompressed suffix arrays.
+///
+/// # Arguments
+/// * `path` - Path to the binary suffix array file
+///
+/// # Returns
+///
+/// Returns a `SuffixArray::MmapBacked` wrapping the memory-mapped file
+///
+/// # Errors
+///
+/// Returns any error from opening or memory-mapping the file
+pub fn load_suffix_array_mmap(path: &Path) -> Result<SuffixArray, Box<dyn Error>> {
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+
+    // Read header directly from the mmap bytes
+    let bits_per_value = mmap[0] as usize;
+    let sample_rate = mmap[1];
+    let len = u64::from_le_bytes(mmap[2..10].try_into().unwrap()) as usize;
+
+    // Hint the OS that we will access pages in random order (binary search pattern)
+    #[cfg(unix)]
+    mmap.advise(memmap2::Advice::Random)?;
+
+    Ok(SuffixArray::MmapBacked {
+        mmap,
+        data_offset: 10,
+        len,
+        bits_per_value,
+        sample_rate
+    })
 }
 
 /// Fills the buffer with data read from the input.
@@ -375,5 +417,50 @@ mod tests {
         let mut reader = FailingReader { valid_read_count: 2 };
 
         load_suffix_array(&mut reader).unwrap();
+    }
+
+    #[test]
+    fn test_load_suffix_array_mmap_uncompressed() {
+        use tempdir::TempDir;
+
+        let tmp = TempDir::new("mmap_test").unwrap();
+        let path = tmp.path().join("sa.bin");
+
+        let sa = vec![1_i64, 2, 3, 4, 5];
+        let mut file = std::fs::File::create(&path).unwrap();
+        dump_suffix_array(&sa, 3, &mut file).unwrap();
+        drop(file);
+
+        let loaded = load_suffix_array_mmap(&path).unwrap();
+
+        assert_eq!(loaded.bits_per_value(), 64);
+        assert_eq!(loaded.sample_rate(), 3);
+        assert_eq!(loaded.len(), 5);
+        for i in 0..5 {
+            assert_eq!(loaded.get(i), i as i64 + 1);
+        }
+    }
+
+    #[test]
+    fn test_load_suffix_array_mmap_compressed() {
+        use tempdir::TempDir;
+        use sa_compression::dump_compressed_suffix_array;
+
+        let tmp = TempDir::new("mmap_compressed_test").unwrap();
+        let path = tmp.path().join("sa_compressed.bin");
+
+        let sa = vec![1_i64, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        let mut file = std::fs::File::create(&path).unwrap();
+        dump_compressed_suffix_array(sa, 2, 40, &mut file).unwrap();
+        drop(file);
+
+        let loaded = load_suffix_array_mmap(&path).unwrap();
+
+        assert_eq!(loaded.bits_per_value(), 40);
+        assert_eq!(loaded.sample_rate(), 2);
+        assert_eq!(loaded.len(), 10);
+        for i in 0..10 {
+            assert_eq!(loaded.get(i), i as i64 + 1);
+        }
     }
 }

@@ -15,7 +15,7 @@ use clap::Parser;
 use sa_compression::load_compressed_suffix_array;
 use sa_index::{
     SuffixArray,
-    binary::load_suffix_array,
+    binary::{load_suffix_array, load_suffix_array_mmap},
     peptide_search::{SearchResult, search_all_peptides},
     sa_searcher::SparseSearcher
 };
@@ -30,7 +30,11 @@ pub struct Arguments {
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file: String
+    index_file: String,
+    /// Use memory-mapped I/O to load the suffix array. This makes startup near-instant by letting
+    /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
+    #[arg(short, long, default_value_t = false)]
+    mmap: bool
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -103,11 +107,11 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file } = args;
+    let Arguments { database_file, index_file, mmap } = args;
 
     eprintln!();
     eprintln!("📋 Started loading the suffix array...");
-    let suffix_array = load_suffix_array_file(&index_file)?;
+    let suffix_array = load_suffix_array_file(&index_file, mmap)?;
     eprintln!("✅ Successfully loaded the suffix array!");
     eprintln!("\tAmount of items: {}", suffix_array.len());
     eprintln!("\tAmount of bits per item: {}", suffix_array.bits_per_value());
@@ -135,14 +139,14 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn load_suffix_array_file(file: &str) -> Result<SuffixArray, Box<dyn Error>> {
-    // Open the suffix array file
-    let mut sa_file = File::open(file)?;
+fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray, Box<dyn Error>> {
+    if use_mmap {
+        load_suffix_array_mmap(std::path::Path::new(file))?;
+    }
 
-    // Create a buffer reader for the file
+    let mut sa_file = File::open(file)?;
     let mut reader = BufReader::new(&mut sa_file);
 
-    // Read the bits per value from the binary file (1 byte)
     let mut bits_per_value_buffer = [0_u8; 1];
     reader
         .read_exact(&mut bits_per_value_buffer)
