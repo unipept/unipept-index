@@ -125,7 +125,7 @@ mod tests {
 
     impl Read for ErrorInput {
         fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "read error"))
+            Err(std::io::Error::other("read error"))
         }
     }
 
