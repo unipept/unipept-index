@@ -541,31 +541,28 @@ mod tests {
         let input_string = "AI-CLACVAA-AC-KCRLY$";
         let text = ProteinText::from_string(input_string);
 
-        Proteins {
-            text,
-            proteins: vec![
-                Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![]
-                },
-                Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![]
-                },
-                Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![]
-                },
-                Protein {
-                    uniprot_id: String::new(),
-                    taxon_id: 0,
-                    functional_annotations: vec![]
-                },
-            ]
-        }
+        Proteins::new(text, vec![
+            Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
+                functional_annotations: vec![]
+            },
+            Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
+                functional_annotations: vec![]
+            },
+            Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
+                functional_annotations: vec![]
+            },
+            Protein {
+                uniprot_id: String::new(),
+                taxon_id: 0,
+                functional_annotations: vec![]
+            },
+        ])
     }
 
     #[test]
@@ -662,14 +659,11 @@ mod tests {
         let input_string = "LMPYY$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins {
-            text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![]
-            }]
-        };
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
 
         let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
@@ -685,14 +679,11 @@ mod tests {
         let input_string = "AAILLL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins {
-            text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![]
-            }]
-        };
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
 
         let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
@@ -707,14 +698,11 @@ mod tests {
         let input_string = "IIIILL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins {
-            text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![]
-            }]
-        };
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
@@ -729,14 +717,11 @@ mod tests {
         let input_string = "IIIILL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins {
-            text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![]
-            }]
-        };
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
 
         let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
@@ -753,14 +738,11 @@ mod tests {
         let input_string = "IILLLL$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins {
-            text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![]
-            }]
-        };
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
 
         let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
@@ -776,14 +758,11 @@ mod tests {
         let input_string = "PAA-AAKPKAPAA$";
         let text = ProteinText::from_string(input_string);
 
-        let proteins = Proteins {
-            text,
-            proteins: vec![Protein {
-                uniprot_id: String::new(),
-                taxon_id: 0,
-                functional_annotations: vec![]
-            }]
-        };
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
 
         let sparse_sa = SuffixArray::Original(vec![13, 3, 12, 11, 1, 4, 2, 5, 9, 8, 6, 10, 0, 7], 1);
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());

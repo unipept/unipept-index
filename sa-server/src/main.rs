@@ -120,13 +120,13 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     eprintln!();
     eprintln!("Started loading the proteins...");
-    let proteins = load_proteins_file(&database_file)?;
+    let proteins = load_proteins_file(&database_file, mmap)?;
     eprintln!("Successfully loaded the proteins!");
 
     let suffix_index_to_protein = if let Some(path) = mapping_file {
         eprintln!();
         eprintln!("Started loading the suffix-to-protein mapping...");
-        let mapping = load_mapping_file(&path)?;
+        let mapping = load_mapping_file(&path, mmap)?;
         eprintln!("Successfully loaded the suffix-to-protein mapping!");
         mapping
     } else {
