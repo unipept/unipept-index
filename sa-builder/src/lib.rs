@@ -16,6 +16,9 @@ pub struct Arguments {
     /// Output location where to store the proteins binary
     #[arg(long)]
     pub output_proteins: String,
+    /// Output location where to store the suffix-to-protein mapping binary
+    #[arg(long)]
+    pub output_mapping: String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
     /// the SA is used)
     #[arg(short, long, default_value_t = 1)]
@@ -26,9 +29,6 @@ pub struct Arguments {
     /// If the suffix array should be compressed (default value false)
     #[arg(short, long, default_value_t = false)]
     pub compress_sa: bool,
-    /// Output location where to store the suffix-to-protein mapping binary (optional)
-    #[arg(long)]
-    pub output_mapping: Option<String>,
     /// The style of suffix-to-protein mapping to build (default value BitVec)
     #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::BitVec)]
     pub mapping_style: SuffixToProteinMappingStyle
@@ -91,9 +91,6 @@ fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static 
         libsais_sparseness -= 1;
     }
     let sample_rate = sparseness_factor / libsais_sparseness;
-    eprintln!("\tSparseness factor: {}", sparseness_factor);
-    eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
-    eprintln!("\tSample rate: {}", sample_rate);
 
     let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
 
@@ -178,23 +175,8 @@ mod tests {
         assert_eq!(args.sparseness_factor, 2);
         assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);
         assert!(args.compress_sa);
-        assert_eq!(args.output_mapping, Some("output.mapping".to_string()));
+        assert_eq!(args.output_mapping, "output.mapping".to_string());
         assert_eq!(args.mapping_style, SuffixToProteinMappingStyle::Dense);
-    }
-
-    #[test]
-    fn test_arguments_no_mapping() {
-        let args = Arguments::parse_from([
-            "sa-builder",
-            "--database-file",
-            "database.fa",
-            "--output-sa",
-            "output.fa",
-            "--output-proteins",
-            "output.proteins"
-        ]);
-
-        assert_eq!(args.output_mapping, None);
     }
 
     #[test]
