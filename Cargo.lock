@@ -1125,6 +1125,7 @@ dependencies = [
  "libsais64-rs",
  "sa-index",
  "sa-mappings",
+ "tempfile",
 ]
 
 [[package]]
