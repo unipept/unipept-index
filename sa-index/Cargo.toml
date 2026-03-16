@@ -9,7 +9,6 @@ edition = "2021"
 tempdir = "0.3.7"
 tempfile = "3"
 fa-compression = { path = "../fa-compression" }
-sa-compression = { path = "../sa-compression" }
 
 [dependencies]
 clap = { version = "4.4.8", features = ["derive"] }

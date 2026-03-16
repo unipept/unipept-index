@@ -2,7 +2,7 @@ use std::{
     error::Error,
     sync::Arc
 };
-
+use std::io::BufWriter;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -13,9 +13,10 @@ use clap::Parser;
 use sa_index::{
     peptide_search::{SearchResult, search_all_peptides},
     sa_searcher::Searcher,
-    suffix_to_protein_index::BitVecSuffixToProtein
+    suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
 };
 use serde::Deserialize;
+use sa_index::suffix_to_protein_index::{dump_mapping, SuffixToProteinMappingStyle};
 use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
 
 /// Enum that represents all possible commandline arguments
@@ -132,12 +133,15 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     } else {
         eprintln!();
         eprintln!("Building suffix-to-protein mapping from proteins...");
-        let mapping = Box::new(BitVecSuffixToProtein::new(proteins.text()));
+
+        // Dump the mapping
+        let mut writer = BufWriter::new(std::fs::File::create("/mnt/data/uniprot-2025-04/suffix-array/mapping.bin")?);
+        dump_mapping(&SuffixToProteinMappingStyle::BitVec, proteins.text(), &mut writer)?;
         eprintln!("Successfully built the suffix-to-protein mapping!");
-        mapping
+        SuffixToProteinMapping(Box::new(BitVecSuffixToProtein::new(proteins.text())))
     };
 
-    let searcher = Arc::new(Searcher::new(suffix_array, proteins, suffix_index_to_protein));
+    let searcher = Arc::new(Searcher::new(suffix_array, proteins, suffix_index_to_protein.0));
 
     // build our application with a route
     let app = Router::new()

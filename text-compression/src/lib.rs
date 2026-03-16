@@ -1,12 +1,17 @@
 use std::{
     collections::HashMap,
     error::Error,
+    fs::File,
     io::{BufRead, Write},
+    path::Path,
     sync::Arc
 };
 
 use bitarray::{Binary, BitArray, data_to_writer};
 use memmap2::Mmap;
+
+pub mod traits;
+pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
 
 /// The 5-bit-to-char lookup table for mmap-backed ProteinText.
 const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
@@ -183,12 +188,15 @@ impl ProteinText {
         ProteinTextSlice::new(self, start, end)
     }
 
+}
+
+impl WriteBinary for ProteinText {
     /// Writes this `ProteinText` to a writer in the binary proteins format.
     ///
     /// Format:
     /// - 8 bytes: text_length (u64 le)
     /// - N bytes: BitArray data where N = ceil(text_length * 5 / 64) * 8
-    pub fn write_binary(&self, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
+    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         match self {
             ProteinText::InMemory { bit_array, .. } => {
                 let text_length = bit_array.len() as u64;
@@ -204,9 +212,11 @@ impl ProteinText {
         }
         Ok(())
     }
+}
 
+impl ReadBinary for ProteinText {
     /// Reads a `ProteinText` from a reader in the binary proteins format.
-    pub fn read_binary(reader: &mut impl BufRead) -> Result<Self, Box<dyn Error>> {
+    fn read_binary<R: BufRead>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
         let mut buf8 = [0u8; 8];
         reader.read_exact(&mut buf8).map_err(|_| "Could not read text_length from binary file")?;
         let text_length = u64::from_le_bytes(buf8) as usize;
@@ -221,6 +231,17 @@ impl ProteinText {
             .map_err(|_| "Could not parse BitArray data from binary file")?;
 
         Ok(ProteinText::new(bit_array))
+    }
+}
+
+impl ReadBinaryMmap for ProteinText {
+    fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let f = File::open(path)?;
+        let mmap = Arc::new(unsafe { Mmap::map(&f)? });
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Random)?;
+        let text_length = u64::from_le_bytes(mmap[0..8].try_into().unwrap()) as usize;
+        Ok(ProteinText::from_mmap(mmap, 8, text_length))
     }
 }
 

@@ -6,9 +6,10 @@ use std::{
 
 use clap::Parser;
 use sa_builder::{Arguments, build_ssa};
-use sa_compression::dump_compressed_suffix_array;
-use sa_index::binary::dump_suffix_array;
+use sa_index::array::dump_compressed_suffix_array;
+use sa_index::array::dump_suffix_array;
 use sa_index::suffix_to_protein_index::dump_mapping;
+use sa_index::WriteBinary;
 use sa_mappings::proteins::Proteins;
 
 fn main() {

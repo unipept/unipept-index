@@ -1,11 +1,12 @@
 //! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins
 //! and collections of proteins, respectively.
 
-use std::{error::Error, fs::File, io::{BufReader, Read, Write}, str::from_utf8, sync::Arc};
+use std::{error::Error, fs::File, io::{BufRead, BufReader, Write}, path::Path, str::from_utf8, sync::Arc};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
 use memmap2::Mmap;
+pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
 use text_compression::{ProteinText, bit_array_byte_size};
 
 /// The separation character used in the input string
@@ -202,6 +203,9 @@ impl Proteins {
         Ok(input_string)
     }
 
+}
+
+impl WriteBinary for Proteins {
     /// Writes this `Proteins` to a writer in the binary proteins format.
     ///
     /// Format:
@@ -213,10 +217,10 @@ impl Proteins {
     ///   fa_offset u32, fa_len u16
     /// - uid bytes (concatenated uniprot_ids)
     /// - fa bytes (concatenated functional_annotations)
-    pub fn write_binary(&self, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
+    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         match self {
             Proteins::InMemory { text, proteins } => {
-                text.write_binary(writer)?;
+                WriteBinary::write_binary(text, writer)?;
 
                 let protein_count = proteins.len() as u64;
                 let uid_bytes_total: u64 =
@@ -257,13 +261,11 @@ impl Proteins {
             }
         }
     }
+}
 
-    /// Loads a `Proteins` from a binary file produced by `write_binary`.
-    pub fn load_from_binary(file: &str) -> Result<Self, Box<dyn Error>> {
-        let f = File::open(file)?;
-        let mut reader = BufReader::new(f);
-
-        let text = ProteinText::read_binary(&mut reader)?;
+impl ReadBinary for Proteins {
+    fn read_binary<R: BufRead>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
+        let text = ProteinText::read_binary(reader)?;
 
         let mut buf8 = [0u8; 8];
 
@@ -303,10 +305,11 @@ impl Proteins {
 
         Ok(Proteins::InMemory { text, proteins })
     }
+}
 
-    /// Loads a `Proteins` from a binary file using memory mapping.
-    pub fn load_from_binary_mmap(file: &str) -> Result<Self, Box<dyn Error>> {
-        let f = File::open(file)?;
+impl ReadBinaryMmap for Proteins {
+    fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let f = File::open(path)?;
         let mmap = Arc::new(unsafe { Mmap::map(&f)? });
 
         #[cfg(unix)]
@@ -464,7 +467,9 @@ mod tests {
         original.write_binary(&mut bin_file).unwrap();
         drop(bin_file);
 
-        let loaded = Proteins::load_from_binary(bin_path.to_str().unwrap()).unwrap();
+        let f = File::open(&bin_path).unwrap();
+        let mut reader = BufReader::new(f);
+        let loaded = Proteins::read_binary(&mut reader).unwrap();
 
         assert_eq!(loaded.len(), original.len());
         for i in 0..original.len() {
@@ -502,7 +507,7 @@ mod tests {
         original.write_binary(&mut bin_file).unwrap();
         drop(bin_file);
 
-        let mmap_loaded = Proteins::load_from_binary_mmap(bin_path.to_str().unwrap()).unwrap();
+        let mmap_loaded = Proteins::read_binary_mmap(bin_path.as_path()).unwrap();
 
         assert_eq!(mmap_loaded.len(), original.len());
         for i in 0..original.len() {

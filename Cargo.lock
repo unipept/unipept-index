@@ -1123,17 +1123,8 @@ dependencies = [
  "clap",
  "libdivsufsort-rs",
  "libsais64-rs",
- "sa-compression",
  "sa-index",
  "sa-mappings",
-]
-
-[[package]]
-name = "sa-compression"
-version = "0.1.0"
-dependencies = [
- "bitarray",
- "sa-index",
 ]
 
 [[package]]
@@ -1145,7 +1136,6 @@ dependencies = [
  "fa-compression",
  "memmap2",
  "rayon",
- "sa-compression",
  "sa-mappings",
  "serde",
  "serde_json",
@@ -1172,7 +1162,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
- "sa-compression",
  "sa-index",
  "sa-mappings",
  "serde",
