@@ -29,8 +29,8 @@ pub struct Arguments {
     /// Output location where to store the suffix-to-protein mapping binary (optional)
     #[arg(long)]
     pub output_mapping: Option<String>,
-    /// The style of suffix-to-protein mapping to build (default value Dense)
-    #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::Dense)]
+    /// The style of suffix-to-protein mapping to build (default value BitVec)
+    #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::BitVec)]
     pub mapping_style: SuffixToProteinMappingStyle
 }
 
