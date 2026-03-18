@@ -55,17 +55,19 @@ pub fn dump_mapping<W: Write>(
     match style {
         SuffixToProteinMappingStyle::Dense => {
             writer.write_all(&[0u8])?;
-            dense::write_dense_mapping(&DenseSuffixToProtein::new(text), writer)
+            dense::write_dense_mapping(&DenseSuffixToProtein::new(text), writer)?;
         }
         SuffixToProteinMappingStyle::Sparse => {
             writer.write_all(&[1u8])?;
-            sparse::write_sparse_mapping(&SparseSuffixToProtein::new(text), writer)
+            sparse::write_sparse_mapping(&SparseSuffixToProtein::new(text), writer)?;
         }
         SuffixToProteinMappingStyle::BitVec => {
             writer.write_all(&[2u8])?;
-            bitvec::write_bitvec_mapping(&BitVecSuffixToProtein::new(text), writer)
+            bitvec::write_bitvec_mapping(&BitVecSuffixToProtein::new(text), writer)?;
         }
     }
+    writer.flush()?;
+    Ok(())
 }
 
 /// A newtype wrapping a boxed `SuffixToProteinIndex` to enable trait-based loading.
@@ -102,6 +104,13 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
             2 => {
                 let bit_len = u64::from_le_bytes(mmap[1..9].try_into().unwrap());
                 let block_count = u64::from_le_bytes(mmap[9..17].try_into().unwrap()) as usize;
+                let expected_size = 17 + block_count * 8 + (block_count / 8 + 1) * 16;
+                if mmap.len() < expected_size {
+                    return Err(format!(
+                        "Bitvec mapping file is truncated: expected {} bytes, got {}",
+                        expected_size, mmap.len()
+                    ).into());
+                }
                 let bits_offset = 17;
                 let counts_offset = bits_offset + block_count * 8;
                 Box::new(bitvec::MmapBitVecSuffixToProtein { mmap, bit_len, bits_offset, counts_offset })

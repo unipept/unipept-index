@@ -85,6 +85,9 @@ impl MmapBitVecSuffixToProtein {
 impl SuffixToProteinIndex for MmapBitVecSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let pos = suffix as u64;
+        if pos >= self.bit_len {
+            return u32::NULL;
+        }
         if self.get_bit(pos) {
             return u32::NULL;
         }
@@ -292,6 +295,41 @@ mod tests {
                 original.suffix_to_protein(i),
                 loaded.suffix_to_protein(i),
                 "mismatch at suffix {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mmap_bitvec_random_equivalence() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Deterministic pseudo-random bit pattern, ~2000 bits (spans ~4 superblocks)
+        let len = 2000usize;
+        let mut raw: String = (0..len).map(|i| {
+            let mut h = DefaultHasher::new();
+            i.hash(&mut h);
+            // separator/terminator at ~1/8 of positions, amino acid otherwise
+            if h.finish() % 8 == 0 { '-' } else { 'A' }
+        }).collect();
+        // ensure valid termination
+        raw.pop();
+        raw.push('$');
+
+        let text = ProteinText::from_string(&raw);
+        let original = BitVecSuffixToProtein::new(&text);
+
+        let mut buf = vec![2u8];
+        write_bitvec_mapping(&original, &mut buf).unwrap();
+        let tmp = write_to_tempfile(&buf);
+        let mmap_idx = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
+
+        for i in 0..text.len() as i64 {
+            assert_eq!(
+                original.suffix_to_protein(i),
+                mmap_idx.suffix_to_protein(i),
+                "mismatch at position {}",
                 i
             );
         }
