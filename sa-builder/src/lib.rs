@@ -77,7 +77,7 @@ fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static 
     // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
     // max 28 out of 32 bits used, because a bucket is created for every element of the alfabet 8 * 2^28).
     let mut libsais_sparseness = MAX_SPARSENESS;
-    while sparseness_factor % libsais_sparseness != 0 {
+    while !sparseness_factor.is_multiple_of(libsais_sparseness) {
         libsais_sparseness -= 1;
     }
     let sample_rate = sparseness_factor / libsais_sparseness;

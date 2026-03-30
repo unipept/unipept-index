@@ -34,7 +34,7 @@ impl BitArray {
     ///
     /// A new `BitArray` with the specified capacity.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
-        let extra = if capacity * bits_per_value % 64 == 0 { 0 } else { 1 };
+        let extra = if (capacity * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
         Self {
             data: vec![0; capacity * bits_per_value / 64 + extra],
             mask: (1 << bits_per_value) - 1,
