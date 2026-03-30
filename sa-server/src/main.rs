@@ -2,7 +2,6 @@ use std::{
     error::Error,
     sync::Arc
 };
-use std::io::BufWriter;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -13,10 +12,9 @@ use clap::Parser;
 use sa_index::{
     peptide_search::{SearchResult, search_all_peptides},
     sa_searcher::Searcher,
-    suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
+    suffix_to_protein_index::SuffixToProteinMapping
 };
 use serde::Deserialize;
-use sa_index::suffix_to_protein_index::{dump_mapping, SuffixToProteinMappingStyle};
 use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
 
 /// Enum that represents all possible commandline arguments
@@ -28,10 +26,9 @@ pub struct Arguments {
     database_file: String,
     #[arg(short, long)]
     index_file: String,
-    /// Path to the prebuilt suffix-to-protein mapping binary file (optional). When omitted the
-    /// mapping is built from the protein text at startup using the BitVec strategy.
+    /// Path to the prebuilt suffix-to-protein mapping binary file.
     #[arg(long)]
-    mapping_file: Option<String>,
+    mapping_file: String,
     /// Use memory-mapped I/O to load the suffix array and ProteinText. When set, --database-file
     /// must point to a binary proteins file (.proteins.bin). Makes startup near-instant by letting
     /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
@@ -124,24 +121,12 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let proteins = load_proteins_file(&database_file, mmap)?;
     eprintln!("Successfully loaded the proteins!");
 
-    let suffix_index_to_protein = if let Some(path) = mapping_file {
-        eprintln!();
-        eprintln!("Started loading the suffix-to-protein mapping...");
-        let mapping = load_mapping_file(&path, mmap)?;
-        eprintln!("Successfully loaded the suffix-to-protein mapping!");
-        mapping
-    } else {
-        eprintln!();
-        eprintln!("Building suffix-to-protein mapping from proteins...");
+    eprintln!();
+    eprintln!("Started loading the suffix-to-protein mapping...");
+    let SuffixToProteinMapping(mapping) = load_mapping_file(&mapping_file, mmap)?;
+    eprintln!("Successfully loaded the suffix-to-protein mapping!");
 
-        // Dump the mapping
-        let mut writer = BufWriter::new(std::fs::File::create("/mnt/data/uniprot-2025-04/suffix-array/mapping.bin")?);
-        dump_mapping(&SuffixToProteinMappingStyle::BitVec, proteins.text(), &mut writer)?;
-        eprintln!("Successfully built the suffix-to-protein mapping!");
-        SuffixToProteinMapping(Box::new(BitVecSuffixToProtein::new(proteins.text())))
-    };
-
-    let searcher = Arc::new(Searcher::new(suffix_array, proteins, suffix_index_to_protein.0));
+    let searcher = Arc::new(Searcher::new(suffix_array, proteins, mapping));
 
     // build our application with a route
     let app = Router::new()

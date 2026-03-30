@@ -1,7 +1,7 @@
 use std::{error::Error, io::{BufRead, Write}, path::Path};
 
 pub trait WriteBinary {
-    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>>;
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>>;
 }
 
 pub trait ReadBinary: Sized {

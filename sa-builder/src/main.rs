@@ -30,7 +30,8 @@ fn main() {
     });
     let bits_per_value = (proteins.text().len() as f64).log2().ceil() as usize;
 
-    let text: Vec<u8> = (0..proteins.text().len()).map(|i| proteins.text().get(i)).collect();
+    // Not the most efficient way to get the text, but still acceptable
+    let text: Vec<u8> = proteins.text().iter().collect();
     let sa = timed("building the suffix array", || {
         build_ssa(text, &construction_algorithm, sparseness_factor)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
@@ -38,36 +39,38 @@ fn main() {
     eprintln!("\tAmount of items: {}", sa.len());
 
     // open the output file
-    let mut file =
+    let mut sa_file =
         open_file_buffer(&output_sa, 100 * 1024 * 1024).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     timed("dumping the suffix array", || {
         eprintln!("\tAmount of bits per item: {}", if compress_sa { bits_per_value } else { 64 });
         if compress_sa {
-            if let Err(err) = dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut file) {
+            if let Err(err) = dump_compressed_suffix_array(sa, sparseness_factor, bits_per_value, &mut sa_file) {
                 eprint_and_exit(err.to_string().as_str());
             };
         } else {
-            if let Err(err) = dump_suffix_array(&sa, sparseness_factor, &mut file) {
+            if let Err(err) = dump_suffix_array(sa, sparseness_factor, &mut sa_file) {
                 eprint_and_exit(err.to_string().as_str());
             }
         }
     });
 
-    timed("writing proteins binary", || {
-        let mut proteins_file = open_file_buffer(&output_proteins, 100 * 1024 * 1024)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-        proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
-    });
-    eprintln!("\tOutput: {}", output_proteins);
+    let mut mapping_file = open_file_buffer(&output_mapping, 100 * 1024 * 1024)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     timed("writing suffix-to-protein mapping binary", || {
-        let mut mapping_file = open_file_buffer(&output_mapping, 100 * 1024 * 1024)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
         dump_mapping(&mapping_style, proteins.text(), &mut mapping_file)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });
     eprintln!("\tOutput: {}", output_mapping);
+
+    let mut proteins_file = open_file_buffer(&output_proteins, 100 * 1024 * 1024)
+        .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+
+    timed("writing proteins binary", || {
+        proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+    });
+    eprintln!("\tOutput: {}", output_proteins);
 }
 
 fn open_file_buffer(file: &str, buffer_size: usize) -> std::io::Result<BufWriter<File>> {

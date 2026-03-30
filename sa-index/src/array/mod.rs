@@ -79,15 +79,15 @@ impl SuffixArray {
 }
 
 impl WriteBinary for SuffixArray {
-    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             SuffixArray::Original(sa, sparseness_factor) => {
-                original::dump_suffix_array(sa, *sparseness_factor, writer)
+                original::dump_suffix_array(sa, sparseness_factor, writer)
             }
             SuffixArray::Compressed(bit_array, sample_rate) => {
                 writer.write_all(&[bit_array.bits_per_value() as u8])
                     .map_err(|_| "Could not write the required bits")?;
-                writer.write_all(&[*sample_rate])
+                writer.write_all(&[sample_rate])
                     .map_err(|_| "Could not write the sparseness factor")?;
                 writer.write_all(&(bit_array.len() as u64).to_le_bytes())
                     .map_err(|_| "Could not write the size")?;
@@ -319,7 +319,7 @@ mod tests {
 
         let sa = vec![1_i64, 2, 3, 4, 5];
         let mut file = std::fs::File::create(&path).unwrap();
-        dump_suffix_array(&sa, 3, &mut file).unwrap();
+        dump_suffix_array(sa, 3, &mut file).unwrap();
         drop(file);
 
         let loaded = SuffixArray::read_binary_mmap(&path).unwrap();

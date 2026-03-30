@@ -217,7 +217,7 @@ impl WriteBinary for Proteins {
     ///   fa_offset u32, fa_len u16
     /// - uid bytes (concatenated uniprot_ids)
     /// - fa bytes (concatenated functional_annotations)
-    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         match self {
             Proteins::InMemory { text, proteins } => {
                 WriteBinary::write_binary(text, writer)?;
@@ -234,7 +234,7 @@ impl WriteBinary for Proteins {
 
                 let mut uid_offset: u32 = 0;
                 let mut fa_offset: u32 = 0;
-                for protein in proteins {
+                for protein in &proteins {
                     let uid_len = protein.uniprot_id.len() as u16;
                     let fa_len = protein.functional_annotations.len() as u16;
                     writer.write_all(&protein.taxon_id.to_le_bytes())?;
@@ -246,7 +246,7 @@ impl WriteBinary for Proteins {
                     fa_offset += fa_len as u32;
                 }
 
-                for protein in proteins {
+                for protein in &proteins {
                     writer.write_all(protein.uniprot_id.as_bytes())?;
                 }
 
@@ -459,8 +459,8 @@ mod tests {
         let tmp_dir = TempDir::new("test_binary_roundtrip").unwrap();
         let database_file = create_database_file(&tmp_dir);
 
-        let original =
-            Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
+        let original = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
+        let original_save = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
 
         let bin_path = tmp_dir.path().join("proteins.bin");
         let mut bin_file = File::create(&bin_path).unwrap();
@@ -471,9 +471,9 @@ mod tests {
         let mut reader = BufReader::new(f);
         let loaded = Proteins::read_binary(&mut reader).unwrap();
 
-        assert_eq!(loaded.len(), original.len());
-        for i in 0..original.len() {
-            let orig = original.get(i);
+        assert_eq!(loaded.len(), original_save.len());
+        for i in 0..original_save.len() {
+            let orig = original_save.get(i);
             let load = loaded.get(i);
             assert_eq!(orig.uniprot_id, load.uniprot_id, "uniprot_id mismatch at {}", i);
             assert_eq!(orig.taxon_id, load.taxon_id, "taxon_id mismatch at {}", i);
@@ -484,11 +484,11 @@ mod tests {
                 i
             );
         }
-        assert_eq!(loaded.text().len(), original.text().len());
-        for i in 0..original.text().len() {
+        assert_eq!(loaded.text().len(), original_save.text().len());
+        for i in 0..original_save.text().len() {
             assert_eq!(
                 loaded.text().get(i),
-                original.text().get(i),
+                original_save.text().get(i),
                 "text mismatch at {}",
                 i
             );
@@ -501,6 +501,7 @@ mod tests {
         let database_file = create_database_file(&tmp_dir);
 
         let original = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
+        let original_save = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
 
         let bin_path = tmp_dir.path().join("proteins.bin");
         let mut bin_file = File::create(&bin_path).unwrap();
@@ -509,9 +510,9 @@ mod tests {
 
         let mmap_loaded = Proteins::read_binary_mmap(bin_path.as_path()).unwrap();
 
-        assert_eq!(mmap_loaded.len(), original.len());
-        for i in 0..original.len() {
-            let orig = original.get(i);
+        assert_eq!(mmap_loaded.len(), original_save.len());
+        for i in 0..original_save.len() {
+            let orig = original_save.get(i);
             let mmap = mmap_loaded.get(i);
             assert_eq!(orig.uniprot_id, mmap.uniprot_id, "uniprot_id mismatch at {}", i);
             assert_eq!(orig.taxon_id, mmap.taxon_id, "taxon_id mismatch at {}", i);
@@ -522,11 +523,11 @@ mod tests {
                 i
             );
         }
-        assert_eq!(mmap_loaded.text().len(), original.text().len());
-        for i in 0..original.text().len() {
+        assert_eq!(mmap_loaded.text().len(), original_save.text().len());
+        for i in 0..original_save.text().len() {
             assert_eq!(
                 mmap_loaded.text().get(i),
-                original.text().get(i),
+                original_save.text().get(i),
                 "text mismatch at {}",
                 i
             );

@@ -28,7 +28,7 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<
     }
 }
 
-fn write_vec_i64(vec: &[i64], writer: &mut impl Write) -> std::io::Result<()> {
+fn write_vec_i64(vec: Vec<i64>, writer: &mut impl Write) -> std::io::Result<()> {
     for value in vec {
         writer.write_all(&value.to_le_bytes())?;
     }
@@ -54,7 +54,7 @@ fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result
 }
 
 /// Writes the suffix array to a binary file.
-pub fn dump_suffix_array(sa: &[i64], sparseness_factor: u8, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
+pub fn dump_suffix_array(sa: Vec<i64>, sparseness_factor: u8, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     writer.write(&[64_u8]).map_err(|_| "Could not write the required bits to the writer")?;
     writer.write(&[sparseness_factor]).map_err(|_| "Could not write the sparseness factor to the writer")?;
     writer.write(&(sa.len()).to_le_bytes()).map_err(|_| "Could not write the size of the suffix array to the writer")?;
@@ -143,7 +143,7 @@ mod tests {
         let mut buffer = Vec::new();
         let sa = vec![1, 2, 3, 4, 5];
 
-        dump_suffix_array(&sa, 1, &mut buffer).unwrap();
+        dump_suffix_array(sa, 1, &mut buffer).unwrap();
 
         assert_eq!(buffer, vec![
             64, 1, 5, 0, 0, 0, 0, 0, 0, 0,
@@ -155,27 +155,27 @@ mod tests {
     #[should_panic(expected = "Could not write the required bits to the writer")]
     fn test_dump_suffix_array_fail_required_bits() {
         let mut writer = FailingWriter { valid_write_count: 0 };
-        dump_suffix_array(&vec![], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![], 1, &mut writer).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "Could not write the sparseness factor to the writer")]
     fn test_dump_suffix_array_fail_sparseness_factor() {
         let mut writer = FailingWriter { valid_write_count: 1 };
-        dump_suffix_array(&vec![], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![], 1, &mut writer).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "Could not write the size of the suffix array to the writer")]
     fn test_dump_suffix_array_fail_size() {
         let mut writer = FailingWriter { valid_write_count: 2 };
-        dump_suffix_array(&vec![], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![], 1, &mut writer).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "Could not write the suffix array to the writer")]
     fn test_dump_suffix_array_fail_suffix_array() {
         let mut writer = FailingWriter { valid_write_count: 3 };
-        dump_suffix_array(&vec![1], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![1], 1, &mut writer).unwrap();
     }
 }

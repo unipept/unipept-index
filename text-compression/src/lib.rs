@@ -196,7 +196,7 @@ impl WriteBinary for ProteinText {
     /// Format:
     /// - 8 bytes: text_length (u64 le)
     /// - N bytes: BitArray data where N = ceil(text_length * 5 / 64) * 8
-    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         match self {
             ProteinText::InMemory { bit_array, .. } => {
                 let text_length = bit_array.len() as u64;
@@ -204,10 +204,10 @@ impl WriteBinary for ProteinText {
                 bit_array.write_binary(writer)?;
             }
             ProteinText::MmapBacked { mmap, data_offset, len } => {
-                let text_length = *len as u64;
+                let text_length = len as u64;
                 writer.write_all(&text_length.to_le_bytes())?;
-                let n_bytes = bit_array_byte_size(*len);
-                writer.write_all(&mmap[*data_offset..*data_offset + n_bytes])?;
+                let n_bytes = bit_array_byte_size(len);
+                writer.write_all(&mmap[data_offset..data_offset + n_bytes])?;
             }
         }
         Ok(())
