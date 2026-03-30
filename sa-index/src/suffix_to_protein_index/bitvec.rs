@@ -311,7 +311,7 @@ mod tests {
             let mut h = DefaultHasher::new();
             i.hash(&mut h);
             // separator/terminator at ~1/8 of positions, amino acid otherwise
-            if h.finish() % 8 == 0 { '-' } else { 'A' }
+            if h.finish().is_multiple_of(8) { '-' } else { 'A' }
         }).collect();
         // ensure valid termination
         raw.pop();
