@@ -141,7 +141,7 @@ impl ReadBinaryMmap for SuffixArray {
         let sample_rate = mmap[1];
         let amount_of_items = u64::from_le_bytes(mmap[2..10].try_into()?) as usize;
 
-        let extra = if amount_of_items * bits_per_value % 64 == 0 { 0 } else { 1 };
+        let extra = if (amount_of_items * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
         if mmap.len() < 10 + amount_of_items * bits_per_value / 64 + extra {
             return Err("The binary file is too small to contain the SA data".into());
         }

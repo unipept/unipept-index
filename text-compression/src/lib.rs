@@ -18,7 +18,7 @@ const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
 pub fn bit_array_byte_size(text_length: usize) -> usize {
-    let extra = if text_length * 5 % 64 == 0 { 0 } else { 1 };
+    let extra = if (text_length * 5).is_multiple_of(64) { 0 } else { 1 };
     (text_length * 5 / 64 + extra) * 8
 }
 
@@ -179,12 +179,12 @@ impl ProteinText {
     }
 
     /// Get an iterator over the characters of the text.
-    pub fn iter(&self) -> ProteinTextIterator {
+    pub fn iter(&self) -> ProteinTextIterator<'_> {
         ProteinTextIterator { protein_text: self, index: 0 }
     }
 
     /// Get a slice of the text.
-    pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice {
+    pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_> {
         ProteinTextSlice::new(self, start, end)
     }
 
@@ -319,7 +319,7 @@ impl<'a> ProteinTextSlice<'a> {
     }
 
     /// Get an iterator over the slice.
-    pub fn iter(&self) -> ProteinTextSliceIterator {
+    pub fn iter(&self) -> ProteinTextSliceIterator<'_> {
         ProteinTextSliceIterator { text_slice: self, index: 0 }
     }
 }

@@ -24,8 +24,8 @@ pub struct BitVecSuffixToProtein {
 /// - 8 bytes block_count (u64 LE)
 /// - block_count × 8 bytes: raw u64 blocks (bit 0 = LSB of block 0)
 /// - (block_count/8 + 1) × 16 bytes: superblock cells
-///     each cell: [level1: u64 LE] [packed_level2: u64 LE]
-///     packed_level2 bits (w-1)*9..(w-1)*9+9 hold cumulative count before word w (w=1..7)
+///   each cell: [level1: u64 LE] [packed_level2: u64 LE]
+///   packed_level2 bits (w-1)*9..(w-1)*9+9 hold cumulative count before word w (w=1..7)
 pub struct MmapBitVecSuffixToProtein {
     pub(super) mmap: Mmap,
     pub(super) bit_len: u64,

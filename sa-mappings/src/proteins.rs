@@ -57,16 +57,25 @@ impl<'a> ProteinRef<'a> {
 pub enum Proteins {
     /// All data loaded into memory.
     InMemory {
+        /// The compressed protein sequence text for all proteins, stored in memory.
         text: ProteinText,
+        /// The collection of all proteins with their associated metadata.
         proteins: Vec<Protein>,
     },
     /// Data accessed via memory-mapped file.
     MmapBacked {
+        /// The memory-mapped file backing the protein data.
         mmap: Arc<Mmap>,
+        /// The compressed protein sequence text, backed by the same memory-mapped file.
         text: ProteinText,
+        /// The total number of proteins stored in the file.
         protein_count: usize,
+        /// Byte offset into `mmap` where the fixed-size per-protein table begins.
+        /// Each entry is 16 bytes: taxon_id (u32), uid_offset (u32), uid_len (u16), fa_offset (u32), fa_len (u16).
         fixed_table_offset: usize,
+        /// Byte offset into `mmap` where the concatenated UniProt ID byte data begins.
         uid_data_offset: usize,
+        /// Byte offset into `mmap` where the concatenated functional annotation byte data begins.
         fa_data_offset: usize,
     },
 }

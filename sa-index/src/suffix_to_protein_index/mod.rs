@@ -95,7 +95,7 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
 
-        if mmap.len() < 1 {
+        if mmap.is_empty() {
             return Err("Mapping file is too small to contain a type header byte".into());
         }
 
