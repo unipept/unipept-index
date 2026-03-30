@@ -176,7 +176,7 @@ impl ProteinText {
     ///
     /// # Returns
     ///
-    /// An `ProteinTextSlice` representing a slice of the text.
+    /// A `ProteinTextSlice` representing a slice of the text.
     pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_> {
         ProteinTextSlice::new(self, start, end)
     }

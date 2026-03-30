@@ -39,7 +39,7 @@ impl Error for CompileError<'_> {}
 ///
 /// # Errors
 ///
-/// Returns a CompilationError if the command failed
+/// Returns a CompileError if the command failed
 fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), CompileError<'_>> {
     match exit_status.success() {
         true => Ok(()),
