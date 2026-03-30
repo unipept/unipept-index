@@ -130,17 +130,26 @@ impl ReadBinaryMmap for SuffixArray {
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
 
-        let bits_per_value = mmap[0] as usize;
-        let sample_rate = mmap[1];
-        let len = u64::from_le_bytes(mmap[2..10].try_into()?) as usize;
-
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
+
+        if mmap.len() < 10 {
+            return Err("The binary file is too small to contain the SA header".into());
+        }
+
+        let bits_per_value = mmap[0] as usize;
+        let sample_rate = mmap[1];
+        let amount_of_items = u64::from_le_bytes(mmap[2..10].try_into()?) as usize;
+
+        let extra = if amount_of_items * bits_per_value % 64 == 0 { 0 } else { 1 };
+        if mmap.len() < 10 + amount_of_items * bits_per_value / 64 + extra {
+            return Err("The binary file is too small to contain the SA data".into());
+        }
 
         Ok(SuffixArray::MmapBacked {
             mmap,
             data_offset: 10,
-            len,
+            len: amount_of_items,
             bits_per_value,
             sample_rate
         })

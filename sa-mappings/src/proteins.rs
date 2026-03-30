@@ -315,23 +315,50 @@ impl ReadBinaryMmap for Proteins {
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
 
+        let mmap_len = mmap.len();
+        if mmap_len < 8 {
+            return Err("proteins file too short to contain text header".into());
+        }
+
         // Parse text section header
-        let text_length = u64::from_le_bytes(mmap[0..8].try_into().unwrap()) as usize;
-        let text_data_offset = 8;
+        let text_length = u64::from_le_bytes(mmap[0..8].try_into()?) as usize;
+        let text_data_offset: usize = 8;
         let bit_array_bytes = bit_array_byte_size(text_length);
+
+        // Compute metadata offset with overflow and bounds checks
+        let meta_offset = text_data_offset
+            .checked_add(bit_array_bytes)
+            .ok_or_else(|| "overflow while computing metadata offset".to_string())?;
+        let meta_end = meta_offset
+            .checked_add(24)
+            .ok_or_else(|| "overflow while computing metadata end offset".to_string())?;
+        if meta_end > mmap_len {
+            return Err("proteins file too short to contain metadata section".into());
+        }
 
         // Build ProteinText::MmapBacked
         let text = ProteinText::from_mmap(Arc::clone(&mmap), text_data_offset, text_length);
 
         // Parse metadata section
-        let meta_offset = 8 + bit_array_bytes;
-        let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into().unwrap()) as usize;
-        let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into().unwrap()) as usize;
-        // fa_bytes_total available at meta_offset+16..meta_offset+24 but not needed for offsets
+        let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
+        let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?, ) as usize;
 
-        let fixed_table_offset = meta_offset + 24;
-        let uid_data_offset = fixed_table_offset + protein_count * 16;
-        let fa_data_offset = uid_data_offset + uid_bytes_total;
+        let fixed_table_offset = meta_offset
+            .checked_add(24)
+            .ok_or_else(|| "overflow while computing fixed table offset".to_string())?;
+        let protein_entry_bytes = protein_count
+            .checked_mul(16)
+            .ok_or_else(|| "overflow while computing protein table size".to_string())?;
+        let uid_data_offset = fixed_table_offset
+            .checked_add(protein_entry_bytes)
+            .ok_or_else(|| "overflow while computing uid data offset".to_string())?;
+        let fa_data_offset = uid_data_offset
+            .checked_add(uid_bytes_total)
+            .ok_or_else(|| "overflow while computing fa data offset".to_string())?;
+
+        if uid_data_offset > mmap_len || fa_data_offset > mmap_len {
+            return Err("proteins file truncated: data section offsets exceed file length".into());
+        }
 
         Ok(Proteins::MmapBacked {
             mmap,

@@ -95,15 +95,40 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
 
+        if mmap.len() < 1 {
+            return Err("Mapping file is too small to contain a type header byte".into());
+        }
+
         let index: Box<dyn SuffixToProteinIndex> = match mmap[0] {
-            0 => Box::new(dense::MmapDenseSuffixToProtein { mmap, data_offset: 9 }),
+            0 => {
+                // Dense mapping: expect at least 8 bytes of count after the type byte.
+                if mmap.len() < 9 {
+                    return Err("Dense mapping file is truncated: missing count header".into());
+                }
+
+                let _count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
+
+                Box::new(dense::MmapDenseSuffixToProtein { mmap, data_offset: 9 })
+            }
             1 => {
-                let count = u64::from_le_bytes(mmap[1..9].try_into().unwrap()) as usize;
-                Box::new(sparse::MmapSparseSuffixToProtein { mmap, data_offset: 9, count })
+                // Sparse mapping: expect at least 8 bytes of count after the type byte.
+                if mmap.len() < 9 {
+                    return Err("Sparse mapping file is truncated: missing count header".into());
+                }
+
+                let count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
+
+                Box::new(sparse::MmapSparseSuffixToProtein { mmap, count, data_offset: 9 })
             }
             2 => {
-                let bit_len = u64::from_le_bytes(mmap[1..9].try_into().unwrap());
-                let block_count = u64::from_le_bytes(mmap[9..17].try_into().unwrap()) as usize;
+                // Bitvec mapping: expect at least 8 bytes of bit_len and 8 bytes of block_count.
+                if mmap.len() < 17 {
+                    return Err("Bitvec mapping file is truncated: missing header fields".into());
+                }
+
+                let bit_len = u64::from_le_bytes(mmap[1..9].try_into()?);
+                let block_count = u64::from_le_bytes(mmap[9..17].try_into()?) as usize;
+
                 let expected_size = 17 + block_count * 8 + (block_count / 8 + 1) * 16;
                 if mmap.len() < expected_size {
                     return Err(format!(
@@ -111,8 +136,10 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
                         expected_size, mmap.len()
                     ).into());
                 }
+
                 let bits_offset = 17;
                 let counts_offset = bits_offset + block_count * 8;
+
                 Box::new(bitvec::MmapBitVecSuffixToProtein { mmap, bit_len, bits_offset, counts_offset })
             }
             t => return Err(format!("Unknown mapping type byte: {}", t).into()),

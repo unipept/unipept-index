@@ -18,8 +18,9 @@ pub fn load_proteins_file(file: &str, use_mmap: bool) -> Result<Proteins, Box<dy
     if use_mmap {
         return Proteins::read_binary_mmap(std::path::Path::new(file));
     }
-    let f = File::open(file)?;
-    let mut reader = BufReader::new(f);
+    
+    let proteins_file = File::open(file)?;
+    let mut reader = BufReader::new(proteins_file);
     Proteins::read_binary(&mut reader)
 }
 

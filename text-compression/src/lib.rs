@@ -238,9 +238,23 @@ impl ReadBinaryMmap for ProteinText {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let f = File::open(path)?;
         let mmap = Arc::new(unsafe { Mmap::map(&f)? });
+
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
-        let text_length = u64::from_le_bytes(mmap[0..8].try_into().unwrap()) as usize;
+
+        // Ensure the file is large enough to contain the 8-byte header.
+        if mmap.len() < 8 {
+            return Err("File is too small to contain ProteinText header (8 bytes required)".into());
+        }
+
+        let text_length = u64::from_le_bytes(mmap[0..8].try_into()
+            .map_err(|_| "Failed to parse ProteinText header")?) as usize;
+
+        // Ensure the file is large enough to contain the BitArray data for the declared text length.
+        if mmap.len() < 8 + bit_array_byte_size(text_length) {
+            return Err("File is too small to contain ProteinText BitArray data for declared length".into());
+        }
+
         Ok(ProteinText::from_mmap(mmap, 8, text_length))
     }
 }

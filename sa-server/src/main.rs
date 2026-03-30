@@ -20,8 +20,7 @@ use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// Path to the database file. If --mmap is set, this should point to the binary proteins file
-    /// (.proteins.bin); otherwise it should point to the TSV database file.
+    /// Path to the database file. This should point to the binary proteins file (.proteins.bin)
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
