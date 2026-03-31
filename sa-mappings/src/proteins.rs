@@ -266,7 +266,7 @@ impl WriteBinary for Proteins {
                 Ok(())
             }
             Proteins::MmapBacked { .. } => {
-                panic!("write_binary() is not supported on MmapBacked Proteins");
+                Err("write_binary() is not supported on MmapBacked Proteins".into())
             }
         }
     }
