@@ -7,9 +7,14 @@ edition = "2021"
 name = "sa-benchmarks"
 path = "src/main.rs"
 
+[[bin]]
+name = "generate-peptides"
+path = "src/generate_peptides.rs"
+
 [dependencies]
-sa-index   = { path = "../sa-index" }
-sa-server  = { path = "../sa-server" }
+sa-index            = { path = "../sa-index" }
+sa-server           = { path = "../sa-server" }
+text-compression    = { path = "../text-compression" }
 clap       = { version = "4.5", features = ["derive"] }
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -53,17 +53,26 @@ struct Args {
     #[arg(long, default_value_t = 10_000)]
     max_matches: usize,
 
-    /// Number of randomly generated peptides per run
+    /// Number of peptides per run.
+    /// In random mode: how many random peptides to generate.
+    /// In file mode (--peptide-file): how many lines to consume per run.
     #[arg(long, default_value_t = 10_000)]
     amount_of_peptides: usize,
 
-    /// Minimum length of a randomly generated peptide
+    /// Minimum length of a randomly generated peptide (ignored when --peptide-file is set)
     #[arg(long, default_value_t = 5)]
     peptide_length_min: usize,
 
-    /// Maximum length of a randomly generated peptide
+    /// Maximum length of a randomly generated peptide (ignored when --peptide-file is set)
     #[arg(long, default_value_t = 50)]
     peptide_length_max: usize,
+
+    /// Path to a pre-generated peptide file (one peptide per line).
+    /// When set, peptides are consumed sequentially: run 1 reads lines 0..N, run 2 reads N..2N, etc.
+    /// The file must contain at least amount_of_peptides × runs lines.
+    /// --peptide-length-min and --peptide-length-max are ignored.
+    #[arg(long)]
+    peptide_file: Option<PathBuf>,
 
     /// Number of timed benchmark runs to perform
     #[arg(long, default_value_t = 100)]
@@ -74,7 +83,7 @@ struct Args {
     warmup: Option<usize>,
 
     /// Use memory-mapped I/O when loading the index files
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = true)]
     mmap: bool,
 }
 
@@ -95,6 +104,7 @@ struct BenchmarkConfig {
     amount_of_peptides: usize,
     peptide_length_min: usize,
     peptide_length_max: usize,
+    peptide_source: String,
 }
 
 #[derive(Serialize)]
@@ -200,13 +210,7 @@ fn measure_process_memory() -> u64 {
 // Benchmark run
 // ---------------------------------------------------------------------------
 
-fn run_benchmark(searcher: &Searcher, args: &Args, theoretical_max_memory: u64) -> BenchmarkResult {
-    let peptides = generate_peptides(
-        args.amount_of_peptides,
-        args.peptide_length_min,
-        args.peptide_length_max,
-    );
-
+fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoretical_max_memory: u64) -> BenchmarkResult {
     // Phase 1: suffix array search (parallel)
     let search_start = Instant::now();
     let suffix_results: Vec<SearchAllSuffixesResult> = peptides
@@ -258,7 +262,7 @@ fn run_benchmark(searcher: &Searcher, args: &Args, theoretical_max_memory: u64) 
 
     let total_duration_ns = search_duration_ns + retrieval_duration_ns;
     let throughput_qps = if total_duration_ns > 0 {
-        args.amount_of_peptides as f64 / (total_duration_ns as f64 / 1e9)
+        peptides.len() as f64 / (total_duration_ns as f64 / 1e9)
     } else {
         0.0
     };
@@ -268,7 +272,7 @@ fn run_benchmark(searcher: &Searcher, args: &Args, theoretical_max_memory: u64) 
         retrieval_duration_ns,
         total_duration_ns,
         throughput_qps,
-        amount_of_queries: args.amount_of_peptides,
+        amount_of_queries: peptides.len(),
         query_hit_count,
         suffix_hit_count,
         protein_hit_count,
@@ -285,7 +289,8 @@ fn run_benchmark(searcher: &Searcher, args: &Args, theoretical_max_memory: u64) 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    if args.peptide_length_min > args.peptide_length_max {
+    // Validate length range only for random mode
+    if args.peptide_file.is_none() && args.peptide_length_min > args.peptide_length_max {
         return Err("--peptide-length-min must be <= --peptide-length-max".into());
     }
 
@@ -322,18 +327,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     let theoretical_max = theoretical_memory(&searcher, mapping_type_str);
     eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
 
-    let config = BenchmarkConfig {
-        sa_type: sa_type.to_string(),
-        mapping_type: mapping_type_str.to_string(),
-        use_mmap: args.mmap,
-        sample_rate,
-        bits_per_value,
-        equate_il: args.equate_il,
-        tryptic: args.tryptic,
-        max_matches: args.max_matches,
-        amount_of_peptides: args.amount_of_peptides,
-        peptide_length_min: args.peptide_length_min,
-        peptide_length_max: args.peptide_length_max,
+    // Load peptides: either all at once from a file (for sequential chunking across runs)
+    // or generate fresh random peptides for each run.
+    let all_peptides: Option<Vec<String>> = if let Some(ref path) = args.peptide_file {
+        let peptides: Vec<String> = BufReader::new(File::open(path)?)
+            .lines()
+            .collect::<Result<_, _>>()?;
+        if peptides.is_empty() {
+            return Err(format!("peptide file '{}' is empty", path.display()).into());
+        }
+        let required = args.amount_of_peptides * args.runs as usize;
+        if peptides.len() < required {
+            return Err(format!(
+                "peptide file '{}' has {} lines, but {} runs × {} peptides/run = {} lines are required",
+                path.display(),
+                peptides.len(),
+                args.runs,
+                args.amount_of_peptides,
+                required,
+            ).into());
+        }
+        eprintln!("Loaded {} peptides from {}", peptides.len(), path.display());
+        Some(peptides)
+    } else {
+        None
+    };
+
+    let peptide_source = match &args.peptide_file {
+        Some(p) => p.display().to_string(),
+        None => "random".to_string(),
     };
 
     // Optional warmup pass (not timed)
@@ -361,13 +383,47 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!();
 
     for run in 1..=args.runs {
-        let result = run_benchmark(&searcher, &args, theoretical_max);
+        // In file mode: consume the next chunk sequentially.
+        // In random mode: generate a fresh set of random peptides.
+        let run_peptides: Vec<String> = match &all_peptides {
+            Some(all) => {
+                let start = (run as usize - 1) * args.amount_of_peptides;
+                all[start..start + args.amount_of_peptides].to_vec()
+            }
+            None => generate_peptides(
+                args.amount_of_peptides,
+                args.peptide_length_min,
+                args.peptide_length_max,
+            ),
+        };
+
+        let (p_min, p_max) = run_peptides.iter().fold(
+            (usize::MAX, 0usize),
+            |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())),
+        );
+
+        let config = BenchmarkConfig {
+            sa_type: sa_type.to_string(),
+            mapping_type: mapping_type_str.to_string(),
+            use_mmap: args.mmap,
+            sample_rate,
+            bits_per_value,
+            equate_il: args.equate_il,
+            tryptic: args.tryptic,
+            max_matches: args.max_matches,
+            amount_of_peptides: run_peptides.len(),
+            peptide_length_min: p_min,
+            peptide_length_max: p_max,
+            peptide_source: peptide_source.clone(),
+        };
+
+        let result = run_benchmark(&searcher, &args, &run_peptides, theoretical_max);
 
         let record = BenchmarkRecord {
             version: SCHEMA_VERSION,
             label: args.label.clone(),
             commit: env!("GIT_COMMIT_HASH").to_string(),
-            config: config.clone(),
+            config,
             result,
         };
 
