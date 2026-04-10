@@ -1,5 +1,7 @@
 target/
 data/
+uniprot-2026-01/
+scripts/
 
 libsais64-rs/libsais
 libsais64-rs/libsais-packed
