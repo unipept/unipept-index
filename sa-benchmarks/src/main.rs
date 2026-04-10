@@ -7,7 +7,6 @@ use std::time::Instant;
 use clap::Parser;
 use rand::Rng;
 use rayon::prelude::*;
-use sa_index::peptide_search::search_all_peptides;
 use sa_index::sa_searcher::{SearchAllSuffixesResult, Searcher};
 use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
@@ -83,7 +82,7 @@ struct Args {
     warmup: Option<usize>,
 
     /// Use memory-mapped I/O when loading the index files
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = false)]
     mmap: bool,
 }
 
@@ -161,7 +160,7 @@ fn generate_peptides(count: usize, min_len: usize, max_len: usize) -> Vec<String
 /// This is derived from the actual data sizes, **not** from disk file sizes, so it remains
 /// accurate when new structures are added to the `Searcher`. When you add a new structure,
 /// extend this function with its memory calculation.
-fn theoretical_memory(searcher: &Searcher, mapping_type: &str) -> u64 {
+fn theoretical_memory(searcher: &Searcher, mapping_type: &str, use_mmap: bool) -> u64 {
     let text_len = searcher.proteins.text().len() as u64;
     let protein_count = searcher.proteins.len() as u64;
 
@@ -171,14 +170,21 @@ fn theoretical_memory(searcher: &Searcher, mapping_type: &str) -> u64 {
     // ProteinText: 5 bits per character (BitArray), rounded up to whole bytes
     let text_bytes = (text_len * 5).div_ceil(8);
 
-    // Protein metadata: compact 16-byte table entries + raw string bytes
+    // Protein metadata
     let string_bytes: u64 = (0..searcher.proteins.len())
         .map(|i| {
             let p = searcher.proteins.get(i);
             p.uniprot_id.len() as u64 + p.functional_annotations.len() as u64
         })
         .sum();
-    let metadata_bytes = protein_count * 16 + string_bytes;
+    let metadata_bytes = if use_mmap {
+        // MmapBacked: 16-byte fixed table entry per protein + concatenated string blobs
+        protein_count * 16 + string_bytes
+    } else {
+        // InMemory: Vec<Protein> on heap — each Protein struct is 56 bytes
+        // (String=24 + u32=4 + padding=4 + Vec<u8>=24) plus the heap-allocated string data
+        protein_count * 56 + string_bytes
+    };
 
     // Suffix-to-protein mapping (see suffix_to_protein_index/{dense,sparse,bitvec}.rs)
     let mapping_bytes = match mapping_type {
@@ -210,7 +216,10 @@ fn measure_process_memory() -> u64 {
 // Benchmark run
 // ---------------------------------------------------------------------------
 
-fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoretical_max_memory: u64) -> BenchmarkResult {
+fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoretical_max_memory: u64, baseline_memory: u64) -> BenchmarkResult {
+    // Memory snapshot before any timing starts — captures index-resident pages only
+    let index_memory = measure_process_memory().saturating_sub(baseline_memory);
+
     // Phase 1: suffix array search (parallel)
     let search_start = Instant::now();
     let suffix_results: Vec<SearchAllSuffixesResult> = peptides
@@ -277,7 +286,7 @@ fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoreti
         suffix_hit_count,
         protein_hit_count,
         cutoff_reached,
-        total_memory: measure_process_memory(),
+        total_memory: index_memory,
         theoretical_max_memory,
     }
 }
@@ -306,6 +315,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => "unknown",
     };
 
+    // Warm up the Rayon thread pool so its thread stacks are included in the baseline.
+    // Without this, thread stacks (~2 MB × N threads) would be attributed to index memory
+    // because Rayon initialises lazily on the first par_iter() call inside run_benchmark.
+    let _ = (0..rayon::current_num_threads()).into_par_iter().sum::<usize>();
+
+    // Baseline RSS after Rayon is warm but before any index data is loaded
+    let baseline_memory = measure_process_memory();
+
     // Load index
     eprintln!("Loading suffix array from {}...", sa_path.display());
     let suffix_array = load_suffix_array_file(sa_path.to_str().unwrap(), args.mmap)?;
@@ -324,7 +341,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let searcher = Searcher::new(suffix_array, proteins, mapping);
 
-    let theoretical_max = theoretical_memory(&searcher, mapping_type_str);
+    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, args.mmap);
     eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
 
     // Load peptides: either all at once from a file (for sequential chunking across runs)
@@ -358,15 +375,36 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "random".to_string(),
     };
 
-    // Optional warmup pass (not timed)
+    // Optional warmup pass (not timed) — processed in batches to avoid OOM on large warmup sets
+    const WARMUP_BATCH_SIZE: usize = 100_000;
     if let Some(warmup_count) = args.warmup {
         let warmup_path = args.index_dir.join("warmup.txt");
-        let warmup_peptides: Vec<String> = BufReader::new(File::open(&warmup_path)?)
-            .lines()
-            .take(warmup_count)
-            .collect::<Result<_, _>>()?;
-        eprintln!("Warming up with {} peptides from {}...", warmup_peptides.len(), warmup_path.display());
-        let _ = search_all_peptides(&searcher, &warmup_peptides, args.max_matches, args.equate_il, args.tryptic);
+        eprintln!("Warming up with {} peptides from {} (batch size {})...", warmup_count, warmup_path.display(), WARMUP_BATCH_SIZE);
+        let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
+        let mut remaining = warmup_count;
+        while remaining > 0 {
+            let batch_size = remaining.min(WARMUP_BATCH_SIZE);
+            let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
+            if batch.is_empty() {
+                break;
+            }
+            remaining -= batch.len();
+            batch.par_iter().for_each(|peptide| {
+                let result = searcher.search_matching_suffixes(
+                    peptide.trim_end().to_uppercase().as_bytes(),
+                    args.max_matches,
+                    args.equate_il,
+                    args.tryptic,
+                );
+                match result {
+                    SearchAllSuffixesResult::SearchResult(ref suf)
+                    | SearchAllSuffixesResult::MaxMatches(ref suf) => {
+                        let _ = searcher.retrieve_proteins(suf);
+                    }
+                    SearchAllSuffixesResult::NoMatches => {}
+                }
+            });
+        }
         eprintln!("Warmup complete.");
     }
 
@@ -375,7 +413,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output_path = args.output.join(format!("{}.jsonl", args.label));
     let mut output_file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(&output_path)?;
 
     eprintln!();
@@ -417,7 +456,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             peptide_source: peptide_source.clone(),
         };
 
-        let result = run_benchmark(&searcher, &args, &run_peptides, theoretical_max);
+        let result = run_benchmark(&searcher, &args, &run_peptides, theoretical_max, baseline_memory);
 
         let record = BenchmarkRecord {
             version: SCHEMA_VERSION,

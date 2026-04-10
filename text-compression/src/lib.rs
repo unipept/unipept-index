@@ -6,7 +6,7 @@ use std::{
     path::Path,
     sync::Arc
 };
-
+use std::io::Read;
 use bitarray::{Binary, BitArray, data_to_writer};
 use memmap2::Mmap;
 
@@ -222,12 +222,11 @@ impl ReadBinary for ProteinText {
         let text_length = u64::from_le_bytes(buf8) as usize;
 
         let n_bytes = bit_array_byte_size(text_length);
-        let mut data_buf = vec![0u8; n_bytes];
-        reader.read_exact(&mut data_buf).map_err(|_| "Could not read BitArray data from binary file")?;
-
         let mut bit_array = BitArray::with_capacity(text_length, 5);
+
+        let mut limited = reader.take(n_bytes as u64);
         bit_array
-            .read_binary(data_buf.as_slice())
+            .read_binary(&mut limited)
             .map_err(|_| "Could not parse BitArray data from binary file")?;
 
         Ok(ProteinText::new(bit_array))
