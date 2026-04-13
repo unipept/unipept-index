@@ -12,6 +12,7 @@ use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
+use text_compression::WriteBinary;
 
 /// Schema version — increment when the output JSON format changes
 const SCHEMA_VERSION: u32 = 1;
@@ -205,7 +206,7 @@ fn theoretical_memory(searcher: &Searcher, mapping_type: &str, use_mmap: bool) -
     };
 
     // k-mer table size
-    let kmer_table_bytes = 24_u64.pow(6) * 16;
+    let kmer_table_bytes = 25_u64.pow(6) * 16;
 
     sa_bytes + text_bytes + metadata_bytes + mapping_bytes + kmer_table_bytes
 }
@@ -355,154 +356,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         eprintln!("Building k-mer table with k=6...");
         searcher.build_kmer_table(6);
+        searcher.kmer_table.unwrap().write_binary(&mut File::create(args.output.join("kmer_table.bin"))?)?;
     }
-
-    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, args.mmap);
-    eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
-
-    // Load peptides: either all at once from a file (for sequential chunking across runs)
-    // or generate fresh random peptides for each run.
-    let all_peptides: Option<Vec<String>> = if let Some(ref path) = args.peptide_file {
-        let peptides: Vec<String> = BufReader::new(File::open(path)?)
-            .lines()
-            .collect::<Result<_, _>>()?;
-        if peptides.is_empty() {
-            return Err(format!("peptide file '{}' is empty", path.display()).into());
-        }
-        let required = args.amount_of_peptides * args.runs as usize;
-        if peptides.len() < required {
-            return Err(format!(
-                "peptide file '{}' has {} lines, but {} runs × {} peptides/run = {} lines are required",
-                path.display(),
-                peptides.len(),
-                args.runs,
-                args.amount_of_peptides,
-                required,
-            ).into());
-        }
-        eprintln!("Loaded {} peptides from {}", peptides.len(), path.display());
-        Some(peptides)
-    } else {
-        None
-    };
-
-    let peptide_source = match &args.peptide_file {
-        Some(p) => p.display().to_string(),
-        None => "random".to_string(),
-    };
-
-    // Optional warmup pass (not timed) — processed in batches to avoid OOM on large warmup sets
-    const WARMUP_BATCH_SIZE: usize = 100_000;
-    if let Some(warmup_count) = args.warmup {
-        let warmup_path = args.index_dir.join("warmup.txt");
-        eprintln!("Warming up with {} peptides from {} (batch size {})...", warmup_count, warmup_path.display(), WARMUP_BATCH_SIZE);
-        let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
-        let mut remaining = warmup_count;
-        while remaining > 0 {
-            let batch_size = remaining.min(WARMUP_BATCH_SIZE);
-            let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
-            if batch.is_empty() {
-                break;
-            }
-            remaining -= batch.len();
-            batch.par_iter().for_each(|peptide| {
-                let result = searcher.search_matching_suffixes(
-                    peptide.trim_end().to_uppercase().as_bytes(),
-                    args.max_matches,
-                    args.equate_il,
-                    args.tryptic,
-                );
-                match result {
-                    SearchAllSuffixesResult::SearchResult(ref suf)
-                    | SearchAllSuffixesResult::MaxMatches(ref suf) => {
-                        let _ = searcher.retrieve_proteins(suf);
-                    }
-                    SearchAllSuffixesResult::NoMatches => {}
-                }
-            });
-        }
-        eprintln!("Warmup complete.");
-    }
-
-    // Prepare output file
-    create_dir_all(&args.output)?;
-    let output_path = args.output.join(format!("{}.jsonl", args.label));
-    let mut output_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&output_path)?;
-
-    eprintln!();
-    eprintln!("Starting {} benchmark run(s) — results → {}", args.runs, output_path.display());
-    eprintln!();
-
-    for run in 1..=args.runs {
-        // In file mode: consume the next chunk sequentially.
-        // In random mode: generate a fresh set of random peptides.
-        let run_peptides: Vec<String> = match &all_peptides {
-            Some(all) => {
-                let start = (run as usize - 1) * args.amount_of_peptides;
-                all[start..start + args.amount_of_peptides].to_vec()
-            }
-            None => generate_peptides(
-                args.amount_of_peptides,
-                args.peptide_length_min,
-                args.peptide_length_max,
-            ),
-        };
-
-        let (p_min, p_max) = run_peptides.iter().fold(
-            (usize::MAX, 0usize),
-            |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())),
-        );
-
-        let config = BenchmarkConfig {
-            sa_type: sa_type.to_string(),
-            mapping_type: mapping_type_str.to_string(),
-            use_mmap: args.mmap,
-            sample_rate,
-            bits_per_value,
-            equate_il: args.equate_il,
-            tryptic: args.tryptic,
-            max_matches: args.max_matches,
-            amount_of_peptides: run_peptides.len(),
-            peptide_length_min: p_min,
-            peptide_length_max: p_max,
-            peptide_source: peptide_source.clone(),
-        };
-
-        let result = run_benchmark(&searcher, &args, &run_peptides, theoretical_max, baseline_memory);
-
-        let record = BenchmarkRecord {
-            version: SCHEMA_VERSION,
-            label: args.label.clone(),
-            commit: env!("GIT_COMMIT_HASH").to_string(),
-            config,
-            result,
-        };
-
-        let line = serde_json::to_string(&record)?;
-        writeln!(output_file, "{}", line)?;
-
-        eprintln!(
-            "Run {:>3}/{}: {:.1} qps  |  total {:.1} ms  (search {:.1} ms + retrieval {:.1} ms)  \
-             |  hits: {} queries, {} suffixes, {} proteins{}",
-            run,
-            args.runs,
-            record.result.throughput_qps,
-            record.result.total_duration_ns as f64 / 1e6,
-            record.result.search_duration_ns as f64 / 1e6,
-            record.result.retrieval_duration_ns as f64 / 1e6,
-            record.result.query_hit_count,
-            record.result.suffix_hit_count,
-            record.result.protein_hit_count,
-            if record.result.cutoff_reached { "  [cutoff reached]" } else { "" },
-        );
-    }
-
-    eprintln!();
-    eprintln!("Done. {} lines written to {}", args.runs, output_path.display());
 
     Ok(())
 }
