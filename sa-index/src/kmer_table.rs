@@ -1,18 +1,20 @@
 use std::{
     error::Error,
     io::{BufRead, Write},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
+use rayon::prelude::*;
 use text_compression::ProteinText;
 
 use crate::{ReadBinary, SuffixArray, WriteBinary};
 
 /// Amino acid alphabet used for k-mer indexing (no J; L is treated as I).
 /// Index in this slice + 1 gives the 1-based `ascii_array` value for each character.
-const ALPHABET: &[u8] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ";
+const ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYXBUZO";
 
 /// Number of distinct amino acid values after normalizing L → I (24: no J, L maps to I).
-pub const AMINO_ACID_COUNT: usize = 24;
+pub const AMINO_ACID_COUNT: usize = 25;
 
 /// Builds the `ascii_array` lookup table at compile time: maps ASCII byte → 1-based amino acid
 /// index (0 = not in alphabet). L is mapped to the same slot as I so L→I normalization is free.
@@ -69,11 +71,15 @@ impl KmerTable {
         Self::build_kmer_table(sa.len(), |i| sa[i] as usize, text, k)
     }
 
-    fn build_kmer_table(sa_len: usize, get_sa: impl Fn(usize) -> usize, text: &ProteinText, k: usize) -> Self {
+    fn build_kmer_table(sa_len: usize, get_sa: impl Fn(usize) -> usize + Sync, text: &ProteinText, k: usize) -> Self {
         let ascii_array = build_ascii_array();
         let table_size = AMINO_ACID_COUNT.pow(k as u32);
-        // Sentinel: (usize::MAX, 0) means "absent" (min > max is impossible for a valid range).
-        let mut bounds = vec![(usize::MAX, 0usize); table_size];
+
+        // Sentinel: (MAX, 0) means "absent". AtomicUsize lets multiple threads update
+        // min/max without locks; fetch_min/fetch_max are stable since Rust 1.45.
+        let atomic_bounds: Vec<(AtomicUsize, AtomicUsize)> = (0..table_size)
+            .map(|_| (AtomicUsize::new(usize::MAX), AtomicUsize::new(0)))
+            .collect();
 
         let kmer_index = |suffix_start: usize| -> Option<usize> {
             let mut idx = 0usize;
@@ -87,14 +93,20 @@ impl KmerTable {
             Some(idx)
         };
 
-        for i in 0..sa_len {
+        (0..sa_len).into_par_iter().for_each(|i| {
             if let Some(idx) = kmer_index(get_sa(i)) {
-                let entry = &mut bounds[idx];
-                // SA is sorted: first occurrence sets min, every occurrence updates max.
-                if entry.0 == usize::MAX { entry.0 = i; }
-                entry.1 = i;
+                // SA is sorted: first occurrence gives min, last gives max.
+                // Relaxed ordering is sufficient: we only need the final values after
+                // the parallel section, not any inter-thread happens-before guarantees.
+                atomic_bounds[idx].0.fetch_min(i, Ordering::Relaxed);
+                atomic_bounds[idx].1.fetch_max(i, Ordering::Relaxed);
             }
-        }
+        });
+
+        let bounds: Vec<(usize, usize)> = atomic_bounds
+            .into_iter()
+            .map(|(min, max)| (min.into_inner(), max.into_inner()))
+            .collect();
 
         Self { k, ascii_array, bounds }
     }
