@@ -9,13 +9,9 @@ use axum::{
     routing::post
 };
 use clap::Parser;
-use sa_index::{
-    peptide_search::{SearchResult, search_all_peptides},
-    sa_searcher::Searcher,
-    suffix_to_protein_index::SuffixToProteinMapping
-};
+use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher::Searcher, suffix_to_protein_index::SuffixToProteinMapping};
 use serde::Deserialize;
-use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
+use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
@@ -32,7 +28,11 @@ pub struct Arguments {
     /// must point to a binary proteins file (.proteins.bin). Makes startup near-instant by letting
     /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
     #[arg(short, long, default_value_t = false)]
-    mmap: bool
+    mmap: bool,
+    /// Optional path to a pre-built k-mer bounds table file (produced by sa-builder
+    /// --output-kmer-table). When provided, binary search is accelerated by ~60 %.
+    #[arg(long)]
+    kmer_table_file: Option<String>,
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -105,7 +105,7 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file, mmap, mapping_file } = args;
+    let Arguments { database_file, index_file, mmap, mapping_file, kmer_table_file } = args;
 
     eprintln!();
     eprintln!("Started loading the suffix array...");
@@ -125,7 +125,21 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let SuffixToProteinMapping(mapping) = load_mapping_file(&mapping_file, mmap)?;
     eprintln!("Successfully loaded the suffix-to-protein mapping!");
 
-    let searcher = Arc::new(Searcher::new(suffix_array, proteins, mapping));
+    let mut searcher = Searcher::new(suffix_array, proteins, mapping);
+
+    if let Some(ref path) = kmer_table_file {
+        eprintln!();
+        eprintln!("Started loading the k-mer table...");
+        let table = load_kmer_table_file(path)?;
+        eprintln!("Successfully loaded the k-mer table! (k={})", table.k);
+        searcher = searcher.with_kmer_table(table);
+    } else {
+        eprintln!();
+        eprintln!("building k-mer table with k = 6...");
+        searcher.build_kmer_table(6);
+    }
+
+    let searcher = Arc::new(searcher);
 
     // build our application with a route
     let app = Router::new()

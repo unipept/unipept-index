@@ -9,7 +9,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use sa_index::sa_searcher::{SearchAllSuffixesResult, Searcher};
 use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
-use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
+use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
 
@@ -84,6 +84,10 @@ struct Args {
     /// Use memory-mapped I/O when loading the index files
     #[arg(long, default_value_t = false)]
     mmap: bool,
+    /// Optional path to a pre-built k-mer bounds table file.
+    /// When provided, binary search is accelerated by narrowing the initial search window.
+    #[arg(long)]
+    kmer_table_file: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -200,8 +204,10 @@ fn theoretical_memory(searcher: &Searcher, mapping_type: &str, use_mmap: bool) -
         _ => 0,
     };
 
-    sa_bytes + text_bytes + metadata_bytes + mapping_bytes
-    // ← add new Searcher structures here
+    // k-mer table size
+    let kmer_table_bytes = 24_u64.pow(6) * 16;
+
+    sa_bytes + text_bytes + metadata_bytes + mapping_bytes + kmer_table_bytes
 }
 
 /// Returns the current process's resident set size in bytes via sysinfo.
@@ -339,7 +345,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sample_rate = suffix_array.sample_rate();
     let bits_per_value = suffix_array.bits_per_value();
 
-    let searcher = Searcher::new(suffix_array, proteins, mapping);
+    let mut searcher = Searcher::new(suffix_array, proteins, mapping);
+
+    if let Some(ref path) = args.kmer_table_file {
+        eprintln!("Loading k-mer table from {}...", path.display());
+        let table = load_kmer_table_file(path.to_str().unwrap())?;
+        eprintln!("  k={}", table.k);
+        searcher = searcher.with_kmer_table(table);
+    } else {
+        eprintln!("Building k-mer table with k=6...");
+        searcher.build_kmer_table(6);
+    }
 
     let theoretical_max = theoretical_memory(&searcher, mapping_type_str, args.mmap);
     eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);

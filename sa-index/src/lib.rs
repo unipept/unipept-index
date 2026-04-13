@@ -1,11 +1,13 @@
 pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
 
 pub mod array;
+pub mod kmer_table;
 pub mod peptide_search;
 pub mod sa_searcher;
 pub mod suffix_to_protein_index;
 
 pub use array::SuffixArray;
+pub use kmer_table::KmerTable;
 
 /// Custom trait implemented by types that have a value that represents NULL
 pub trait Nullable<T> {

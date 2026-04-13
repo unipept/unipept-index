@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
-use sa_index::{ReadBinary, ReadBinaryMmap, SuffixArray};
+use sa_index::{KmerTable, ReadBinary, ReadBinaryMmap, SuffixArray};
 use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_mappings::proteins::Proteins;
 
@@ -31,4 +31,10 @@ pub fn load_mapping_file(file: &str, use_mmap: bool) -> Result<SuffixToProteinMa
     let f = File::open(file)?;
     let mut reader = BufReader::new(f);
     SuffixToProteinMapping::read_binary(&mut reader)
+}
+
+pub fn load_kmer_table_file(file: &str) -> Result<KmerTable, Box<dyn Error>> {
+    let f = File::open(file)?;
+    let mut reader = BufReader::new(f);
+    KmerTable::read_binary(&mut reader)
 }

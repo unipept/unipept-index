@@ -31,7 +31,14 @@ pub struct Arguments {
     pub compress_sa: bool,
     /// The style of suffix-to-protein mapping to build (default value BitVec)
     #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::BitVec)]
-    pub mapping_style: SuffixToProteinMappingStyle
+    pub mapping_style: SuffixToProteinMappingStyle,
+    /// Output location where to store the k-mer bounds table (optional).
+    /// When set, a k-mer lookup table is built and written to this path.
+    #[arg(long)]
+    pub output_kmer_table: Option<String>,
+    /// The k-mer size used when building the k-mer bounds table (default 4).
+    #[arg(long, default_value_t = 4)]
+    pub kmer_size: usize,
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array

@@ -9,7 +9,7 @@ use sa_builder::{Arguments, build_ssa};
 use sa_index::array::dump_compressed_suffix_array;
 use sa_index::array::dump_suffix_array;
 use sa_index::suffix_to_protein_index::dump_mapping;
-use sa_index::WriteBinary;
+use sa_index::{KmerTable, WriteBinary};
 use sa_mappings::proteins::Proteins;
 
 fn main() {
@@ -21,7 +21,9 @@ fn main() {
         construction_algorithm,
         compress_sa,
         output_mapping,
-        mapping_style
+        mapping_style,
+        output_kmer_table,
+        kmer_size,
     } = Arguments::parse();
 
     let proteins = timed("loading the proteins", || {
@@ -37,6 +39,13 @@ fn main() {
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
     });
     eprintln!("\tAmount of items: {}", sa.len());
+
+    // Build the k-mer table while the SA Vec is still in memory (before it is consumed below).
+    let kmer_table: Option<KmerTable> = output_kmer_table.as_ref().map(|_| {
+        timed(&format!("building k-mer table (k={})", kmer_size), || {
+            KmerTable::build_from_raw_sa(&sa, proteins.text(), kmer_size)
+        })
+    });
 
     // open the output file
     let mut sa_file =
@@ -71,6 +80,17 @@ fn main() {
         proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });
     eprintln!("\tOutput: {}", output_proteins);
+
+    if let (Some(table), Some(kmer_table_path)) = (kmer_table, output_kmer_table) {
+        let mut kmer_file = open_file_buffer(&kmer_table_path, 64 * 1024 * 1024)
+            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+
+        timed("writing k-mer table", || {
+            table.write_binary(&mut kmer_file)
+                .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        });
+        eprintln!("\tOutput: {}", kmer_table_path);
+    }
 }
 
 fn open_file_buffer(file: &str, buffer_size: usize) -> std::io::Result<BufWriter<File>> {
