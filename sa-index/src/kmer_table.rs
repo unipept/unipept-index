@@ -93,6 +93,9 @@ impl KmerTable {
             Some(idx)
         };
 
+        let processed = AtomicUsize::new(0);
+        let report_interval = (sa_len / 20).max(1); // every 5%
+
         (0..sa_len).into_par_iter().for_each(|i| {
             if let Some(idx) = kmer_index(get_sa(i)) {
                 // SA is sorted: first occurrence gives min, last gives max.
@@ -100,6 +103,10 @@ impl KmerTable {
                 // the parallel section, not any inter-thread happens-before guarantees.
                 atomic_bounds[idx].0.fetch_min(i, Ordering::Relaxed);
                 atomic_bounds[idx].1.fetch_max(i, Ordering::Relaxed);
+            }
+            let prev = processed.fetch_add(1, Ordering::Relaxed);
+            if prev > 0 && prev % report_interval == 0 {
+                eprintln!("  {}% done ({}/{})", prev * 100 / sa_len, prev, sa_len);
             }
         });
 
