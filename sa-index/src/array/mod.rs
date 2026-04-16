@@ -76,6 +76,22 @@ impl SuffixArray {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Issues an OS prefetch hint (`MADV_WILLNEED`) for the mmap pages covering SA indices
+    /// `lo..hi_exclusive`.  No-op for in-memory variants and on non-Unix platforms.
+    #[inline]
+    pub fn prefetch_sa_range(&self, lo: usize, hi_exclusive: usize) {
+        #[cfg(unix)]
+        if let SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } = self {
+            let byte_lo = data_offset + (lo * bits_per_value) / 8;
+            let byte_hi = data_offset + (hi_exclusive * bits_per_value).div_ceil(8);
+            let len = byte_hi.saturating_sub(byte_lo);
+            if len > 0 && byte_hi <= mmap.len() {
+                // SAFETY: MADV_WILLNEED is a non-destructive, read-only prefetch hint.
+                let _ = mmap.advise_range(memmap2::Advice::WillNeed, byte_lo, len);
+            }
+        }
+    }
 }
 
 impl WriteBinary for SuffixArray {

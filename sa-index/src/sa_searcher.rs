@@ -1,4 +1,4 @@
-use std::{cmp::min, ops::Deref};
+use std::{cmp::min, ops::Deref, sync::atomic::{AtomicU64, Ordering}, time::Instant};
 
 use sa_mappings::proteins::{ProteinRef, Proteins, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextSlice;
@@ -143,6 +143,10 @@ pub struct Searcher {
     pub proteins: Proteins,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     pub kmer_table: Option<KmerTable>,
+    /// Total nanoseconds spent inside `search_bounds()` across all queries (since last drain).
+    pub search_bounds_ns: AtomicU64,
+    /// Total nanoseconds spent iterating matches in `search_matching_suffixes()` (since last drain).
+    pub match_iter_ns: AtomicU64,
 }
 
 impl Searcher {
@@ -163,7 +167,15 @@ impl Searcher {
     ///
     /// Returns a new Searcher object
     pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
-        Self { sa, proteins, suffix_index_to_protein, kmer_table: None }
+        Self { sa, proteins, suffix_index_to_protein, kmer_table: None, search_bounds_ns: AtomicU64::new(0), match_iter_ns: AtomicU64::new(0) }
+    }
+
+    /// Returns `(search_bounds_ns, match_iter_ns)` accumulated since the last call and resets both
+    /// counters to zero.  Safe to call concurrently with ongoing searches (relaxed ordering).
+    pub fn drain_timing_ns(&self) -> (u64, u64) {
+        let bounds = self.search_bounds_ns.swap(0, Ordering::Relaxed);
+        let iter   = self.match_iter_ns.swap(0, Ordering::Relaxed);
+        (bounds, iter)
     }
 
     /// Attaches a pre-built k-mer bounds table to this searcher.
@@ -328,7 +340,10 @@ impl Searcher {
         let (left, right, lcp_skip) = if let Some(table) = &self.kmer_table {
             if search_string.len() >= table.k {
                 match table.lookup(&search_string[..table.k]) {
-                    Some((lo, hi)) => (lo, hi + 1, table.k),
+                    Some((lo, hi)) => {
+                        self.sa.prefetch_sa_range(lo, hi + 1);
+                        (lo, hi + 1, table.k)
+                    },
                     None => return BoundSearchResult::NoMatches,
                 }
             } else {
@@ -389,13 +404,17 @@ impl Searcher {
             let il_locations_current_suffix = &il_locations[il_locations_start..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
+            let t_bounds = Instant::now();
             let search_bound_result = self.search_bounds(&search_string[skip..]);
+            self.search_bounds_ns.fetch_add(t_bounds.elapsed().as_nanos() as u64, Ordering::Relaxed);
+
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
                 // try all the partially matched suffixes and store the matching suffixes in an
                 // array (stop when our max number of matches is reached)
                 let mut sa_index = min_bound;
+                let t_iter = Instant::now();
                 while sa_index < max_bound {
                     let suffix = self.sa.get(sa_index) as usize;
 
@@ -428,6 +447,7 @@ impl Searcher {
 
                             // return if max number of matches is reached
                             if matching_suffixes.len() >= max_matches {
+                                self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
                                 return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
                             }
                         }
@@ -435,6 +455,7 @@ impl Searcher {
 
                     sa_index += 1;
                 }
+                self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
             }
             skip += 1;
         }

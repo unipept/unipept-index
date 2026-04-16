@@ -124,6 +124,10 @@ struct BenchmarkResult {
     cutoff_reached: bool,
     total_memory: u64,
     theoretical_max_memory: u64,
+    /// Nanoseconds spent exclusively inside `search_bounds()` (binary search + k-mer lookup).
+    search_bounds_ns: u64,
+    /// Nanoseconds spent iterating over the matched suffix range after `search_bounds()` returns.
+    match_iter_ns: u64,
 }
 
 #[derive(Serialize)]
@@ -227,6 +231,9 @@ fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoreti
     // Memory snapshot before any timing starts — captures index-resident pages only
     let index_memory = measure_process_memory().saturating_sub(baseline_memory);
 
+    // Reset per-run timing accumulators before the search phase.
+    searcher.drain_timing_ns();
+
     // Phase 1: suffix array search (parallel)
     let search_start = Instant::now();
     let suffix_results: Vec<SearchAllSuffixesResult> = peptides
@@ -241,6 +248,9 @@ fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoreti
         })
         .collect();
     let search_duration_ns = search_start.elapsed().as_nanos() as u64;
+
+    // Read internal timing breakdown (bounds lookup vs match iteration).
+    let (search_bounds_ns, match_iter_ns) = searcher.drain_timing_ns();
 
     // Phase 2: protein retrieval (parallel) — returns (protein_count, cutoff_reached)
     let retrieval_start = Instant::now();
@@ -295,6 +305,8 @@ fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoreti
         cutoff_reached,
         total_memory: index_memory,
         theoretical_max_memory,
+        search_bounds_ns,
+        match_iter_ns,
     }
 }
 
@@ -487,13 +499,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         writeln!(output_file, "{}", line)?;
 
         eprintln!(
-            "Run {:>3}/{}: {:.1} qps  |  total {:.1} ms  (search {:.1} ms + retrieval {:.1} ms)  \
+            "Run {:>3}/{}: {:.1} qps  |  total {:.1} ms  (search {:.1} ms [bounds {:.1} ms + iter {:.1} ms] + retrieval {:.1} ms)  \
              |  hits: {} queries, {} suffixes, {} proteins{}",
             run,
             args.runs,
             record.result.throughput_qps,
             record.result.total_duration_ns as f64 / 1e6,
             record.result.search_duration_ns as f64 / 1e6,
+            record.result.search_bounds_ns as f64 / 1e6,
+            record.result.match_iter_ns as f64 / 1e6,
             record.result.retrieval_duration_ns as f64 / 1e6,
             record.result.query_hit_count,
             record.result.suffix_hit_count,
