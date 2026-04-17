@@ -34,6 +34,15 @@ impl SuffixToProteinIndex for MmapDenseSuffixToProtein {
         let off = self.data_offset + suffix as usize * 4;
         u32::from_le_bytes(self.mmap[off..off + 4].try_into().unwrap())
     }
+
+    #[inline]
+    fn prefetch_for_suffix(&self, suffix: i64) {
+        let off = self.data_offset + suffix as usize * 4;
+        if off < self.mmap.len() {
+            // safe: Mmap: Deref<Target=[u8]>, bounds checked above
+            crate::array::prefetch_read(&self.mmap[off] as *const u8);
+        }
+    }
 }
 
 impl DenseSuffixToProtein {

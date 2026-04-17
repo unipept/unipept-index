@@ -93,6 +93,21 @@ impl SuffixToProteinIndex for MmapBitVecSuffixToProtein {
         }
         self.rank1(pos).try_into().unwrap()
     }
+
+    #[inline]
+    fn prefetch_for_suffix(&self, suffix: i64) {
+        let pos = suffix as usize;
+        let bit_off = self.bits_offset + (pos / 64) * 8;
+        let sb_off  = self.counts_offset + (pos / 512) * 16;
+        if bit_off < self.mmap.len() {
+            // safe: Mmap: Deref<Target=[u8]>, bounds checked above
+            crate::array::prefetch_read(&self.mmap[bit_off] as *const u8);
+        }
+        if sb_off + 16 <= self.mmap.len() {
+            // safe: Mmap: Deref<Target=[u8]>, bounds checked above
+            crate::array::prefetch_read(&self.mmap[sb_off] as *const u8);
+        }
+    }
 }
 
 impl BitVecSuffixToProtein {

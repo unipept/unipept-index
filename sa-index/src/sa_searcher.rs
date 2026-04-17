@@ -575,8 +575,16 @@ impl Searcher {
     /// Returns the proteins that every suffix is a part of
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        let mut res = vec![];
-        for &suffix in suffixes {
+        // Issue non-blocking prefetch hints PREFETCH_DISTANCE iterations ahead so
+        // the DRAM fetch for each mapping entry overlaps with the computation for
+        // the current entry. Without prefetch, every suffix_to_protein call on a
+        // mmap-backed mapping stalls for ~150 ns waiting for a random cache line.
+        const PREFETCH_DISTANCE: usize = 16;
+        let mut res = Vec::with_capacity(suffixes.len());
+        for (i, &suffix) in suffixes.iter().enumerate() {
+            if let Some(&future_suffix) = suffixes.get(i + PREFETCH_DISTANCE) {
+                self.suffix_index_to_protein.prefetch_for_suffix(future_suffix);
+            }
             let protein_index = self.suffix_index_to_protein.suffix_to_protein(suffix);
             if !protein_index.is_null() {
                 res.push(self.proteins.get(protein_index as usize));

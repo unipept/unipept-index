@@ -35,6 +35,12 @@ pub trait SuffixToProteinIndex: Send + Sync {
     ///
     /// Returns the index of the protein in the proteins list of which the suffix is a part
     fn suffix_to_protein(&self, suffix: i64) -> u32;
+
+    /// Non-blocking hardware prefetch hint for the mmap data that
+    /// `suffix_to_protein(suffix)` will access.
+    /// Default is a no-op; mmap-backed implementations override this.
+    #[inline]
+    fn prefetch_for_suffix(&self, _suffix: i64) {}
 }
 
 /// Constructs the appropriate mapping from text and writes type byte + data to the writer.
