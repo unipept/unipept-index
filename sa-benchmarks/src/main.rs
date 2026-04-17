@@ -434,9 +434,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => {}
         Some(WarmupMode::All) => {
             eprintln!("Warming up: touching all mmap pages...");
-            searcher.sa.touch_all_pages();
-            searcher.proteins.touch_all_pages();
-            searcher.suffix_index_to_protein.touch_all_pages();
+            rayon::scope(|s| {
+                s.spawn(|_| searcher.sa.touch_all_pages());
+                s.spawn(|_| searcher.proteins.touch_all_pages());
+                s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
+            });
             eprintln!("Warmup complete.");
         }
         Some(WarmupMode::Count(warmup_count)) => {
