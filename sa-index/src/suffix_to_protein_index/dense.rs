@@ -45,11 +45,15 @@ impl SuffixToProteinIndex for MmapDenseSuffixToProtein {
     }
 
     fn touch_all_pages(&self) {
-        let mut sum: u64 = 0;
+        #[cfg(unix)]
+        let _ = self.mmap.advise(memmap2::Advice::Sequential);
+
         for chunk in self.mmap[self.data_offset..].chunks(4096) {
-            sum = sum.wrapping_add(chunk[0] as u64);
+            std::hint::black_box(chunk[0]);
         }
-        std::hint::black_box(sum);
+
+        #[cfg(unix)]
+        let _ = self.mmap.advise(memmap2::Advice::Random);
     }
 }
 

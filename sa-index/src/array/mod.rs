@@ -142,13 +142,17 @@ impl SuffixArray {
     /// For non-mmap variants this is a no-op.
     pub fn touch_all_pages(&self) {
         if let SuffixArray::MmapBacked { mmap, data_offset, len, bits_per_value, .. } = self {
+            #[cfg(unix)]
+            let _ = mmap.advise(memmap2::Advice::Sequential);
+
             let byte_len = (*len * *bits_per_value).div_ceil(8);
             let data = &mmap[*data_offset..*data_offset + byte_len];
-            let mut sum: u64 = 0;
             for chunk in data.chunks(4096) {
-                sum = sum.wrapping_add(chunk[0] as u64);
+                std::hint::black_box(chunk[0]);
             }
-            std::hint::black_box(sum);
+
+            #[cfg(unix)]
+            let _ = mmap.advise(memmap2::Advice::Random);
         }
     }
 }

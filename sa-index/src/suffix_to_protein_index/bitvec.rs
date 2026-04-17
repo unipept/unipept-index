@@ -85,11 +85,15 @@ impl MmapBitVecSuffixToProtein {
 impl SuffixToProteinIndex for MmapBitVecSuffixToProtein {
     fn touch_all_pages(&self) {
         // bits and counts regions are contiguous from bits_offset to end of mmap
-        let mut sum: u64 = 0;
+        #[cfg(unix)]
+        let _ = self.mmap.advise(memmap2::Advice::Sequential);
+
         for chunk in self.mmap[self.bits_offset..].chunks(4096) {
-            sum = sum.wrapping_add(chunk[0] as u64);
+            std::hint::black_box(chunk[0]);
         }
-        std::hint::black_box(sum);
+
+        #[cfg(unix)]
+        let _ = self.mmap.advise(memmap2::Advice::Random);
     }
 
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
