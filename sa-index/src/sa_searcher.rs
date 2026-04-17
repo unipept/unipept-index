@@ -430,16 +430,16 @@ impl Searcher {
                 let mut sa_index = min_bound;
                 let t_iter = Instant::now();
                 while sa_index < max_bound {
-                    // Look ITER_PREFETCH_DISTANCE steps ahead in the SA to find the future
-                    // suffix position, then prefetch the text at (future_suffix - skip).
-                    // The SA read is sequential (hardware prefetcher already handles it),
-                    // so this is cheap. The text prefetch hides the DRAM latency for the
-                    // random text access that check_prefix/check_suffix will make N iterations later.
-                    let future_sa_index = sa_index + ITER_PREFETCH_DISTANCE;
-                    if future_sa_index < max_bound {
-                        let future_suffix = self.sa.get(future_sa_index) as usize;
-                        if future_suffix >= skip {
-                            self.proteins.text().prefetch(future_suffix - skip);
+                    // Text reads only occur when skip > 0 (check_prefix is called).
+                    // When skip == 0 the prefix check is short-circuited and there are
+                    // no random text accesses to hide, so we skip the extra sa.get() cost.
+                    if skip > 0 {
+                        let future_sa_index = sa_index + ITER_PREFETCH_DISTANCE;
+                        if future_sa_index < max_bound {
+                            let future_suffix = self.sa.get(future_sa_index) as usize;
+                            if future_suffix >= skip {
+                                self.proteins.text().prefetch(future_suffix - skip);
+                            }
                         }
                     }
 
