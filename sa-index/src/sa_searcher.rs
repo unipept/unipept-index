@@ -288,6 +288,11 @@ impl Searcher {
 
         while right - left > 1 {
             let center = (left + right) / 2;
+            // Prefetch both potential next pivots before the blocking sa.get(center) call.
+            // One fetch will be wasted; both are free (single non-blocking CPU instruction).
+            // From iteration 2 onward the needed SA entry is already in L1/L2 cache.
+            self.sa.prefetch_sa_index((left + center) / 2);
+            self.sa.prefetch_sa_index((center + right) / 2);
             let skip = min(lcp_left, lcp_right);
             let (retval, lcp_center) = self.compare(search_string, self.sa.get(center), skip, bound);
 
@@ -340,10 +345,7 @@ impl Searcher {
         let (left, right, lcp_skip) = if let Some(table) = &self.kmer_table {
             if search_string.len() >= table.k {
                 match table.lookup(&search_string[..table.k]) {
-                    Some((lo, hi)) => {
-                        self.sa.prefetch_sa_range(lo, hi + 1);
-                        (lo, hi + 1, table.k)
-                    },
+                    Some((lo, hi)) => (lo, hi + 1, table.k),
                     None => return BoundSearchResult::NoMatches,
                 }
             } else {
@@ -387,6 +389,17 @@ impl Searcher {
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
+        // Issue an early OS prefetch hint for the k-mer's SA range (skip=0 case).
+        // This gives the OS more lead time to load those pages into the page cache
+        // while we collect IL locations below, before binary search starts.
+        if let Some(table) = &self.kmer_table {
+            if search_string.len() >= table.k {
+                if let Some((lo, hi)) = table.lookup(&search_string[..table.k]) {
+                    self.sa.prefetch_sa_range(lo, hi + 1);
+                }
+            }
+        }
+
         let mut matching_suffixes: Vec<i64> = vec![];
         let mut il_locations = vec![];
         for (i, &character) in search_string.iter().enumerate() {
