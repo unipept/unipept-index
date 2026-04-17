@@ -575,17 +575,32 @@ impl Searcher {
     /// Returns the proteins that every suffix is a part of
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        // Issue non-blocking prefetch hints PREFETCH_DISTANCE iterations ahead so
-        // the DRAM fetch for each mapping entry overlaps with the computation for
-        // the current entry. Without prefetch, every suffix_to_protein call on a
-        // mmap-backed mapping stalls for ~150 ns waiting for a random cache line.
-        const PREFETCH_DISTANCE: usize = 16;
-        let mut res = Vec::with_capacity(suffixes.len());
+        // ── Pass 1: collect protein indices ──────────────────────────────────
+        // Prefetch the mapping entry for suffix[i + N1] before reading suffix[i].
+        // This hides the DRAM latency of the (random) mapping lookup behind N1
+        // iterations of cheap computation.
+        const N1: usize = 16;
+        let mut protein_indices = Vec::with_capacity(suffixes.len());
         for (i, &suffix) in suffixes.iter().enumerate() {
-            if let Some(&future_suffix) = suffixes.get(i + PREFETCH_DISTANCE) {
-                self.suffix_index_to_protein.prefetch_for_suffix(future_suffix);
+            if let Some(&fs) = suffixes.get(i + N1) {
+                self.suffix_index_to_protein.prefetch_for_suffix(fs);
             }
-            let protein_index = self.suffix_index_to_protein.suffix_to_protein(suffix);
+            protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
+        }
+
+        // ── Pass 2: collect ProteinRefs ──────────────────────────────────────
+        // protein_indices is a small Vec (~135 × 4 bytes) that fits in L1 cache,
+        // so protein_indices[i + N2] is free to read at iteration i. We use it
+        // to prefetch the fixed-table entry for that future protein before the
+        // blocking proteins.get() call for the current protein.
+        const N2: usize = 16;
+        let mut res = Vec::with_capacity(suffixes.len());
+        for (i, &protein_index) in protein_indices.iter().enumerate() {
+            if let Some(&fpi) = protein_indices.get(i + N2) {
+                if !fpi.is_null() {
+                    self.proteins.prefetch(fpi as usize);
+                }
+            }
             if !protein_index.is_null() {
                 res.push(self.proteins.get(protein_index as usize));
             }

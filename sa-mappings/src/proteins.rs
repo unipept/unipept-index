@@ -9,6 +9,20 @@ use memmap2::Mmap;
 pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
 use text_compression::{ProteinText, bit_array_byte_size};
 
+/// Issues a non-blocking hardware prefetch hint for the cache line at `ptr`.
+/// On unsupported platforms this is a no-op.
+#[inline(always)]
+fn prefetch_read(ptr: *const u8) {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: `_mm_prefetch` is a pure hint — it never faults and never reads.
+    unsafe { std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0) }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: `prfm` is a pure hint — it never faults and never reads.
+    unsafe { std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) ptr, options(nostack, preserves_flags, readonly)) }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = ptr;
+}
+
 /// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
 
@@ -105,6 +119,20 @@ impl Proteins {
     /// Returns true if there are no proteins.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Non-blocking hardware prefetch hint for the fixed-table entry of protein `index`.
+    /// Call this N iterations before `get(index)` to hide DRAM latency on mmap-backed
+    /// protein files. No-op for in-memory proteins and on unsupported platforms.
+    #[inline]
+    pub fn prefetch(&self, index: usize) {
+        if let Proteins::MmapBacked { mmap, fixed_table_offset, .. } = self {
+            let off = fixed_table_offset + index * 16;
+            if off + 16 <= mmap.len() {
+                // safe: Mmap: Deref<Target=[u8]>, bounds checked above
+                prefetch_read(&mmap[off] as *const u8);
+            }
+        }
     }
 
     /// Returns a zero-copy view of the protein at `index`.
