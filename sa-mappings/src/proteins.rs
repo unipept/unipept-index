@@ -121,6 +121,19 @@ impl Proteins {
         self.len() == 0
     }
 
+    /// Reads at least one byte from every OS page of the proteins mmap,
+    /// ensuring all pages are resident in the page cache.
+    /// For the in-memory variant this is a no-op.
+    pub fn touch_all_pages(&self) {
+        if let Proteins::MmapBacked { mmap, .. } = self {
+            let mut sum: u64 = 0;
+            for chunk in mmap.chunks(4096) {
+                sum = sum.wrapping_add(chunk[0] as u64);
+            }
+            std::hint::black_box(sum);
+        }
+    }
+
     /// Non-blocking hardware prefetch hint for the fixed-table entry of protein `index`.
     /// Call this N iterations before `get(index)` to hide DRAM latency on mmap-backed
     /// protein files. No-op for in-memory proteins and on unsupported platforms.

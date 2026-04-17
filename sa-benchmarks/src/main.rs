@@ -21,6 +21,28 @@ const SCHEMA_VERSION: u32 = 1;
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
 
 // ---------------------------------------------------------------------------
+// Warmup mode
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+enum WarmupMode {
+    /// Touch every byte of every mmap-backed region to fully populate the page cache.
+    All,
+    /// Search the first N peptides from warmup.txt to partially warm the page cache.
+    Count(usize),
+}
+
+impl std::str::FromStr for WarmupMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "all" { return Ok(WarmupMode::All); }
+        s.parse::<usize>()
+            .map(WarmupMode::Count)
+            .map_err(|_| format!("expected a non-negative integer, got '{}'", s))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -78,9 +100,11 @@ struct Args {
     #[arg(long, default_value_t = 100)]
     runs: u32,
 
-    /// Warm up the index with the first N peptides from {index-dir}/warmup.txt before timing
-    #[arg(long)]
-    warmup: Option<usize>,
+    /// Warm up the index before timing.
+    /// Without a value: touch every page of every mmap-backed region (fully populates page cache).
+    /// With N: search the first N peptides from {index-dir}/warmup.txt.
+    #[arg(long, num_args = 0..=1, default_missing_value = "all")]
+    warmup: Option<WarmupMode>,
 
     /// Use memory-mapped I/O when loading the index files
     #[arg(long, default_value_t = false)]
@@ -404,37 +428,47 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "random".to_string(),
     };
 
-    // Optional warmup pass (not timed) — processed in batches to avoid OOM on large warmup sets
+    // Optional warmup pass (not timed)
     const WARMUP_BATCH_SIZE: usize = 100_000;
-    if let Some(warmup_count) = args.warmup {
-        let warmup_path = args.index_dir.join("warmup.txt");
-        eprintln!("Warming up with {} peptides from {} (batch size {})...", warmup_count, warmup_path.display(), WARMUP_BATCH_SIZE);
-        let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
-        let mut remaining = warmup_count;
-        while remaining > 0 {
-            let batch_size = remaining.min(WARMUP_BATCH_SIZE);
-            let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
-            if batch.is_empty() {
-                break;
-            }
-            remaining -= batch.len();
-            batch.par_iter().for_each(|peptide| {
-                let result = searcher.search_matching_suffixes(
-                    peptide.trim_end().to_uppercase().as_bytes(),
-                    args.max_matches,
-                    args.equate_il,
-                    args.tryptic,
-                );
-                match result {
-                    SearchAllSuffixesResult::SearchResult(ref suf)
-                    | SearchAllSuffixesResult::MaxMatches(ref suf) => {
-                        let _ = searcher.retrieve_proteins(suf);
-                    }
-                    SearchAllSuffixesResult::NoMatches => {}
-                }
-            });
+    match &args.warmup {
+        None => {}
+        Some(WarmupMode::All) => {
+            eprintln!("Warming up: touching all mmap pages...");
+            searcher.sa.touch_all_pages();
+            searcher.proteins.touch_all_pages();
+            searcher.suffix_index_to_protein.touch_all_pages();
+            eprintln!("Warmup complete.");
         }
-        eprintln!("Warmup complete.");
+        Some(WarmupMode::Count(warmup_count)) => {
+            let warmup_path = args.index_dir.join("warmup.txt");
+            eprintln!("Warming up with {} peptides from {} (batch size {})...", warmup_count, warmup_path.display(), WARMUP_BATCH_SIZE);
+            let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
+            let mut remaining = *warmup_count;
+            while remaining > 0 {
+                let batch_size = remaining.min(WARMUP_BATCH_SIZE);
+                let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
+                if batch.is_empty() {
+                    break;
+                }
+                remaining -= batch.len();
+                batch.par_iter().for_each(|peptide| {
+                    let result = searcher.search_matching_suffixes(
+                        peptide.trim_end().to_uppercase().as_bytes(),
+                        args.max_matches,
+                        args.equate_il,
+                        args.tryptic,
+                    );
+                    match result {
+                        SearchAllSuffixesResult::SearchResult(ref suf)
+                        | SearchAllSuffixesResult::MaxMatches(ref suf) => {
+                            let _ = searcher.retrieve_proteins(suf);
+                        }
+                        SearchAllSuffixesResult::NoMatches => {}
+                    }
+                });
+            }
+            eprintln!("Warmup complete.");
+        }
     }
 
     // Prepare output file

@@ -136,6 +136,21 @@ impl SuffixArray {
             }
         }
     }
+
+    /// Reads at least one byte from every OS page in the suffix-array data region,
+    /// ensuring all pages are resident in the page cache.
+    /// For non-mmap variants this is a no-op.
+    pub fn touch_all_pages(&self) {
+        if let SuffixArray::MmapBacked { mmap, data_offset, len, bits_per_value, .. } = self {
+            let byte_len = (*len * *bits_per_value).div_ceil(8);
+            let data = &mmap[*data_offset..*data_offset + byte_len];
+            let mut sum: u64 = 0;
+            for chunk in data.chunks(4096) {
+                sum = sum.wrapping_add(chunk[0] as u64);
+            }
+            std::hint::black_box(sum);
+        }
+    }
 }
 
 /// Iterator over a contiguous range of SA entries.

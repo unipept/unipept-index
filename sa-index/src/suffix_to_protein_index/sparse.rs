@@ -37,6 +37,15 @@ impl SuffixToProteinIndex for SparseSuffixToProtein {
 }
 
 impl SuffixToProteinIndex for MmapSparseSuffixToProtein {
+    fn touch_all_pages(&self) {
+        let end = self.data_offset + self.count * 8;
+        let mut sum: u64 = 0;
+        for chunk in self.mmap[self.data_offset..end].chunks(4096) {
+            sum = sum.wrapping_add(chunk[0] as u64);
+        }
+        std::hint::black_box(sum);
+    }
+
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let read_val = |i: usize| -> i64 {
             let off = self.data_offset + i * 8;

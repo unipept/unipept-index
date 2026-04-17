@@ -41,6 +41,12 @@ pub trait SuffixToProteinIndex: Send + Sync {
     /// Default is a no-op; mmap-backed implementations override this.
     #[inline]
     fn prefetch_for_suffix(&self, _suffix: i64) {}
+
+    /// Reads at least one byte from every OS page in the mmap backing this mapping,
+    /// ensuring all pages are resident in the page cache.
+    /// Default is a no-op; mmap-backed implementations override this.
+    #[inline]
+    fn touch_all_pages(&self) {}
 }
 
 /// Constructs the appropriate mapping from text and writes type byte + data to the writer.
