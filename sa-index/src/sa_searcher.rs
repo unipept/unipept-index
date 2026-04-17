@@ -426,23 +426,9 @@ impl Searcher {
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
                 // try all the partially matched suffixes and store the matching suffixes in an
                 // array (stop when our max number of matches is reached)
-                const ITER_PREFETCH_DISTANCE: usize = 16;
                 let mut sa_index = min_bound;
                 let t_iter = Instant::now();
                 while sa_index < max_bound {
-                    // Text reads only occur when skip > 0 (check_prefix is called).
-                    // When skip == 0 the prefix check is short-circuited and there are
-                    // no random text accesses to hide, so we skip the extra sa.get() cost.
-                    if skip > 0 {
-                        let future_sa_index = sa_index + ITER_PREFETCH_DISTANCE;
-                        if future_sa_index < max_bound {
-                            let future_suffix = self.sa.get(future_sa_index) as usize;
-                            if future_suffix >= skip {
-                                self.proteins.text().prefetch(future_suffix - skip);
-                            }
-                        }
-                    }
-
                     let suffix = self.sa.get(sa_index) as usize;
 
                     if suffix >= skip {

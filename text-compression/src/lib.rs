@@ -16,18 +16,6 @@ pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
 /// The 5-bit-to-char lookup table for mmap-backed ProteinText.
 const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
-/// Non-blocking hardware prefetch hint: move the cache line containing `ptr` into L1.
-/// No-op on unsupported architectures.
-#[inline(always)]
-fn prefetch_read(ptr: *const u8) {
-    #[cfg(target_arch = "x86_64")]
-    unsafe { std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0) }
-    #[cfg(target_arch = "aarch64")]
-    unsafe { std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) ptr, options(nostack, preserves_flags, readonly)) }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let _ = ptr;
-}
-
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
 pub fn bit_array_byte_size(text_length: usize) -> usize {
     let extra = if (text_length * 5).is_multiple_of(64) { 0 } else { 1 };
@@ -198,20 +186,6 @@ impl ProteinText {
     /// Get a slice of the text.
     pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_> {
         ProteinTextSlice::new(self, start, end)
-    }
-
-    /// Non-blocking hardware prefetch hint for the cache line covering character `index`.
-    /// At 5 bits/char a 64-byte cache line holds 102 characters, so a single hint covers
-    /// the entire peptide window starting at `index`.
-    /// No-op for in-memory text and on unsupported platforms.
-    #[inline]
-    pub fn prefetch(&self, index: usize) {
-        if let ProteinText::MmapBacked { mmap, data_offset, .. } = self {
-            let byte_off = data_offset + (index * 5 / 64) * 8;
-            if byte_off + 8 <= mmap.len() {
-                prefetch_read(&mmap[byte_off] as *const u8);
-            }
-        }
     }
 
 }
