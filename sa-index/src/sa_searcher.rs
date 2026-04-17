@@ -426,10 +426,9 @@ impl Searcher {
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
                 // try all the partially matched suffixes and store the matching suffixes in an
                 // array (stop when our max number of matches is reached)
-                let mut sa_index = min_bound;
                 let t_iter = Instant::now();
-                while sa_index < max_bound {
-                    let suffix = self.sa.get(sa_index) as usize;
+                for suffix in self.sa.iter_range(min_bound, max_bound) {
+                    let suffix = suffix as usize;
 
                     if suffix >= skip {
                         let match_start = suffix - skip;
@@ -465,8 +464,6 @@ impl Searcher {
                             }
                         }
                     }
-
-                    sa_index += 1;
                 }
                 self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
             }

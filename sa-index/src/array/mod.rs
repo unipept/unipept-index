@@ -105,6 +105,22 @@ impl SuffixArray {
         }
     }
 
+    /// Returns a streaming iterator over SA entries in `[start, end)`.
+    /// For `MmapBacked`, uses a streaming bit reader that keeps u64 words in CPU registers
+    /// and only accesses the mmap when crossing a 64-bit block boundary.
+    pub fn iter_range(&self, start: usize, end: usize) -> SuffixArrayRangeIter<'_> {
+        match self {
+            SuffixArray::Original(sa, _) =>
+                SuffixArrayRangeIter::Original(sa.get(start..end).unwrap_or(&[]).iter()),
+            SuffixArray::Compressed(ba, _) =>
+                SuffixArrayRangeIter::Compressed { ba, idx: start, end },
+            SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } =>
+                SuffixArrayRangeIter::Mmap(mmap::MmapSaRangeIter::new(
+                    mmap, *data_offset, *bits_per_value, start, end,
+                )),
+        }
+    }
+
     /// Issues an OS prefetch hint (`MADV_WILLNEED`) for the mmap pages covering SA indices
     /// `lo..hi_exclusive`.  No-op for in-memory variants and on non-Unix platforms.
     #[inline]
@@ -118,6 +134,35 @@ impl SuffixArray {
                 // SAFETY: MADV_WILLNEED is a non-destructive, read-only prefetch hint.
                 let _ = mmap.advise_range(memmap2::Advice::WillNeed, byte_lo, len);
             }
+        }
+    }
+}
+
+/// Iterator over a contiguous range of SA entries.
+/// - `Original`: wraps a slice iterator — zero overhead.
+/// - `Compressed`: calls `BitArray::get()` per entry (heap-hot data).
+/// - `Mmap`: uses `MmapSaRangeIter` — keeps u64 words in registers, mmap only touched at block boundaries.
+pub enum SuffixArrayRangeIter<'a> {
+    Original(std::slice::Iter<'a, i64>),
+    Compressed { ba: &'a BitArray, idx: usize, end: usize },
+    #[doc(hidden)]
+    Mmap(mmap::MmapSaRangeIter<'a>),
+}
+
+impl Iterator for SuffixArrayRangeIter<'_> {
+    type Item = i64;
+
+    #[inline]
+    fn next(&mut self) -> Option<i64> {
+        match self {
+            Self::Original(iter) => iter.next().copied(),
+            Self::Compressed { ba, idx, end } => {
+                if *idx >= *end { return None; }
+                let val = ba.get(*idx) as i64;
+                *idx += 1;
+                Some(val)
+            }
+            Self::Mmap(iter) => iter.next(),
         }
     }
 }
@@ -409,6 +454,79 @@ mod tests {
         assert_eq!(loaded.len(), 10);
         for i in 0..10 {
             assert_eq!(loaded.get(i), i as i64 + 1);
+        }
+    }
+
+    /// Verifies that `iter_range(start, end)` yields the same values as repeated `get(i)`
+    /// calls for all three SA variants, including ranges that cross multiple 64-bit block
+    /// boundaries and a non-zero start offset.
+    #[test]
+    fn test_iter_range_matches_get() {
+        use tempdir::TempDir;
+
+        // 20 values — enough to cross multiple 64-bit blocks for a 40-bit SA (8 entries/cycle)
+        let values: Vec<i64> = (0..20).map(|i| i * 12345 + 7).collect();
+
+        // --- Original (Vec<i64>) ---
+        {
+            let sa = SuffixArray::Original(values.clone(), 1);
+            let collected: Vec<i64> = sa.iter_range(3, 17).collect();
+            let expected: Vec<i64> = (3..17).map(|i| sa.get(i)).collect();
+            assert_eq!(collected, expected, "Original iter_range mismatch");
+        }
+
+        // --- Compressed (BitArray, 40-bit) ---
+        {
+            let mut ba = BitArray::with_capacity(20, 40);
+            for (i, &v) in values.iter().enumerate() {
+                ba.set(i, v as u64);
+            }
+            let sa = SuffixArray::Compressed(ba, 1);
+            let collected: Vec<i64> = sa.iter_range(3, 17).collect();
+            let expected: Vec<i64> = (3..17).map(|i| sa.get(i)).collect();
+            assert_eq!(collected, expected, "Compressed iter_range mismatch");
+        }
+
+        // --- MmapBacked (40-bit compressed, via round-trip through file) ---
+        {
+            let tmp = TempDir::new("iter_range_mmap").unwrap();
+            let path = tmp.path().join("sa.bin");
+            let mut file = std::fs::File::create(&path).unwrap();
+            dump_compressed_suffix_array(values.clone(), 1, 40, &mut file).unwrap();
+            drop(file);
+
+            let sa = SuffixArray::read_binary_mmap(&path).unwrap();
+            let collected: Vec<i64> = sa.iter_range(3, 17).collect();
+            let expected: Vec<i64> = (3..17).map(|i| sa.get(i)).collect();
+            assert_eq!(collected, expected, "MmapBacked iter_range mismatch");
+        }
+
+        // --- MmapBacked (64-bit uncompressed) ---
+        {
+            let tmp = TempDir::new("iter_range_mmap64").unwrap();
+            let path = tmp.path().join("sa64.bin");
+            let mut file = std::fs::File::create(&path).unwrap();
+            dump_suffix_array(values.clone(), 1, &mut file).unwrap();
+            drop(file);
+
+            let sa = SuffixArray::read_binary_mmap(&path).unwrap();
+            let collected: Vec<i64> = sa.iter_range(3, 17).collect();
+            let expected: Vec<i64> = (3..17).map(|i| sa.get(i)).collect();
+            assert_eq!(collected, expected, "MmapBacked-64 iter_range mismatch");
+        }
+
+        // --- Edge case: empty range (start == end) ---
+        {
+            let sa = SuffixArray::Original(values.clone(), 1);
+            let collected: Vec<i64> = sa.iter_range(5, 5).collect();
+            assert!(collected.is_empty(), "Empty range should yield nothing");
+        }
+
+        // --- Edge case: inverted range (start > end) — must not panic ---
+        {
+            let sa = SuffixArray::Original(values.clone(), 1);
+            let collected: Vec<i64> = sa.iter_range(10, 3).collect();
+            assert!(collected.is_empty(), "Inverted range should yield nothing");
         }
     }
 }
