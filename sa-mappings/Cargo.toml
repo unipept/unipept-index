@@ -10,6 +10,7 @@ tempdir = "0.3.7"
 
 [dependencies]
 fa-compression = { path = "../fa-compression" }
+prefetch = { path = "../prefetch" }
 bytelines = "2.5.0"
 text-compression = { path = "../text-compression" }
 memmap2 = "0.9"

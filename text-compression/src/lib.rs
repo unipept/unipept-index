@@ -188,6 +188,18 @@ impl ProteinText {
         ProteinTextSlice::new(self, start, end)
     }
 
+    /// Non-blocking hardware prefetch hint for the cache line holding character `index`.
+    /// No-op for in-memory variants and on unsupported platforms.
+    #[inline]
+    pub fn prefetch_at(&self, index: usize) {
+        if let ProteinText::MmapBacked { mmap, data_offset, .. } = self {
+            let bit_off = data_offset + (index * 5) / 8;
+            if bit_off < mmap.len() {
+                prefetch::prefetch_read(&mmap[bit_off] as *const u8);
+            }
+        }
+    }
+
 }
 
 impl WriteBinary for ProteinText {

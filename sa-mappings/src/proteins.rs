@@ -9,19 +9,6 @@ use memmap2::Mmap;
 pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
 use text_compression::{ProteinText, bit_array_byte_size};
 
-/// Issues a non-blocking hardware prefetch hint for the cache line at `ptr`.
-/// On unsupported platforms this is a no-op.
-#[inline(always)]
-fn prefetch_read(ptr: *const u8) {
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: `_mm_prefetch` is a pure hint — it never faults and never reads.
-    unsafe { std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0) }
-    #[cfg(target_arch = "aarch64")]
-    // SAFETY: `prfm` is a pure hint — it never faults and never reads.
-    unsafe { std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) ptr, options(nostack, preserves_flags, readonly)) }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let _ = ptr;
-}
 
 /// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
@@ -147,7 +134,7 @@ impl Proteins {
             let off = fixed_table_offset + index * 16;
             if off + 16 <= mmap.len() {
                 // safe: Mmap: Deref<Target=[u8]>, bounds checked above
-                prefetch_read(&mmap[off] as *const u8);
+                prefetch::prefetch_read(&mmap[off] as *const u8);
             }
         }
     }

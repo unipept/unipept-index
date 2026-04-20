@@ -114,11 +114,11 @@ impl SuffixToProteinIndex for MmapBitVecSuffixToProtein {
         let sb_off  = self.counts_offset + (pos / 512) * 16;
         if bit_off < self.mmap.len() {
             // safe: Mmap: Deref<Target=[u8]>, bounds checked above
-            crate::array::prefetch_read(&self.mmap[bit_off] as *const u8);
+            prefetch::prefetch_read(&self.mmap[bit_off] as *const u8);
         }
         if sb_off + 16 <= self.mmap.len() {
             // safe: Mmap: Deref<Target=[u8]>, bounds checked above
-            crate::array::prefetch_read(&self.mmap[sb_off] as *const u8);
+            prefetch::prefetch_read(&self.mmap[sb_off] as *const u8);
         }
     }
 }

@@ -942,6 +942,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
+name = "prefetch"
+version = "0.1.0"
+
+[[package]]
 name = "prettyplease"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1164,8 +1168,8 @@ version = "0.1.0"
 dependencies = [
  "bitarray",
  "clap",
- "fa-compression",
  "memmap2",
+ "prefetch",
  "rayon",
  "sa-mappings",
  "serde",
@@ -1183,6 +1187,7 @@ dependencies = [
  "bytelines",
  "fa-compression",
  "memmap2",
+ "prefetch",
  "tempdir",
  "text-compression",
 ]
@@ -1366,6 +1371,7 @@ version = "0.1.0"
 dependencies = [
  "bitarray",
  "memmap2",
+ "prefetch",
  "tempfile",
 ]
 

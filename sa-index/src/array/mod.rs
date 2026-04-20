@@ -4,20 +4,6 @@ use std::{
     path::Path
 };
 
-/// Issues a non-blocking hardware prefetch hint for the cache line at `ptr`.
-/// On unsupported platforms this is a no-op.  The function itself is always
-/// defined so callers don't need `cfg` guards.
-#[inline(always)]
-pub(crate) fn prefetch_read(ptr: *const u8) {
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: `_mm_prefetch` is a pure hint — it never faults and never reads.
-    unsafe { std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0) }
-    #[cfg(target_arch = "aarch64")]
-    // SAFETY: `prfm` is a pure hint — it never faults and never reads.
-    unsafe { std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) ptr, options(nostack, preserves_flags, readonly)) }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let _ = ptr;
-}
 
 use bitarray::{Binary, BitArray};
 use memmap2::Mmap;
@@ -100,7 +86,7 @@ impl SuffixArray {
             let byte_offset = data_offset + (index * bits_per_value) / 8;
             if byte_offset < mmap.len() {
                 let ptr: *const u8 = &mmap[byte_offset];
-                prefetch_read(ptr);
+                prefetch::prefetch_read(ptr);
             }
         }
     }

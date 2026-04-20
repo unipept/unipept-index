@@ -4,6 +4,7 @@ resolver = "2"
 members = [ "bitarray",
     "fa-compression",
     "libsais64-rs",
+    "prefetch",
     "sa-benchmarks",
     "sa-builder",
     "sa-index",

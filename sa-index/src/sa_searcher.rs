@@ -400,13 +400,25 @@ impl Searcher {
             }
         }
 
-        let mut matching_suffixes: Vec<i64> = vec![];
+        // Pre-allocate up to 1M entries (8 MB); fall back to empty Vec for very large or
+        // unbounded max_matches (e.g. usize::MAX in tests) to avoid a capacity overflow.
+        let mut matching_suffixes: Vec<i64> = if max_matches <= 1 << 20 {
+            Vec::with_capacity(max_matches)
+        } else {
+            Vec::new()
+        };
         let mut il_locations = vec![];
         for (i, &character) in search_string.iter().enumerate() {
             if character == b'I' || character == b'L' {
                 il_locations.push(i);
             }
         }
+
+        // Batch size for two-pass prefetch: large enough that all prefetches from pass 1
+        // resolve before they are consumed in pass 2 (DRAM latency ~100 ns, each SA read ~3 ns,
+        // so 64 entries × 3 ns = 192 ns gap is sufficient).
+        const BATCH_SIZE: usize = 64;
+        let mut raw_batch: Vec<i64> = Vec::with_capacity(BATCH_SIZE);
 
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
@@ -424,48 +436,98 @@ impl Searcher {
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
-                // try all the partially matched suffixes and store the matching suffixes in an
-                // array (stop when our max number of matches is reached)
                 let t_iter = Instant::now();
-                for suffix in self.sa.iter_range(min_bound, max_bound) {
-                    let suffix = suffix as usize;
 
-                    if suffix >= skip {
-                        let match_start = suffix - skip;
-                        let match_end = suffix + search_string.len() - skip;
+                // Fast-path: when equate_il=true, !tryptic, and skip=0, every entry in the SA
+                // range is a valid match — no per-entry filtering needed.
+                if equate_il && !tryptic && skip == 0 {
+                    let range_size = max_bound - min_bound;
+                    if range_size >= max_matches {
+                        // The range is larger than the cutoff: collect the first max_matches
+                        // entries directly. The tight collect() loop lets the compiler emit
+                        // efficient (potentially SIMD) code for the Vec fill.
+                        let result: Vec<i64> = self.sa
+                            .iter_range(min_bound, min_bound + max_matches)
+                            .collect();
+                        self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        return SearchAllSuffixesResult::MaxMatches(result);
+                    }
+                    // range_size < max_matches: collect all entries and continue to the next
+                    // skip value (rare for short peptides where the range is large).
+                    for s in self.sa.iter_range(min_bound, max_bound) {
+                        matching_suffixes.push(s);
+                    }
+                    self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                } else {
+                    // Generic path: iterate with two-pass prefetching to hide DRAM latency for
+                    // protein-text accesses required by prefix checks, IL validation, or tryptic
+                    // filtering.
+                    //
+                    // Pass 1 — collect a batch of raw SA entries from the iterator and issue
+                    //          non-blocking hardware prefetches for the protein-text positions
+                    //          each entry will access.
+                    // Pass 2 — validate each buffered entry; the prefetches from pass 1 will
+                    //          have had time to complete, so protein-text reads are cheap.
+                    let text = self.proteins.text();
+                    let mut sa_iter = self.sa.iter_range(min_bound, max_bound);
 
-                        // filter away matches where I was wrongfully equalized to L, and check the
-                        // unmatched prefix when I and L equalized, we only need to
-                        // check the prefix, not the whole match, when the prefix is 0, we don't need to
-                        // check at all
-                        if (skip == 0
-                            || Self::check_prefix(
-                                current_search_string_prefix,
-                                ProteinTextSlice::new(self.proteins.text(), match_start, suffix),
-                                equate_il
-                            ))
-                            && Self::check_suffix(
-                                skip,
-                                il_locations_current_suffix,
-                                current_search_string_suffix,
-                                ProteinTextSlice::new(self.proteins.text(), suffix, match_end),
-                                equate_il
-                            )
-                            && (!tryptic
-                                || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
-                                    && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
-                        {
-                            matching_suffixes.push((suffix - skip) as i64);
+                    loop {
+                        // --- Pass 1 ---
+                        raw_batch.clear();
+                        for s in &mut sa_iter {
+                            let su = s as usize;
+                            if su >= skip {
+                                let ms = su - skip;
+                                let me = su + search_string.len() - skip;
+                                // Prefetch positions needed by prefix check, IL check, and
+                                // tryptic checks respectively.
+                                text.prefetch_at(ms.saturating_sub(1)); // tryptic start / K|R before
+                                text.prefetch_at(ms);                   // prefix start
+                                text.prefetch_at(me.saturating_sub(1)); // tryptic cut before end
+                                text.prefetch_at(me);                   // tryptic end / separator
+                            }
+                            raw_batch.push(s);
+                            if raw_batch.len() == BATCH_SIZE { break; }
+                        }
+                        if raw_batch.is_empty() { break; }
 
-                            // return if max number of matches is reached
-                            if matching_suffixes.len() >= max_matches {
-                                self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                                return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                        // --- Pass 2 ---
+                        for &raw in &raw_batch {
+                            let suffix = raw as usize;
+
+                            if suffix >= skip {
+                                let match_start = suffix - skip;
+                                let match_end = suffix + search_string.len() - skip;
+
+                                if (skip == 0
+                                    || Self::check_prefix(
+                                        current_search_string_prefix,
+                                        ProteinTextSlice::new(text, match_start, suffix),
+                                        equate_il
+                                    ))
+                                    && Self::check_suffix(
+                                        skip,
+                                        il_locations_current_suffix,
+                                        current_search_string_suffix,
+                                        ProteinTextSlice::new(text, suffix, match_end),
+                                        equate_il
+                                    )
+                                    && (!tryptic
+                                        || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
+                                            && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
+                                {
+                                    matching_suffixes.push((suffix - skip) as i64);
+
+                                    if matching_suffixes.len() >= max_matches {
+                                        self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                                        return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                                    }
+                                }
                             }
                         }
                     }
+                    self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
-                self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
             }
             skip += 1;
         }
