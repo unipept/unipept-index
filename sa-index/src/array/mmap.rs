@@ -60,6 +60,11 @@ impl Iterator for MmapSaRangeIter<'_> {
     type Item = i64;
 
     #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+
+    #[inline]
     fn next(&mut self) -> Option<i64> {
         if self.remaining == 0 { return None; }
         self.remaining -= 1;
@@ -88,6 +93,8 @@ impl Iterator for MmapSaRangeIter<'_> {
         Some(val as i64)
     }
 }
+
+impl ExactSizeIterator for MmapSaRangeIter<'_> {}
 
 /// Returns the suffix array value at the given index from a memory-mapped file.
 pub(super) fn get_mmap(mmap: &Mmap, data_offset: usize, bits_per_value: usize, index: usize) -> i64 {

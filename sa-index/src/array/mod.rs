@@ -158,6 +158,16 @@ impl Iterator for SuffixArrayRangeIter<'_> {
     type Item = i64;
 
     #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = match self {
+            Self::Original(iter)              => iter.len(),
+            Self::Compressed { idx, end, .. } => end.saturating_sub(*idx),
+            Self::Mmap(iter)                  => iter.len(),
+        };
+        (n, Some(n))
+    }
+
+    #[inline]
     fn next(&mut self) -> Option<i64> {
         match self {
             Self::Original(iter) => iter.next().copied(),
@@ -171,6 +181,8 @@ impl Iterator for SuffixArrayRangeIter<'_> {
         }
     }
 }
+
+impl ExactSizeIterator for SuffixArrayRangeIter<'_> {}
 
 impl WriteBinary for SuffixArray {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn std::error::Error>> {
