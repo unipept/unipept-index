@@ -389,9 +389,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         let table = load_kmer_table_file(path.to_str().unwrap())?;
         eprintln!("  k={}", table.k);
         searcher = searcher.with_kmer_table(table);
-    } else {
-        eprintln!("Building k-mer table with k=6...");
-        searcher.build_kmer_table(6);
     }
 
     let theoretical_max = theoretical_memory(&searcher, mapping_type_str, args.mmap);
