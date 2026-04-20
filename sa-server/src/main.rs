@@ -133,10 +133,6 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         let table = load_kmer_table_file(path)?;
         eprintln!("Successfully loaded the k-mer table! (k={})", table.k);
         searcher = searcher.with_kmer_table(table);
-    } else {
-        eprintln!();
-        eprintln!("building k-mer table with k = 6...");
-        searcher.build_kmer_table(6);
     }
 
     let searcher = Arc::new(searcher);
