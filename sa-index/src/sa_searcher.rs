@@ -167,14 +167,21 @@ impl Searcher {
     ///
     /// Returns a new Searcher object
     pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
-        Self { sa, proteins, suffix_index_to_protein, kmer_table: None, search_bounds_ns: AtomicU64::new(0), match_iter_ns: AtomicU64::new(0) }
+        Self {
+            sa,
+            proteins,
+            suffix_index_to_protein,
+            kmer_table: None,
+            search_bounds_ns: AtomicU64::new(0),
+            match_iter_ns: AtomicU64::new(0),
+        }
     }
 
     /// Returns `(search_bounds_ns, match_iter_ns)` accumulated since the last call and resets both
     /// counters to zero.  Safe to call concurrently with ongoing searches (relaxed ordering).
     pub fn drain_timing_ns(&self) -> (u64, u64) {
         let bounds = self.search_bounds_ns.swap(0, Ordering::Relaxed);
-        let iter   = self.match_iter_ns.swap(0, Ordering::Relaxed);
+        let iter = self.match_iter_ns.swap(0, Ordering::Relaxed);
         (bounds, iter)
     }
 
@@ -279,52 +286,51 @@ impl Searcher {
         right: usize,
         lcp_skip: usize,
     ) -> (bool, usize) {
-        let initial_left = left;
-        let mut left = left;
-        let mut right = right;
+        let mut lo = left;
+        let mut hi = right;
         let mut lcp_left: usize = lcp_skip;
         let mut lcp_right: usize = lcp_skip;
         let mut found = false;
 
-        while right - left > 1 {
-            let center = (left + right) / 2;
+        while hi - lo > 1 {
+            let center = (lo + hi) / 2;
             // Prefetch both potential next pivots before the blocking sa.get(center) call.
             // One fetch will be wasted; both are free (single non-blocking CPU instruction).
             // From iteration 2 onward the needed SA entry is already in L1/L2 cache.
-            self.sa.prefetch_sa_index((left + center) / 2);
-            self.sa.prefetch_sa_index((center + right) / 2);
+            self.sa.prefetch_sa_index((lo + center) / 2);
+            self.sa.prefetch_sa_index((center + hi) / 2);
             let skip = min(lcp_left, lcp_right);
             let (retval, lcp_center) = self.compare(search_string, self.sa.get(center), skip, bound);
 
             found |= lcp_center == search_string.len();
 
             if retval && bound == Minimum || !retval && bound == Maximum {
-                right = center;
+                hi = center;
                 lcp_right = lcp_center;
             } else {
-                left = center;
+                lo = center;
                 lcp_left = lcp_center;
             }
         }
 
         // Handle the edge case where the initial left boundary was never a center comparison:
-        // when the window narrowed to [initial_left, initial_left+1), we must check
-        // whether the minimum bound should be at initial_left rather than initial_left+1.
-        if right == initial_left + 1 && left == initial_left {
+        // when the window narrowed to [left, left+1), we must check whether the minimum bound
+        // should be at `left` rather than `left+1`.
+        if hi == left + 1 && lo == left {
             let (retval, lcp_center) = self.compare(
-                search_string, self.sa.get(left), min(lcp_left, lcp_right), bound,
+                search_string, self.sa.get(lo), min(lcp_left, lcp_right), bound,
             );
 
             found |= lcp_center == search_string.len();
 
             if bound == Minimum && retval {
-                right = left;
+                hi = lo;
             }
         }
 
         match bound {
-            Minimum => (found, right),
-            Maximum => (found, left),
+            Minimum => (found, hi),
+            Maximum => (found, lo),
         }
     }
 
@@ -417,6 +423,8 @@ impl Searcher {
         // Batch size for two-pass prefetch: large enough that all prefetches from pass 1
         // resolve before they are consumed in pass 2 (DRAM latency ~100 ns, each SA read ~3 ns,
         // so 64 entries × 3 ns = 192 ns gap is sufficient).
+        // Allocated once outside the skip loop and reused (via .clear()) across iterations
+        // to avoid repeated heap allocations for each skip value.
         const BATCH_SIZE: usize = 64;
         let mut raw_batch: Vec<i64> = Vec::with_capacity(BATCH_SIZE);
 

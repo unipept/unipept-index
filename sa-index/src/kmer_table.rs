@@ -13,8 +13,8 @@ use crate::{ReadBinary, SuffixArray, WriteBinary};
 /// Index in this slice + 1 gives the 1-based `ascii_array` value for each character.
 const ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYXBUZO";
 
-/// Number of distinct amino acid values after normalizing L → I (24: no J, L maps to I).
-pub const AMINO_ACID_COUNT: usize = 25;
+/// Number of distinct amino acid values after normalizing L → I. No J; L shares I's slot → 24.
+pub const AMINO_ACID_COUNT: usize = 24;
 
 /// Builds the `ascii_array` lookup table at compile time: maps ASCII byte → 1-based amino acid
 /// index (0 = not in alphabet). L is mapped to the same slot as I so L→I normalization is free.
@@ -93,9 +93,6 @@ impl KmerTable {
             Some(idx)
         };
 
-        let processed = AtomicUsize::new(0);
-        let report_interval = (sa_len / 20).max(1); // every 5%
-
         (0..sa_len).into_par_iter().for_each(|i| {
             if let Some(idx) = kmer_index(get_sa(i)) {
                 // SA is sorted: first occurrence gives min, last gives max.
@@ -103,10 +100,6 @@ impl KmerTable {
                 // the parallel section, not any inter-thread happens-before guarantees.
                 atomic_bounds[idx].0.fetch_min(i, Ordering::Relaxed);
                 atomic_bounds[idx].1.fetch_max(i, Ordering::Relaxed);
-            }
-            let prev = processed.fetch_add(1, Ordering::Relaxed);
-            if prev > 0 && prev % report_interval == 0 {
-                eprintln!("  {}% done ({}/{})", prev * 100 / sa_len, prev, sa_len);
             }
         });
 

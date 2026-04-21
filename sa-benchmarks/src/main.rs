@@ -7,6 +7,7 @@ use std::time::Instant;
 use clap::Parser;
 use rand::Rng;
 use rayon::prelude::*;
+use sa_index::kmer_table::AMINO_ACID_COUNT;
 use sa_index::sa_searcher::{SearchAllSuffixesResult, Searcher};
 use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
@@ -233,8 +234,10 @@ fn theoretical_memory(searcher: &Searcher, mapping_type: &str, use_mmap: bool) -
         _ => 0,
     };
 
-    // k-mer table size
-    let kmer_table_bytes = 25_u64.pow(6) * 16;
+    // k-mer table size: 16 bytes per entry, AMINO_ACID_COUNT^k entries total
+    let kmer_table_bytes = searcher.kmer_table.as_ref().map_or(0, |t| {
+        (AMINO_ACID_COUNT as u64).pow(t.k as u32) * 16
+    });
 
     sa_bytes + text_bytes + metadata_bytes + mapping_bytes + kmer_table_bytes
 }

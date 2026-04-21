@@ -150,6 +150,7 @@ impl SuffixArray {
 pub enum SuffixArrayRangeIter<'a> {
     Original(std::slice::Iter<'a, i64>),
     Compressed { ba: &'a BitArray, idx: usize, end: usize },
+    /// Internal implementation detail — callers obtain iterators via `SuffixArray::iter_range()`.
     #[doc(hidden)]
     Mmap(mmap::MmapSaRangeIter<'a>),
 }
