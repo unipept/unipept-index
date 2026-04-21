@@ -196,88 +196,66 @@ impl Searcher {
         self.kmer_table = Some(KmerTable::build_from_sa(&self.sa, self.proteins.text(), k));
     }
 
-    /// Compares the `search_string` to the `suffix`
-    /// During search this function performs extra logic since the suffix array is build with I ==
-    /// L, while ` self.proteins.input_string` is the original text where I != L
+    /// Normalizes L to I so that both map to the same character during suffix array comparisons.
+    /// The index is built with L replaced by I, so all order comparisons must do the same.
+    #[inline]
+    fn normalize_li(c: u8) -> u8 {
+        if c == b'L' { b'I' } else { c }
+    }
+
+    /// Compares `search_string` against the suffix starting at `suffix` in the protein text,
+    /// skipping the first `skip` characters (known to match already).
     ///
-    /// # Arguments
-    /// * `search_string` - The string/peptide being searched in the suffix array
-    /// * `suffix` - The current suffix from the suffix array we are comparing with in the binary
-    ///   search
-    /// * `skip` - How many characters we can skip in the comparison because we already know these
-    ///   match
-    /// * `bound` - Indicates if we are searching for the min of max bound
+    /// Returns `(bound_satisfied, matched_len)` where:
+    /// - `bound_satisfied` is `true` when the bound condition holds: for `Minimum`, the search
+    ///   string is ≤ the suffix; for `Maximum`, it is ≥ the suffix.
+    /// - `matched_len` is how many characters of `search_string` matched the suffix.
     ///
-    /// # Returns
-    ///
-    /// The first argument is true if `bound` == `Minimum` and `search_string` <= `suffix` or if
-    /// `bound` == `Maximum` and `search_string` >= `suffix` The second argument indicates how
-    /// far the `suffix` and `search_string` matched
+    /// L and I are treated as equal during matching because the index was built with L → I.
     fn compare(&self, search_string: &[u8], suffix: i64, skip: usize, bound: BoundSearch) -> (bool, usize) {
         let text = self.proteins.text();
-        let mut index_in_suffix = (suffix as usize) + skip;
-        let mut index_in_search_string = skip;
-        let mut is_cond_or_equal = false;
+        let mut i_text = (suffix as usize) + skip;
+        let mut i_search = skip;
+        let mut bound_satisfied = false;
 
-        // Depending on if we are searching for the min of max bound our condition is different
         let condition_check = match bound {
             Minimum => |a: u8, b: u8| a < b,
-            Maximum => |a: u8, b: u8| a > b
+            Maximum => |a: u8, b: u8| a > b,
         };
 
-        // match as long as possible
-        while index_in_search_string < search_string.len()
-            && index_in_suffix < text.len()
-            && (search_string[index_in_search_string] == text.get(index_in_suffix)
-                || (search_string[index_in_search_string] == b'L' && text.get(index_in_suffix) == b'I')
-                || (search_string[index_in_search_string] == b'I' && text.get(index_in_suffix) == b'L'))
+        // Advance while characters match (treating L == I).
+        while i_search < search_string.len()
+            && i_text < text.len()
+            && Self::normalize_li(search_string[i_search]) == Self::normalize_li(text.get(i_text))
         {
-            index_in_suffix += 1;
-            index_in_search_string += 1;
+            i_text += 1;
+            i_search += 1;
         }
-        // check if match found OR current search string is smaller lexicographically (and the empty
-        // search string should not be found)
+
         if !search_string.is_empty() {
-            if index_in_search_string == search_string.len() {
-                is_cond_or_equal = true
-            } else if index_in_suffix < text.len() {
-                // in our index every L was replaced by a I, so we need to replace them if we want
-                // to search in the right direction
-                let peptide_char = if search_string[index_in_search_string] == b'L' {
-                    b'I'
-                } else {
-                    search_string[index_in_search_string]
-                };
-
-                let protein_char = if text.get(index_in_suffix) == b'L' {
-                    b'I'
-                } else {
-                    text.get(index_in_suffix)
-                };
-
-                is_cond_or_equal = condition_check(peptide_char, protein_char);
+            if i_search == search_string.len() {
+                bound_satisfied = true;
+            } else if i_text < text.len() {
+                // The index has L replaced by I, so normalize both sides before ordering.
+                bound_satisfied = condition_check(
+                    Self::normalize_li(search_string[i_search]),
+                    Self::normalize_li(text.get(i_text)),
+                );
             }
         }
 
-        (is_cond_or_equal, index_in_search_string)
+        (bound_satisfied, i_search)
     }
 
-    /// Searches for the minimum or maximum bound for a string in the suffix array
+    /// Binary search within the SA window `[left, right)` for the minimum or maximum bound
+    /// of `search_string`.
     ///
-    /// # Arguments
-    /// * `bound` - Indicates if we are searching the minimum or maximum bound
-    /// * `search_string` - The string/peptide we are searching in the suffix array
+    /// `lcp_skip` is the number of leading characters known to match for every entry in the
+    /// window (e.g. from a k-mer table lookup). Both LCP accumulators start at `lcp_skip` so
+    /// those characters are never re-compared.
     ///
-    /// # Returns
-    ///
-    /// The first argument is true if a match was found
-    /// The second argument indicates the index of the minimum or maximum bound for the match
-    /// (depending on `bound`)
-    /// Core binary search within the window `[left, right)` starting character comparisons
-    /// at position `lcp_skip` (the first `lcp_skip` characters are known to match).
-    ///
-    /// All elements in `[left, right)` are guaranteed to share at least `lcp_skip` characters
-    /// with `search_string`, so both LCP accumulators are initialised to `lcp_skip`.
+    /// Returns `(found, bound_index)` where `found` is true if any suffix matched the full
+    /// search string, and `bound_index` is the min (inclusive) or max (inclusive) SA index.
     fn binary_search_bound_in_range(
         &self,
         bound: BoundSearch,
@@ -304,7 +282,7 @@ impl Searcher {
 
             found |= lcp_center == search_string.len();
 
-            if retval && bound == Minimum || !retval && bound == Maximum {
+            if (retval && bound == Minimum) || (!retval && bound == Maximum) {
                 hi = center;
                 lcp_right = lcp_center;
             } else {
@@ -348,17 +326,15 @@ impl Searcher {
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
     pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
-        let (left, right, lcp_skip) = if let Some(table) = &self.kmer_table {
-            if search_string.len() >= table.k {
+        let full_range = (0, self.sa.len(), 0);
+        let (left, right, lcp_skip) = match &self.kmer_table {
+            Some(table) if search_string.len() >= table.k => {
                 match table.lookup(&search_string[..table.k]) {
                     Some((lo, hi)) => (lo, hi + 1, table.k),
                     None => return BoundSearchResult::NoMatches,
                 }
-            } else {
-                (0, self.sa.len(), 0)
             }
-        } else {
-            (0, self.sa.len(), 0)
+            _ => full_range,
         };
 
         let (found_min, min_bound) =
@@ -430,10 +406,9 @@ impl Searcher {
 
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
-            let mut il_locations_start = 0;
-            while il_locations_start < il_locations.len() && il_locations[il_locations_start] < skip {
-                il_locations_start += 1;
-            }
+            // il_locations is built in ascending index order, so partition_point gives us
+            // the first position that is relevant for this skip value in O(log n).
+            let il_locations_start = il_locations.partition_point(|&x| x < skip);
             let il_locations_current_suffix = &il_locations[il_locations_start..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
@@ -642,28 +617,28 @@ impl Searcher {
     /// Returns the proteins that every suffix is a part of
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
+        // Lookahead distance for hardware prefetch hints. Both passes use the same value:
+        // it is large enough that DRAM fetches issued in one iteration resolve before
+        // they are needed PREFETCH_DISTANCE iterations later.
+        const PREFETCH_DISTANCE: usize = 16;
+
         // ── Pass 1: collect protein indices ──────────────────────────────────
-        // Prefetch the mapping entry for suffix[i + N1] before reading suffix[i].
-        // This hides the DRAM latency of the (random) mapping lookup behind N1
-        // iterations of cheap computation.
-        const N1: usize = 16;
+        // Prefetch the mapping entry for suffix[i + PREFETCH_DISTANCE] before reading suffix[i]
+        // to hide the DRAM latency of the (random) mapping lookup.
         let mut protein_indices = Vec::with_capacity(suffixes.len());
         for (i, &suffix) in suffixes.iter().enumerate() {
-            if let Some(&fs) = suffixes.get(i + N1) {
+            if let Some(&fs) = suffixes.get(i + PREFETCH_DISTANCE) {
                 self.suffix_index_to_protein.prefetch_for_suffix(fs);
             }
             protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
         }
 
         // ── Pass 2: collect ProteinRefs ──────────────────────────────────────
-        // protein_indices is a small Vec (~135 × 4 bytes) that fits in L1 cache,
-        // so protein_indices[i + N2] is free to read at iteration i. We use it
-        // to prefetch the fixed-table entry for that future protein before the
-        // blocking proteins.get() call for the current protein.
-        const N2: usize = 16;
+        // protein_indices fits in L1 cache, so reading ahead is free. We prefetch
+        // the fixed-table entry for the future protein before the blocking proteins.get() call.
         let mut res = Vec::with_capacity(suffixes.len());
         for (i, &protein_index) in protein_indices.iter().enumerate() {
-            if let Some(&fpi) = protein_indices.get(i + N2) {
+            if let Some(&fpi) = protein_indices.get(i + PREFETCH_DISTANCE) {
                 if !fpi.is_null() {
                     self.proteins.prefetch(fpi as usize);
                 }
