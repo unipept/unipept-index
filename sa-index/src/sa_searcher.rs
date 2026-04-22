@@ -442,41 +442,79 @@ impl Searcher {
                     }
                     self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 } else {
-                    // Generic path: iterate with two-pass prefetching to hide DRAM latency for
-                    // protein-text accesses required by prefix checks, IL validation, or tryptic
-                    // filtering.
-                    //
-                    // Pass 1 — collect a batch of raw SA entries from the iterator and issue
-                    //          non-blocking hardware prefetches for the protein-text positions
-                    //          each entry will access.
-                    // Pass 2 — validate each buffered entry; the prefetches from pass 1 will
-                    //          have had time to complete, so protein-text reads are cheap.
+                    // Generic path: tryptic filtering, IL checking, or skip > 0.
                     let text = self.proteins.text();
                     let mut sa_iter = self.sa.iter_range(min_bound, max_bound);
 
-                    loop {
-                        // --- Pass 1 ---
-                        raw_batch.clear();
-                        for s in &mut sa_iter {
-                            let su = s as usize;
-                            if su >= skip {
-                                let ms = su - skip;
-                                let me = su + search_string.len() - skip;
-                                // Prefetch positions needed by prefix check, IL check, and
-                                // tryptic checks respectively.
-                                text.prefetch_at(ms.saturating_sub(1)); // tryptic start / K|R before
-                                text.prefetch_at(ms);                   // prefix start
-                                text.prefetch_at(me.saturating_sub(1)); // tryptic cut before end
-                                text.prefetch_at(me);                   // tryptic end / separator
+                    if text.is_mmap_backed() {
+                        // Two-pass batching: prefetch text positions in Pass 1 before
+                        // validating in Pass 2 to hide DRAM latency for mmap reads.
+                        //
+                        // Pass 1 — collect a batch of raw SA entries from the iterator and issue
+                        //          non-blocking hardware prefetches for the protein-text positions
+                        //          each entry will access.
+                        // Pass 2 — validate each buffered entry; the prefetches from pass 1 will
+                        //          have had time to complete, so protein-text reads are cheap.
+                        loop {
+                            // --- Pass 1 ---
+                            raw_batch.clear();
+                            for s in &mut sa_iter {
+                                let su = s as usize;
+                                if su >= skip {
+                                    let ms = su - skip;
+                                    let me = su + search_string.len() - skip;
+                                    // Prefetch positions needed by prefix check, IL check, and
+                                    // tryptic checks respectively.
+                                    text.prefetch_at(ms.saturating_sub(1)); // tryptic start / K|R before
+                                    text.prefetch_at(ms);                   // prefix start
+                                    text.prefetch_at(me.saturating_sub(1)); // tryptic cut before end
+                                    text.prefetch_at(me);                   // tryptic end / separator
+                                }
+                                raw_batch.push(s);
+                                if raw_batch.len() == BATCH_SIZE { break; }
                             }
-                            raw_batch.push(s);
-                            if raw_batch.len() == BATCH_SIZE { break; }
-                        }
-                        if raw_batch.is_empty() { break; }
+                            if raw_batch.is_empty() { break; }
 
-                        // --- Pass 2 ---
-                        for &raw in &raw_batch {
-                            let suffix = raw as usize;
+                            // --- Pass 2 ---
+                            for &raw in &raw_batch {
+                                let suffix = raw as usize;
+
+                                if suffix >= skip {
+                                    let match_start = suffix - skip;
+                                    let match_end = suffix + search_string.len() - skip;
+
+                                    if (skip == 0
+                                        || Self::check_prefix(
+                                            current_search_string_prefix,
+                                            ProteinTextSlice::new(text, match_start, suffix),
+                                            equate_il
+                                        ))
+                                        && Self::check_suffix(
+                                            skip,
+                                            il_locations_current_suffix,
+                                            current_search_string_suffix,
+                                            ProteinTextSlice::new(text, suffix, match_end),
+                                            equate_il
+                                        )
+                                        && (!tryptic
+                                            || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
+                                                && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
+                                    {
+                                        matching_suffixes.push((suffix - skip) as i64);
+
+                                        if matching_suffixes.len() >= max_matches {
+                                            self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                                            return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Single-pass: prefetch calls would be no-ops for in-memory data,
+                        // so skip the batching overhead entirely.
+                        for s in sa_iter {
+                            let suffix = s as usize;
 
                             if suffix >= skip {
                                 let match_start = suffix - skip;

@@ -200,6 +200,13 @@ impl ProteinText {
         }
     }
 
+    /// Returns true when this text is backed by a memory-mapped file.
+    /// Used by the searcher to decide whether two-pass prefetch batching is worthwhile.
+    #[inline]
+    pub fn is_mmap_backed(&self) -> bool {
+        matches!(self, ProteinText::MmapBacked { .. })
+    }
+
 }
 
 impl WriteBinary for ProteinText {
