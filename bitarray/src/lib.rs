@@ -147,7 +147,94 @@ impl BitArray {
     pub fn get_data_slice(&self, start_slice: usize, end_slice: usize) -> &[u64] {
         &self.data[start_slice..end_slice]
     }
+
+    /// Returns a streaming iterator over entries `[start, end)`.
+    ///
+    /// Keeps `current_word` and `next_word` in local variables so a new slice read only occurs
+    /// when crossing a 64-bit block boundary — roughly once per `64 / bits_per_value` entries.
+    pub fn iter_range(&self, start: usize, end: usize) -> BitArrayRangeIter<'_> {
+        BitArrayRangeIter::new(&self.data, self.bits_per_value, self.mask, start, end)
+    }
 }
+
+/// Streaming sequential iterator over a contiguous range of a `BitArray`.
+///
+/// Keeps `current_word` and `next_word` in local variables (register-allocated by the compiler)
+/// so that a new slice read only occurs when crossing a 64-bit block boundary — roughly once per
+/// `64 / bits_per_value` entries, vs one slice read per entry with `BitArray::get`.
+pub struct BitArrayRangeIter<'a> {
+    data: &'a [u64],
+    bits_per_value: usize,
+    mask: u64,
+    current_word: u64, // u64 block containing the next value to yield
+    next_word: u64,    // u64 block after current_word (pre-loaded)
+    block_idx: usize,  // index of current_word within data
+    bit_off: usize,    // bit offset of next value within current_word (0..64)
+    remaining: usize,  // entries left to yield
+}
+
+impl<'a> BitArrayRangeIter<'a> {
+    fn new(data: &'a [u64], bits_per_value: usize, mask: u64, start: usize, end: usize) -> Self {
+        let remaining = end.saturating_sub(start);
+        if remaining == 0 {
+            return Self {
+                data, bits_per_value, mask,
+                current_word: 0, next_word: 0,
+                block_idx: 0, bit_off: 0, remaining: 0,
+            };
+        }
+
+        let bit_pos   = start * bits_per_value;
+        let block_idx = bit_pos / 64;
+        let bit_off   = bit_pos % 64;
+
+        let current_word = data[block_idx];
+        let next_word    = if block_idx + 1 < data.len() { data[block_idx + 1] } else { 0 };
+
+        Self { data, bits_per_value, mask, current_word, next_word, block_idx, bit_off, remaining }
+    }
+}
+
+impl Iterator for BitArrayRangeIter<'_> {
+    type Item = i64;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<i64> {
+        if self.remaining == 0 { return None; }
+        self.remaining -= 1;
+
+        let val = if self.bit_off + self.bits_per_value <= 64 {
+            // Value fits entirely within current_word
+            (self.current_word >> (64 - self.bit_off - self.bits_per_value)) & self.mask
+        } else {
+            // Value spans current_word and next_word
+            let end_off = (self.bit_off + self.bits_per_value) % 64;
+            ((self.current_word << end_off) | (self.next_word >> (64 - end_off))) & self.mask
+        };
+
+        // Advance bit cursor; load next word from data only on block-boundary crossing
+        self.bit_off += self.bits_per_value;
+        if self.bit_off >= 64 {
+            self.bit_off   -= 64;
+            self.block_idx += 1;
+            self.current_word = self.next_word;
+            self.next_word = if self.block_idx + 1 < self.data.len() {
+                self.data[self.block_idx + 1]
+            } else {
+                0
+            };
+        }
+
+        Some(val as i64)
+    }
+}
+
+impl ExactSizeIterator for BitArrayRangeIter<'_> {}
 
 /// Writes the data to a writer in a binary format using a bit array. The data is written
 /// in chunks of the specified capacity, so memory usage is minimized.

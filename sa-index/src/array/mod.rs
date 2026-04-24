@@ -99,7 +99,7 @@ impl SuffixArray {
             SuffixArray::Original(sa, _) =>
                 SuffixArrayRangeIter::Original(sa.get(start..end).unwrap_or(&[]).iter()),
             SuffixArray::Compressed(ba, _) =>
-                SuffixArrayRangeIter::Compressed { ba, idx: start, end },
+                SuffixArrayRangeIter::Compressed(ba.iter_range(start, end)),
             SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } =>
                 SuffixArrayRangeIter::Mmap(mmap::MmapSaRangeIter::new(
                     mmap, *data_offset, *bits_per_value, start, end,
@@ -145,11 +145,11 @@ impl SuffixArray {
 
 /// Iterator over a contiguous range of SA entries.
 /// - `Original`: wraps a slice iterator — zero overhead.
-/// - `Compressed`: calls `BitArray::get()` per entry (heap-hot data).
+/// - `Compressed`: uses `BitArrayRangeIter` — keeps u64 words in registers, slice only touched at block boundaries.
 /// - `Mmap`: uses `MmapSaRangeIter` — keeps u64 words in registers, mmap only touched at block boundaries.
 pub enum SuffixArrayRangeIter<'a> {
     Original(std::slice::Iter<'a, i64>),
-    Compressed { ba: &'a BitArray, idx: usize, end: usize },
+    Compressed(bitarray::BitArrayRangeIter<'a>),
     /// Internal implementation detail — callers obtain iterators via `SuffixArray::iter_range()`.
     #[doc(hidden)]
     Mmap(mmap::MmapSaRangeIter<'a>),
@@ -161,9 +161,9 @@ impl Iterator for SuffixArrayRangeIter<'_> {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = match self {
-            Self::Original(iter)              => iter.len(),
-            Self::Compressed { idx, end, .. } => end.saturating_sub(*idx),
-            Self::Mmap(iter)                  => iter.len(),
+            Self::Original(iter)    => iter.len(),
+            Self::Compressed(iter)  => iter.len(),
+            Self::Mmap(iter)        => iter.len(),
         };
         (n, Some(n))
     }
@@ -171,14 +171,9 @@ impl Iterator for SuffixArrayRangeIter<'_> {
     #[inline]
     fn next(&mut self) -> Option<i64> {
         match self {
-            Self::Original(iter) => iter.next().copied(),
-            Self::Compressed { ba, idx, end } => {
-                if *idx >= *end { return None; }
-                let val = ba.get(*idx) as i64;
-                *idx += 1;
-                Some(val)
-            }
-            Self::Mmap(iter) => iter.next(),
+            Self::Original(iter)   => iter.next().copied(),
+            Self::Compressed(iter) => iter.next(),
+            Self::Mmap(iter)       => iter.next(),
         }
     }
 }

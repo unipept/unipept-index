@@ -2,6 +2,7 @@ target/
 data/
 uniprot-2026-01/
 scripts/
+data/benchmarks/
 benchmarks/
 
 libsais64-rs/libsais
