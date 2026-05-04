@@ -199,7 +199,7 @@ impl Proteins {
             Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } => {
                 use entry_offsets as eo;
                 let entry_off = fixed_table_offset + index * eo::ENTRY_SIZE;
-                assert!(
+                debug_assert!(
                     entry_off + eo::ENTRY_SIZE <= mmap.len(),
                     "protein index {index} is out of range (mmap too short for fixed-table entry)"
                 );
@@ -216,8 +216,8 @@ impl Proteins {
                 let fa_start  = fa_data_offset + fa_offset;
                 let fa_end    = fa_start + fa_len;
 
-                assert!(uid_end <= mmap.len(), "uid data for protein {index} extends beyond mmap");
-                assert!(fa_end  <= mmap.len(), "fa data for protein {index} extends beyond mmap");
+                debug_assert!(uid_end <= mmap.len(), "uid data for protein {index} extends beyond mmap");
+                debug_assert!(fa_end  <= mmap.len(), "fa data for protein {index} extends beyond mmap");
 
                 ProteinRef {
                     uniprot_id: std::str::from_utf8(&mmap[uid_start..uid_end])

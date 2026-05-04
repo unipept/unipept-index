@@ -535,19 +535,22 @@ impl Searcher {
         return self.retrieve_proteins_preloaded(suffixes);
     }
 
-    /// mmap build: three-level prefetch pipeline.
+    /// mmap build: two-pass prefetch pipeline.
     ///
     /// Pass 1 — prefetch suffix_to_protein mapping entries D iterations ahead,
     ///           collect protein_indices.
-    /// Pass 2 — prefetch fixed-table entries D iterations ahead,
-    ///           prefetch string data (uid/FA) D/2 iterations ahead (fixed table is
-    ///           already in cache from D/2 iterations ago), build result.
+    /// Pass 2 — prefetch fixed-table entries D iterations ahead, build result.
+    ///
+    /// Note: prefetch_strings is intentionally omitted. It reads the fixed-table entry
+    /// (a blocking DRAM access) to obtain string offsets, which causes a stall when the
+    /// entry has not yet landed from the earlier prefetch hint (D/2 iterations × ~5 ns ≈
+    /// 40 ns < ~80–100 ns DRAM latency). Prefetching only the fixed table and leaving
+    /// strings to the hardware prefetcher is measurably faster in practice.
     #[cfg(feature = "mmap")]
     fn retrieve_proteins_mmap(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        // Tuned on x86_64 Zen4/Intel Sapphire Rapids: ~80–100 ns DRAM latency, each
-        // suffix_to_protein lookup ~3–5 ns at that cache level → 16 entries ≈ 64 ns gap.
-        // Re-benchmark on ARM or NVMe-backed mmap.
-        const PREFETCH_DISTANCE: usize = 16;
+        // D=32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the fixed-table read in
+        // proteins.get(), giving the prefetch hint time to complete for most DRAM configs.
+        const PREFETCH_DISTANCE: usize = 32;
 
         // Pass 1: prefetch suffix_to_protein mapping, collect protein_indices
         let mut protein_indices = Vec::with_capacity(suffixes.len());
@@ -558,14 +561,11 @@ impl Searcher {
             protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
         }
 
-        // Pass 2: prefetch fixed table (D ahead) + string data (D/2 ahead), build ProteinRefs
+        // Pass 2: prefetch fixed table (D ahead), build ProteinRefs
         let mut res = Vec::with_capacity(suffixes.len());
         for (i, &protein_index) in protein_indices.iter().enumerate() {
             if let Some(&fpi) = protein_indices.get(i + PREFETCH_DISTANCE) {
                 if !fpi.is_null() { self.proteins.prefetch(fpi as usize); }
-            }
-            if let Some(&fpi2) = protein_indices.get(i + PREFETCH_DISTANCE / 2) {
-                if !fpi2.is_null() { self.proteins.prefetch_strings(fpi2 as usize); }
             }
             if !protein_index.is_null() {
                 res.push(self.proteins.get(protein_index as usize));
