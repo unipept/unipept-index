@@ -356,8 +356,6 @@ impl Searcher {
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
-        self.prefetch_kmer_range(search_string);
-
         // Cap pre-allocation at 4096 entries (32 KB) so callers passing large max_matches
         // don't wastefully over-allocate for peptides that match rarely.
         let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(4096));
@@ -370,6 +368,8 @@ impl Searcher {
 
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
+            self.prefetch_kmer_range(&search_string[skip..]);
+
             // il_locations is built in ascending index order, so partition_point gives us
             // the first position that is relevant for this skip value in O(log n).
             // These are still absolute positions within `search_string`, not within the suffix.
