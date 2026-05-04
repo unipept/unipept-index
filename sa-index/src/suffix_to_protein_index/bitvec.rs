@@ -1,8 +1,9 @@
 use std::io::{Read, Write};
 use std::error::Error;
 
-use memmap2::Mmap;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+#[cfg(feature = "mmap")]
+use memmap2::Mmap;
 use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
 use text_compression::ProteinText;
 
@@ -26,6 +27,7 @@ pub struct BitVecSuffixToProtein {
 /// - (block_count/8 + 1) × 16 bytes: superblock cells
 ///   each cell: [level1: u64 LE] [packed_level2: u64 LE]
 ///   packed_level2 bits (w-1)*9..(w-1)*9+9 hold cumulative count before word w (w=1..7)
+#[cfg(feature = "mmap")]
 pub struct MmapBitVecSuffixToProtein {
     pub(super) mmap: Mmap,
     pub(super) bit_len: u64,
@@ -43,6 +45,7 @@ impl SuffixToProteinIndex for BitVecSuffixToProtein {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl MmapBitVecSuffixToProtein {
     #[inline]
     fn get_bit(&self, pos: u64) -> bool {
@@ -82,6 +85,7 @@ impl MmapBitVecSuffixToProtein {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl SuffixToProteinIndex for MmapBitVecSuffixToProtein {
     fn touch_all_pages(&self) {
         // bits and counts regions are contiguous from bits_offset to end of mmap
@@ -231,7 +235,9 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinaryMmap};
+    use crate::Nullable;
+    #[cfg(feature = "mmap")]
+    use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
     use super::{BitVecSuffixToProtein, write_bitvec_mapping, read_bitvec_mapping};
 
@@ -241,6 +247,7 @@ mod tests {
         ProteinText::from_string(&text)
     }
 
+    #[cfg(feature = "mmap")]
     fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(buf).unwrap();
@@ -274,6 +281,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_bitvec_roundtrip() {
         let text = build_text();
@@ -296,6 +304,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_bitvec_crosses_superblock_boundary() {
         // Build a text long enough to span multiple 512-bit superblocks (>= 8 blocks = 512 chars)
@@ -328,6 +337,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_bitvec_random_equivalence() {
         use std::collections::hash_map::DefaultHasher;
@@ -363,6 +373,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_search_mmap_bitvec() {
         let text = build_text();

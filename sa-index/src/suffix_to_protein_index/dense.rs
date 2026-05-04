@@ -1,12 +1,13 @@
 use std::io::{Read, Write};
 use std::error::Error;
 
-use memmap2::Mmap;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinText;
 
 use crate::Nullable;
 use super::SuffixToProteinIndex;
+#[cfg(feature = "mmap")]
+use memmap2::Mmap;
 
 /// Mapping that uses O(n) memory with n the size of the input text, but retrieval of the protein is
 /// in O(1)
@@ -18,6 +19,7 @@ pub struct DenseSuffixToProtein {
 
 /// Mapping backed by a memory-mapped Dense binary file.
 /// Format: [1 byte type=0x00] [8 bytes count (u64 LE)] [count × 4 bytes (u32 LE)]
+#[cfg(feature = "mmap")]
 pub struct MmapDenseSuffixToProtein {
     pub(super) mmap: Mmap,
     pub(super) data_offset: usize, // 9 = 1 (type) + 8 (count)
@@ -29,6 +31,7 @@ impl SuffixToProteinIndex for DenseSuffixToProtein {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl SuffixToProteinIndex for MmapDenseSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let off = self.data_offset + suffix as usize * 4;
@@ -113,7 +116,9 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinaryMmap};
+    use crate::Nullable;
+    #[cfg(feature = "mmap")]
+    use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
     use super::{DenseSuffixToProtein, write_dense_mapping, read_dense_mapping};
 
@@ -123,6 +128,7 @@ mod tests {
         ProteinText::from_string(&text)
     }
 
+    #[cfg(feature = "mmap")]
     fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(buf).unwrap();
@@ -163,6 +169,7 @@ mod tests {
         assert_eq!(original, restored);
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_dense_roundtrip() {
         let text = build_text();
@@ -185,6 +192,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_search_mmap_dense() {
         let text = build_text();

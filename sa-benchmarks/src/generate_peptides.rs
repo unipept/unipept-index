@@ -38,9 +38,6 @@ struct Args {
     #[arg(long, default_value_t = 50)]
     max_len: usize,
 
-    /// Use memory-mapped I/O when loading proteins.bin
-    #[arg(long, default_value_t = true)]
-    mmap: bool,
 }
 
 /// Scans `text` once and returns all protein runs as `(start, len)` pairs,
@@ -136,7 +133,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let proteins_path = args.index_dir.join("proteins.bin");
     eprintln!("Loading proteins from {}...", proteins_path.display());
-    let proteins = load_proteins_file(proteins_path.to_str().unwrap(), args.mmap)?;
+    let proteins = load_proteins_file(proteins_path.to_str().unwrap())?;
 
     let text = proteins.text();
     eprintln!("  Text length: {} characters", text.len());

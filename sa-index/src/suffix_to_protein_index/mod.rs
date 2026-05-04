@@ -1,12 +1,15 @@
 use std::io::Write;
 use std::error::Error;
-use std::path::Path;
-use std::fs::File;
 
 use clap::ValueEnum;
-use memmap2::Mmap;
 use text_compression::ProteinText;
-use crate::{ReadBinary, ReadBinaryMmap};
+use crate::ReadBinary;
+#[cfg(feature = "mmap")]
+use std::{path::Path, fs::File};
+#[cfg(feature = "mmap")]
+use memmap2::Mmap;
+#[cfg(feature = "mmap")]
+use crate::ReadBinaryMmap;
 
 pub mod dense;
 pub mod sparse;
@@ -99,6 +102,7 @@ impl ReadBinary for SuffixToProteinMapping {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl ReadBinaryMmap for SuffixToProteinMapping {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
@@ -168,7 +172,9 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinary, ReadBinaryMmap};
+    use crate::{Nullable, ReadBinary};
+    #[cfg(feature = "mmap")]
+    use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingStyle, dump_mapping};
 
     fn build_text() -> ProteinText {
@@ -177,6 +183,7 @@ mod tests {
         ProteinText::from_string(&text)
     }
 
+    #[cfg(feature = "mmap")]
     fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
         use std::io::Write;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
@@ -242,6 +249,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_unknown_type() {
         let buf = vec![99u8];
@@ -250,6 +258,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_dump_and_load_mmap_dense() {
         let text = build_text();
@@ -262,6 +271,7 @@ mod tests {
         assert_eq!(loaded.suffix_to_protein(3), u32::NULL);
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_dump_and_load_mmap_sparse() {
         let text = build_text();
@@ -274,6 +284,7 @@ mod tests {
         assert_eq!(loaded.suffix_to_protein(10), u32::NULL);
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_dump_and_load_mmap_bitvec() {
         let text = build_text();

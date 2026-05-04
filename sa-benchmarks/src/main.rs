@@ -107,9 +107,6 @@ struct Args {
     #[arg(long, num_args = 0..=1, default_missing_value = "all")]
     warmup: Option<WarmupMode>,
 
-    /// Use memory-mapped I/O when loading the index files
-    #[arg(long, default_value_t = false)]
-    mmap: bool,
     /// Optional path to a pre-built k-mer bounds table file.
     /// When provided, binary search is accelerated by narrowing the initial search window.
     #[arg(long)]
@@ -371,15 +368,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Load index
     eprintln!("Loading suffix array from {}...", sa_path.display());
-    let suffix_array = load_suffix_array_file(sa_path.to_str().unwrap(), args.mmap)?;
+    let suffix_array = load_suffix_array_file(sa_path.to_str().unwrap())?;
     eprintln!("  {} items, {} bits/value, sample rate {}",
         suffix_array.len(), suffix_array.bits_per_value(), suffix_array.sample_rate());
 
     eprintln!("Loading proteins from {}...", proteins_path.display());
-    let proteins = load_proteins_file(proteins_path.to_str().unwrap(), args.mmap)?;
+    let proteins = load_proteins_file(proteins_path.to_str().unwrap())?;
 
     eprintln!("Loading mapping from {} (type: {})...", mapping_path.display(), mapping_type_str);
-    let SuffixToProteinMapping(mapping) = load_mapping_file(mapping_path.to_str().unwrap(), args.mmap)?;
+    let SuffixToProteinMapping(mapping) = load_mapping_file(mapping_path.to_str().unwrap())?;
 
     let sa_type = if suffix_array.bits_per_value() == 64 { "original" } else { "compressed" };
     let sample_rate = suffix_array.sample_rate();
@@ -394,7 +391,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         searcher = searcher.with_kmer_table(table);
     }
 
-    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, args.mmap);
+    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, cfg!(feature = "mmap"));
     eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
 
     // Load peptides: either all at once from a file (for sequential chunking across runs)
@@ -509,7 +506,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let config = BenchmarkConfig {
             sa_type: sa_type.to_string(),
             mapping_type: mapping_type_str.to_string(),
-            use_mmap: args.mmap,
+            use_mmap: cfg!(feature = "mmap"),
             sample_rate,
             bits_per_value,
             equate_il: args.equate_il,

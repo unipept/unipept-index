@@ -24,11 +24,6 @@ pub struct Arguments {
     /// Path to the prebuilt suffix-to-protein mapping binary file.
     #[arg(long)]
     mapping_file: String,
-    /// Use memory-mapped I/O to load the suffix array and ProteinText. When set, --database-file
-    /// must point to a binary proteins file (.proteins.bin). Makes startup near-instant by letting
-    /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
-    #[arg(short, long, default_value_t = false)]
-    mmap: bool,
     /// Optional path to a pre-built k-mer bounds table file (produced by sa-builder
     /// --output-kmer-table). When provided, binary search is accelerated by ~60 %.
     #[arg(long)]
@@ -105,11 +100,11 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file, mmap, mapping_file, kmer_table_file } = args;
+    let Arguments { database_file, index_file, mapping_file, kmer_table_file } = args;
 
     eprintln!();
     eprintln!("Started loading the suffix array...");
-    let suffix_array = load_suffix_array_file(&index_file, mmap)?;
+    let suffix_array = load_suffix_array_file(&index_file)?;
     eprintln!("Successfully loaded the suffix array!");
     eprintln!("\tAmount of items: {}", suffix_array.len());
     eprintln!("\tAmount of bits per item: {}", suffix_array.bits_per_value());
@@ -117,12 +112,12 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     eprintln!();
     eprintln!("Started loading the proteins...");
-    let proteins = load_proteins_file(&database_file, mmap)?;
+    let proteins = load_proteins_file(&database_file)?;
     eprintln!("Successfully loaded the proteins!");
 
     eprintln!();
     eprintln!("Started loading the suffix-to-protein mapping...");
-    let SuffixToProteinMapping(mapping) = load_mapping_file(&mapping_file, mmap)?;
+    let SuffixToProteinMapping(mapping) = load_mapping_file(&mapping_file)?;
     eprintln!("Successfully loaded the suffix-to-protein mapping!");
 
     let mut searcher = Searcher::new(suffix_array, proteins, mapping);

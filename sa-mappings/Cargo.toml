@@ -8,9 +8,12 @@ edition = "2021"
 [dev-dependencies]
 tempdir = "0.3.7"
 
+[features]
+mmap = ["dep:memmap2", "text-compression/mmap"]
+
 [dependencies]
 fa-compression = { path = "../fa-compression" }
 prefetch = { path = "../prefetch" }
 bytelines = "2.5.0"
 text-compression = { path = "../text-compression" }
-memmap2 = "0.9"
+memmap2 = { version = "0.9", optional = true }

@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "generate-peptides"
 path = "src/generate_peptides.rs"
 
+[features]
+default = ["mmap"]
+mmap = ["sa-index/mmap", "sa-server/mmap"]
+
 [dependencies]
 sa-index            = { path = "../sa-index" }
 sa-server           = { path = "../sa-server" }

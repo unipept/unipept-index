@@ -1,13 +1,18 @@
 //! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins
 //! and collections of proteins, respectively.
 
-use std::{error::Error, fs::File, io::{BufRead, BufReader, Write}, path::Path, str::from_utf8, sync::Arc};
+use std::{error::Error, fs::File, io::{BufRead, BufReader, Write}, str::from_utf8};
+#[cfg(feature = "mmap")]
+use std::{path::Path, sync::Arc};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
+#[cfg(feature = "mmap")]
 use memmap2::Mmap;
 pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
-use text_compression::{ProteinText, bit_array_byte_size};
+use text_compression::ProteinText;
+#[cfg(feature = "mmap")]
+use text_compression::bit_array_byte_size;
 
 
 /// The separation character used in the input string
@@ -64,6 +69,7 @@ pub enum Proteins {
         proteins: Vec<Protein>,
     },
     /// Data accessed via memory-mapped file.
+    #[cfg(feature = "mmap")]
     MmapBacked {
         /// The memory-mapped file backing the protein data.
         mmap: Arc<Mmap>,
@@ -91,6 +97,7 @@ impl Proteins {
     pub fn text(&self) -> &ProteinText {
         match self {
             Proteins::InMemory { text, .. } => text,
+            #[cfg(feature = "mmap")]
             Proteins::MmapBacked { text, .. } => text,
         }
     }
@@ -99,6 +106,7 @@ impl Proteins {
     pub fn len(&self) -> usize {
         match self {
             Proteins::InMemory { proteins, .. } => proteins.len(),
+            #[cfg(feature = "mmap")]
             Proteins::MmapBacked { protein_count, .. } => *protein_count,
         }
     }
@@ -110,7 +118,7 @@ impl Proteins {
 
     /// Reads at least one byte from every OS page of the proteins mmap,
     /// ensuring all pages are resident in the page cache.
-    /// For the in-memory variant this is a no-op.
+    #[cfg(feature = "mmap")]
     pub fn touch_all_pages(&self) {
         if let Proteins::MmapBacked { mmap, .. } = self {
             #[cfg(unix)]
@@ -126,16 +134,32 @@ impl Proteins {
     }
 
     /// Non-blocking hardware prefetch hint for the fixed-table entry of protein `index`.
-    /// Call this N iterations before `get(index)` to hide DRAM latency on mmap-backed
-    /// protein files. No-op for in-memory proteins and on unsupported platforms.
+    #[cfg(feature = "mmap")]
     #[inline]
     pub fn prefetch(&self, index: usize) {
         if let Proteins::MmapBacked { mmap, fixed_table_offset, .. } = self {
             let off = fixed_table_offset + index * 16;
             if off + 16 <= mmap.len() {
-                // safe: Mmap: Deref<Target=[u8]>, bounds checked above
                 prefetch::prefetch_read(&mmap[off] as *const u8);
             }
+        }
+    }
+
+    /// Non-blocking hardware prefetch hint for the uid and FA string regions of protein `index`.
+    /// Reads the (already-cached) fixed-table entry to obtain string offsets, then issues
+    /// prefetch hints for both the uid-string and FA-string regions before they are needed.
+    #[cfg(feature = "mmap")]
+    #[inline]
+    pub fn prefetch_strings(&self, index: usize) {
+        if let Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } = self {
+            let entry_off = fixed_table_offset + index * 16;
+            if entry_off + 16 > mmap.len() { return; }
+            let uid_off = u32::from_le_bytes(mmap[entry_off + 4..entry_off + 8].try_into().unwrap()) as usize;
+            let fa_off  = u32::from_le_bytes(mmap[entry_off + 10..entry_off + 14].try_into().unwrap()) as usize;
+            let uid_ptr = uid_data_offset + uid_off;
+            let fa_ptr  = fa_data_offset  + fa_off;
+            if uid_ptr < mmap.len() { prefetch::prefetch_read(&mmap[uid_ptr] as *const u8); }
+            if fa_ptr  < mmap.len() { prefetch::prefetch_read(&mmap[fa_ptr]  as *const u8); }
         }
     }
 
@@ -150,6 +174,7 @@ impl Proteins {
                     functional_annotations: &p.functional_annotations
                 }
             }
+            #[cfg(feature = "mmap")]
             Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } => {
                 let entry_off = fixed_table_offset + index * 16;
                 let entry = &mmap[entry_off..entry_off + 16];
@@ -297,6 +322,7 @@ impl WriteBinary for Proteins {
 
                 Ok(())
             }
+            #[cfg(feature = "mmap")]
             Proteins::MmapBacked { .. } => {
                 Err("write_binary() is not supported on MmapBacked Proteins".into())
             }
@@ -348,6 +374,7 @@ impl ReadBinary for Proteins {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl ReadBinaryMmap for Proteins {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let f = File::open(path)?;
@@ -563,6 +590,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_load_from_binary_mmap() {
         let tmp_dir = TempDir::new("test_mmap_roundtrip").unwrap();

@@ -1,12 +1,13 @@
 use std::io::{Read, Write};
 use std::error::Error;
 
-use memmap2::Mmap;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinText;
 
 use crate::Nullable;
 use super::SuffixToProteinIndex;
+#[cfg(feature = "mmap")]
+use memmap2::Mmap;
 
 /// Mapping that uses O(m) memory with m the number of proteins, but retrieval of the protein is
 /// O(log m)
@@ -17,6 +18,7 @@ pub struct SparseSuffixToProtein {
 
 /// Mapping backed by a memory-mapped Sparse binary file.
 /// Format: [1 byte type=0x01] [8 bytes count (u64 LE)] [count × 8 bytes (i64 LE)]
+#[cfg(feature = "mmap")]
 pub struct MmapSparseSuffixToProtein {
     pub(super) mmap: Mmap,
     pub(super) data_offset: usize, // 9 = 1 (type) + 8 (count)
@@ -36,6 +38,7 @@ impl SuffixToProteinIndex for SparseSuffixToProtein {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl SuffixToProteinIndex for MmapSparseSuffixToProtein {
     fn touch_all_pages(&self) {
         let end = self.data_offset + self.count * 8;
@@ -79,13 +82,6 @@ impl SuffixToProteinIndex for MmapSparseSuffixToProtein {
 
 impl SparseSuffixToProtein {
     /// Creates a new SparseSuffixToProtein mapping
-    ///
-    /// # Arguments
-    /// * `text` - The text over which we want to create the mapping
-    ///
-    /// # Returns
-    ///
-    /// Returns a new SparseSuffixToProtein build over the provided text
     pub fn new(text: &ProteinText) -> Self {
         let mut suffix_index_to_protein: Vec<i64> = vec![0];
         for (index, char) in text.iter().enumerate() {
@@ -127,7 +123,9 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinaryMmap};
+    use crate::Nullable;
+    #[cfg(feature = "mmap")]
+    use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
     use super::{SparseSuffixToProtein, write_sparse_mapping, read_sparse_mapping};
 
@@ -137,6 +135,7 @@ mod tests {
         ProteinText::from_string(&text)
     }
 
+    #[cfg(feature = "mmap")]
     fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(buf).unwrap();
@@ -175,6 +174,7 @@ mod tests {
         assert_eq!(original, restored);
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_sparse_roundtrip() {
         let text = build_text();
@@ -197,6 +197,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_search_mmap_sparse() {
         let text = build_text();

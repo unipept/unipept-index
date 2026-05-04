@@ -1,19 +1,22 @@
 use std::{
     collections::HashMap,
     error::Error,
-    fs::File,
     io::{BufRead, Write},
-    path::Path,
-    sync::Arc
 };
 use std::io::Read;
+#[cfg(feature = "mmap")]
+use std::{fs::File, path::Path};
 use bitarray::{Binary, BitArray, data_to_writer};
+#[cfg(feature = "mmap")]
+use std::sync::Arc;
+#[cfg(feature = "mmap")]
 use memmap2::Mmap;
 
 pub mod traits;
 pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
 
 /// The 5-bit-to-char lookup table for mmap-backed ProteinText.
+#[cfg(feature = "mmap")]
 const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
@@ -31,6 +34,7 @@ pub enum ProteinText {
         bit5_to_char: Vec<u8>,
     },
     /// Memory-mapped representation backed by a file.
+    #[cfg(feature = "mmap")]
     MmapBacked {
         mmap: Arc<Mmap>,
         data_offset: usize,
@@ -100,11 +104,13 @@ impl ProteinText {
     }
 
     /// Creates a memory-mapped ProteinText backed by an existing mmap.
+    #[cfg(feature = "mmap")]
     pub fn from_mmap(mmap: Arc<Mmap>, data_offset: usize, len: usize) -> Self {
         ProteinText::MmapBacked { mmap, data_offset, len }
     }
 
     /// Extract a 5-bit value from the mmap and convert to a character.
+    #[cfg(feature = "mmap")]
     fn get_mmap(mmap: &Mmap, data_offset: usize, index: usize) -> u8 {
         const BITS: usize = 5;
         const MASK: u64 = (1u64 << BITS) - 1;
@@ -134,6 +140,7 @@ impl ProteinText {
                 let char_5bit = bit_array.get(index) as usize;
                 bit5_to_char[char_5bit]
             }
+            #[cfg(feature = "mmap")]
             ProteinText::MmapBacked { mmap, data_offset, .. } => {
                 Self::get_mmap(mmap, *data_offset, index)
             }
@@ -149,6 +156,7 @@ impl ProteinText {
                     .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
                 bit_array.set(index, char_5bit as u64);
             }
+            #[cfg(feature = "mmap")]
             ProteinText::MmapBacked { .. } => {
                 panic!("set() is not supported on MmapBacked ProteinText");
             }
@@ -159,6 +167,7 @@ impl ProteinText {
     pub fn len(&self) -> usize {
         match self {
             ProteinText::InMemory { bit_array, .. } => bit_array.len(),
+            #[cfg(feature = "mmap")]
             ProteinText::MmapBacked { len, .. } => *len,
         }
     }
@@ -172,6 +181,7 @@ impl ProteinText {
     pub fn clear(&mut self) {
         match self {
             ProteinText::InMemory { bit_array, .. } => bit_array.clear(),
+            #[cfg(feature = "mmap")]
             ProteinText::MmapBacked { .. } => {
                 panic!("clear() is not supported on MmapBacked ProteinText");
             }
@@ -189,7 +199,8 @@ impl ProteinText {
     }
 
     /// Non-blocking hardware prefetch hint for the cache line holding character `index`.
-    /// No-op for in-memory variants and on unsupported platforms.
+    /// Only available and used in mmap builds.
+    #[cfg(feature = "mmap")]
     #[inline]
     pub fn prefetch_at(&self, index: usize) {
         if let ProteinText::MmapBacked { mmap, data_offset, .. } = self {
@@ -198,13 +209,6 @@ impl ProteinText {
                 prefetch::prefetch_read(&mmap[bit_off] as *const u8);
             }
         }
-    }
-
-    /// Returns true when this text is backed by a memory-mapped file.
-    /// Used by the searcher to decide whether two-pass prefetch batching is worthwhile.
-    #[inline]
-    pub fn is_mmap_backed(&self) -> bool {
-        matches!(self, ProteinText::MmapBacked { .. })
     }
 
 }
@@ -222,6 +226,7 @@ impl WriteBinary for ProteinText {
                 writer.write_all(&text_length.to_le_bytes())?;
                 bit_array.write_binary(writer)?;
             }
+            #[cfg(feature = "mmap")]
             ProteinText::MmapBacked { mmap, data_offset, len } => {
                 let text_length = len as u64;
                 writer.write_all(&text_length.to_le_bytes())?;
@@ -252,6 +257,7 @@ impl ReadBinary for ProteinText {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl ReadBinaryMmap for ProteinText {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let f = File::open(path)?;
@@ -676,9 +682,11 @@ mod tests {
         assert_eq!(loaded.len(), input.len());
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_roundtrip() {
         use std::fs::File;
+        use std::sync::Arc;
         use memmap2::Mmap;
 
         let input = "ACACA-CAC$MLPGLALLLL$";
@@ -702,9 +710,12 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_block_boundary() {
         // 13 characters: 13*5=65 bits, crosses a u64 boundary at index 12 (bit 60..65)
+        use std::sync::Arc;
+        use memmap2::Mmap;
         let input = "ABCDEFGHIKLMN";
         let text = ProteinText::from_string(input);
 

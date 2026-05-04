@@ -1,16 +1,17 @@
-use std::{
-    fs::File,
-    io::{BufRead, Write},
-    path::Path
-};
-
+use std::io::{BufRead, Write};
 
 use bitarray::{Binary, BitArray};
+#[cfg(feature = "mmap")]
+use std::{fs::File, path::Path};
+#[cfg(feature = "mmap")]
 use memmap2::Mmap;
-use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
+use text_compression::{WriteBinary, ReadBinary};
+#[cfg(feature = "mmap")]
+use text_compression::ReadBinaryMmap;
 
 pub mod original;
 pub mod compressed;
+#[cfg(feature = "mmap")]
 pub mod mmap;
 
 pub use original::dump_suffix_array;
@@ -25,6 +26,7 @@ pub enum SuffixArray {
     /// A suffix array backed by a memory-mapped file. Works for both compressed and uncompressed
     /// formats: bits_per_value == 64 means uncompressed (i64 values), otherwise compressed
     /// (BitArray-style packed bit values with the given bits per element).
+    #[cfg(feature = "mmap")]
     MmapBacked {
         mmap: Mmap,
         data_offset: usize,
@@ -40,6 +42,7 @@ impl SuffixArray {
         match self {
             SuffixArray::Original(sa, _) => sa.len(),
             SuffixArray::Compressed(sa, _) => sa.len(),
+            #[cfg(feature = "mmap")]
             SuffixArray::MmapBacked { len, .. } => *len
         }
     }
@@ -49,6 +52,7 @@ impl SuffixArray {
         match self {
             SuffixArray::Original(_, _) => 64,
             SuffixArray::Compressed(sa, _) => sa.bits_per_value(),
+            #[cfg(feature = "mmap")]
             SuffixArray::MmapBacked { bits_per_value, .. } => *bits_per_value
         }
     }
@@ -58,6 +62,7 @@ impl SuffixArray {
         match self {
             SuffixArray::Original(_, sample_rate) => *sample_rate,
             SuffixArray::Compressed(_, sample_rate) => *sample_rate,
+            #[cfg(feature = "mmap")]
             SuffixArray::MmapBacked { sample_rate, .. } => *sample_rate
         }
     }
@@ -67,6 +72,7 @@ impl SuffixArray {
         match self {
             SuffixArray::Original(sa, _) => sa[index],
             SuffixArray::Compressed(sa, _) => sa.get(index) as i64,
+            #[cfg(feature = "mmap")]
             SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } => {
                 mmap::get_mmap(mmap, *data_offset, *bits_per_value, index)
             }
@@ -78,8 +84,8 @@ impl SuffixArray {
         self.len() == 0
     }
 
-    /// Issues a non-blocking hardware prefetch hint for the cache line holding SA
-    /// entry `index`.  No-op for in-memory SA variants.
+    /// Issues a non-blocking hardware prefetch hint for the cache line holding SA entry `index`.
+    #[cfg(feature = "mmap")]
     #[inline]
     pub fn prefetch_sa_index(&self, index: usize) {
         if let SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } = self {
@@ -92,14 +98,13 @@ impl SuffixArray {
     }
 
     /// Returns a streaming iterator over SA entries in `[start, end)`.
-    /// For `MmapBacked`, uses a streaming bit reader that keeps u64 words in CPU registers
-    /// and only accesses the mmap when crossing a 64-bit block boundary.
     pub fn iter_range(&self, start: usize, end: usize) -> SuffixArrayRangeIter<'_> {
         match self {
             SuffixArray::Original(sa, _) =>
                 SuffixArrayRangeIter::Original(sa.get(start..end).unwrap_or(&[]).iter()),
             SuffixArray::Compressed(ba, _) =>
                 SuffixArrayRangeIter::Compressed(ba.iter_range(start, end)),
+            #[cfg(feature = "mmap")]
             SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } =>
                 SuffixArrayRangeIter::Mmap(mmap::MmapSaRangeIter::new(
                     mmap, *data_offset, *bits_per_value, start, end,
@@ -108,7 +113,8 @@ impl SuffixArray {
     }
 
     /// Issues an OS prefetch hint (`MADV_WILLNEED`) for the mmap pages covering SA indices
-    /// `lo..hi_exclusive`.  No-op for in-memory variants and on non-Unix platforms.
+    /// `lo..hi_exclusive`.
+    #[cfg(feature = "mmap")]
     #[inline]
     pub fn prefetch_sa_range(&self, lo: usize, hi_exclusive: usize) {
         #[cfg(unix)]
@@ -117,15 +123,13 @@ impl SuffixArray {
             let byte_hi = data_offset + (hi_exclusive * bits_per_value).div_ceil(8);
             let len = byte_hi.saturating_sub(byte_lo);
             if len > 0 && byte_hi <= mmap.len() {
-                // SAFETY: MADV_WILLNEED is a non-destructive, read-only prefetch hint.
                 let _ = mmap.advise_range(memmap2::Advice::WillNeed, byte_lo, len);
             }
         }
     }
 
-    /// Reads at least one byte from every OS page in the suffix-array data region,
-    /// ensuring all pages are resident in the page cache.
-    /// For non-mmap variants this is a no-op.
+    /// Reads at least one byte from every OS page in the suffix-array data region.
+    #[cfg(feature = "mmap")]
     pub fn touch_all_pages(&self) {
         if let SuffixArray::MmapBacked { mmap, data_offset, len, bits_per_value, .. } = self {
             #[cfg(unix)]
@@ -151,7 +155,9 @@ pub enum SuffixArrayRangeIter<'a> {
     Original(std::slice::Iter<'a, i64>),
     Compressed(bitarray::BitArrayRangeIter<'a>),
     /// Internal implementation detail — callers obtain iterators via `SuffixArray::iter_range()`.
+    #[cfg(feature = "mmap")]
     #[doc(hidden)]
+    #[allow(private_interfaces)]
     Mmap(mmap::MmapSaRangeIter<'a>),
 }
 
@@ -163,6 +169,7 @@ impl Iterator for SuffixArrayRangeIter<'_> {
         let n = match self {
             Self::Original(iter)    => iter.len(),
             Self::Compressed(iter)  => iter.len(),
+            #[cfg(feature = "mmap")]
             Self::Mmap(iter)        => iter.len(),
         };
         (n, Some(n))
@@ -173,6 +180,7 @@ impl Iterator for SuffixArrayRangeIter<'_> {
         match self {
             Self::Original(iter)   => iter.next().copied(),
             Self::Compressed(iter) => iter.next(),
+            #[cfg(feature = "mmap")]
             Self::Mmap(iter)       => iter.next(),
         }
     }
@@ -197,6 +205,7 @@ impl WriteBinary for SuffixArray {
                     .map_err(|_| "Could not write the compressed suffix array")?;
                 Ok(())
             }
+            #[cfg(feature = "mmap")]
             SuffixArray::MmapBacked { .. } => {
                 Err("WriteBinary is not supported for SuffixArray::MmapBacked".into())
             }
@@ -227,6 +236,7 @@ impl ReadBinary for SuffixArray {
     }
 }
 
+#[cfg(feature = "mmap")]
 impl ReadBinaryMmap for SuffixArray {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let file = File::open(path)?;
@@ -270,6 +280,7 @@ mod tests {
     use bitarray::BitArray;
 
     use super::*;
+    #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
 
     struct FailingReader {
@@ -426,6 +437,7 @@ mod tests {
         assert_eq!(restored.get(4), 50);
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_load_suffix_array_mmap_uncompressed() {
         use tempdir::TempDir;
@@ -448,6 +460,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
     fn test_load_suffix_array_mmap_compressed() {
         use tempdir::TempDir;
@@ -475,8 +488,6 @@ mod tests {
     /// boundaries and a non-zero start offset.
     #[test]
     fn test_iter_range_matches_get() {
-        use tempdir::TempDir;
-
         // 20 values — enough to cross multiple 64-bit blocks for a 40-bit SA (8 entries/cycle)
         let values: Vec<i64> = (0..20).map(|i| i * 12345 + 7).collect();
 
@@ -501,7 +512,9 @@ mod tests {
         }
 
         // --- MmapBacked (40-bit compressed, via round-trip through file) ---
+        #[cfg(feature = "mmap")]
         {
+            use tempdir::TempDir;
             let tmp = TempDir::new("iter_range_mmap").unwrap();
             let path = tmp.path().join("sa.bin");
             let mut file = std::fs::File::create(&path).unwrap();
@@ -515,7 +528,9 @@ mod tests {
         }
 
         // --- MmapBacked (64-bit uncompressed) ---
+        #[cfg(feature = "mmap")]
         {
+            use tempdir::TempDir;
             let tmp = TempDir::new("iter_range_mmap64").unwrap();
             let path = tmp.path().join("sa64.bin");
             let mut file = std::fs::File::create(&path).unwrap();
