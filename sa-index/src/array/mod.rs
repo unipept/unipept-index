@@ -145,6 +145,9 @@ impl SuffixArray {
             let _ = mmap.advise(memmap2::Advice::Random);
         }
     }
+
+    #[cfg(not(feature = "mmap"))]
+    pub fn touch_all_pages(&self) {}
 }
 
 /// Iterator over a contiguous range of SA entries.

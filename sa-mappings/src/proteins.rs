@@ -133,6 +133,10 @@ impl Proteins {
         }
     }
 
+    /// No-op when the `mmap` feature is disabled.
+    #[cfg(not(feature = "mmap"))]
+    pub fn touch_all_pages(&self) {}
+
     /// Non-blocking hardware prefetch hint for the fixed-table entry of protein `index`.
     #[cfg(feature = "mmap")]
     #[inline]

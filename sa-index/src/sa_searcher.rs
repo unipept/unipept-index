@@ -272,13 +272,7 @@ impl Searcher {
 
         while hi - lo > 1 {
             let center = (lo + hi) / 2;
-            // Prefetch both potential next pivots before the blocking sa.get(center) call.
-            // One fetch will be wasted; both are free (single non-blocking CPU instruction).
-            // From iteration 2 onward the needed SA entry is already in L1/L2 cache.
-            #[cfg(feature = "mmap")]
-            self.sa.prefetch_sa_index((lo + center) / 2);
-            #[cfg(feature = "mmap")]
-            self.sa.prefetch_sa_index((center + hi) / 2);
+            self.prefetch_binary_search_pivots(lo, center, hi);
             let skip = min(lcp_left, lcp_right);
             let (retval, lcp_center) = self.compare(search_string, self.sa.get(center), skip, bound);
 
@@ -373,17 +367,7 @@ impl Searcher {
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
-        // Issue an early OS prefetch hint for the k-mer's SA range (skip=0 case).
-        // This gives the OS more lead time to load those pages into the page cache
-        // while we collect IL locations below, before binary search starts.
-        #[cfg(feature = "mmap")]
-        if let Some(table) = &self.kmer_table {
-            if search_string.len() >= table.k {
-                if let Some((lo, hi)) = table.lookup(&search_string[..table.k]) {
-                    self.sa.prefetch_sa_range(lo, hi + 1);
-                }
-            }
-        }
+        self.prefetch_kmer_range(search_string);
 
         // Pre-allocate up to 1M entries (8 MB); fall back to empty Vec for very large or
         // unbounded max_matches (e.g. usize::MAX in tests) to avoid a capacity overflow.
@@ -399,22 +383,11 @@ impl Searcher {
             }
         }
 
-        // Batch size for two-pass prefetch: large enough that all prefetches from pass 1
-        // resolve before they are consumed in pass 2 (DRAM latency ~100 ns, each SA read ~3 ns,
-        // so 64 entries × 3 ns = 192 ns gap is sufficient).
-        // Allocated once outside the skip loop and reused (via .clear()) across iterations
-        // to avoid repeated heap allocations for each skip value.
-        #[cfg(feature = "mmap")]
-        const BATCH_SIZE: usize = 64;
-        #[cfg(feature = "mmap")]
-        let mut raw_batch: Vec<i64> = Vec::with_capacity(BATCH_SIZE);
-
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
             // il_locations is built in ascending index order, so partition_point gives us
             // the first position that is relevant for this skip value in O(log n).
-            let il_locations_start = il_locations.partition_point(|&x| x < skip);
-            let il_locations_current_suffix = &il_locations[il_locations_start..];
+            let il_locations_current_suffix = &il_locations[il_locations.partition_point(|&x| x < skip)..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
             let t_bounds = Instant::now();
@@ -449,98 +422,23 @@ impl Searcher {
                 } else {
                     // Generic path: tryptic filtering, IL checking, or skip > 0.
                     let text = self.proteins.text();
-                    // mmap build needs &mut sa_iter in the two-pass loop; preloaded build
-                    // consumes sa_iter in the single-pass for-loop (no mut needed).
-                    #[cfg(feature = "mmap")]
-                    let mut sa_iter = self.sa.iter_range(min_bound, max_bound);
-                    #[cfg(not(feature = "mmap"))]
-                    let sa_iter = self.sa.iter_range(min_bound, max_bound);
-
-                    // mmap build: two-pass batching with hardware prefetch hints to hide
-                    // DRAM latency. sa_iter is exhausted via &mut borrow.
-                    #[cfg(feature = "mmap")]
-                    loop {
-                        // --- Pass 1: fill batch and prefetch text positions ---
-                        raw_batch.clear();
-                        for s in &mut sa_iter {
-                            let su = s as usize;
-                            if su >= skip {
-                                let ms = su - skip;
-                                let me = su + search_string.len() - skip;
-                                Self::prefetch_match_positions(text, ms, me);
-                            }
-                            raw_batch.push(s);
-                            if raw_batch.len() == BATCH_SIZE { break; }
-                        }
-                        if raw_batch.is_empty() { break; }
-
-                        // --- Pass 2: validate (prefetches have had time to complete) ---
-                        for &raw in &raw_batch {
-                            let suffix = raw as usize;
-                            if suffix >= skip {
-                                let match_start = suffix - skip;
-                                let match_end = suffix + search_string.len() - skip;
-                                if (skip == 0
-                                    || Self::check_prefix(
-                                        current_search_string_prefix,
-                                        ProteinTextSlice::new(text, match_start, suffix),
-                                        equate_il
-                                    ))
-                                    && Self::check_suffix(
-                                        skip,
-                                        il_locations_current_suffix,
-                                        current_search_string_suffix,
-                                        ProteinTextSlice::new(text, suffix, match_end),
-                                        equate_il
-                                    )
-                                    && (!tryptic
-                                        || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
-                                            && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
-                                {
-                                    matching_suffixes.push((suffix - skip) as i64);
-                                    if matching_suffixes.len() >= max_matches {
-                                        self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                                        return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Preloaded build: single-pass, no prefetch overhead.
-                    #[cfg(not(feature = "mmap"))]
-                    for s in sa_iter {
-                        let suffix = s as usize;
-                        if suffix >= skip {
-                            let match_start = suffix - skip;
-                            let match_end = suffix + search_string.len() - skip;
-                            if (skip == 0
-                                || Self::check_prefix(
-                                    current_search_string_prefix,
-                                    ProteinTextSlice::new(text, match_start, suffix),
-                                    equate_il
-                                ))
-                                && Self::check_suffix(
-                                    skip,
-                                    il_locations_current_suffix,
-                                    current_search_string_suffix,
-                                    ProteinTextSlice::new(text, suffix, match_end),
-                                    equate_il
-                                )
-                                && (!tryptic
-                                    || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
-                                        && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))))
-                            {
-                                matching_suffixes.push((suffix - skip) as i64);
-                                if matching_suffixes.len() >= max_matches {
-                                    self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                                    return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
-                                }
-                            }
-                        }
-                    }
-
+                    let hit_max = self.iterate_sa_range(
+                        self.sa.iter_range(min_bound, max_bound),
+                        text,
+                        skip,
+                        search_string,
+                        current_search_string_prefix,
+                        current_search_string_suffix,
+                        il_locations_current_suffix,
+                        equate_il,
+                        tryptic,
+                        &mut matching_suffixes,
+                        max_matches,
+                    );
                     self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    if hit_max {
+                        return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                    }
                 }
             }
             skip += 1;
@@ -710,6 +608,171 @@ impl Searcher {
         text.prefetch_at(ms);
         text.prefetch_at(me.saturating_sub(1));
         text.prefetch_at(me);
+    }
+
+    /// Issues an early OS prefetch hint for the k-mer's SA range (skip=0 case), giving the OS
+    /// more lead time to load those pages into the page cache before binary search starts.
+    #[inline]
+    #[cfg_attr(not(feature = "mmap"), allow(unused_variables))]
+    fn prefetch_kmer_range(&self, search_string: &[u8]) {
+        #[cfg(feature = "mmap")]
+        if let Some(table) = &self.kmer_table {
+            if search_string.len() >= table.k {
+                if let Some((lo, hi)) = table.lookup(&search_string[..table.k]) {
+                    self.sa.prefetch_sa_range(lo, hi + 1);
+                }
+            }
+        }
+    }
+
+    /// Prefetches both potential next binary search pivots before the blocking sa.get(center)
+    /// call. One fetch will be wasted; both are free (single non-blocking CPU instruction).
+    /// From iteration 2 onward the needed SA entry is already in L1/L2 cache.
+    #[inline]
+    #[cfg_attr(not(feature = "mmap"), allow(unused_variables))]
+    fn prefetch_binary_search_pivots(&self, lo: usize, center: usize, hi: usize) {
+        #[cfg(feature = "mmap")]
+        self.sa.prefetch_sa_index((lo + center) / 2);
+        #[cfg(feature = "mmap")]
+        self.sa.prefetch_sa_index((center + hi) / 2);
+    }
+
+    /// Checks whether the candidate suffix `raw` is a valid match for the current search
+    /// parameters. Returns `Some(match_start)` when valid, `None` otherwise.
+    #[inline]
+    fn validate_candidate(
+        &self,
+        text: &text_compression::ProteinText,
+        raw: i64,
+        skip: usize,
+        search_string: &[u8],
+        prefix: &[u8],
+        suffix_str: &[u8],
+        il_locations: &[usize],
+        equate_il: bool,
+        tryptic: bool,
+    ) -> Option<i64> {
+        let suffix = raw as usize;
+        if suffix < skip { return None; }
+        let match_start = suffix - skip;
+        let match_end = suffix + search_string.len() - skip;
+        let valid = (skip == 0
+            || Self::check_prefix(prefix, ProteinTextSlice::new(text, match_start, suffix), equate_il))
+            && Self::check_suffix(skip, il_locations, suffix_str, ProteinTextSlice::new(text, suffix, match_end), equate_il)
+            && (!tryptic
+                || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
+                    && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))));
+        if valid { Some(match_start as i64) } else { None }
+    }
+
+    /// Iterates the SA range and validates each candidate suffix.
+    /// Returns `true` if `max_matches` was reached, `false` otherwise.
+    ///
+    /// Dispatches to a two-pass prefetch implementation (mmap builds) or a simple
+    /// single-pass implementation (preloaded builds) at compile time.
+    fn iterate_sa_range(
+        &self,
+        sa_iter: impl Iterator<Item = i64>,
+        text: &text_compression::ProteinText,
+        skip: usize,
+        search_string: &[u8],
+        prefix: &[u8],
+        suffix_str: &[u8],
+        il_locations: &[usize],
+        equate_il: bool,
+        tryptic: bool,
+        matching_suffixes: &mut Vec<i64>,
+        max_matches: usize,
+    ) -> bool {
+        #[cfg(feature = "mmap")]
+        return self.iterate_sa_range_mmap(
+            sa_iter, text, skip, search_string, prefix, suffix_str,
+            il_locations, equate_il, tryptic, matching_suffixes, max_matches,
+        );
+
+        #[cfg(not(feature = "mmap"))]
+        return self.iterate_sa_range_preloaded(
+            sa_iter, text, skip, search_string, prefix, suffix_str,
+            il_locations, equate_il, tryptic, matching_suffixes, max_matches,
+        );
+    }
+
+    /// mmap build: two-pass batching with hardware prefetch hints to hide DRAM latency.
+    ///
+    /// Pass 1 — fills a batch and issues prefetch hints for text positions to read.
+    /// Pass 2 — validates candidates after prefetches have had time to complete.
+    #[cfg(feature = "mmap")]
+    fn iterate_sa_range_mmap(
+        &self,
+        mut sa_iter: impl Iterator<Item = i64>,
+        text: &text_compression::ProteinText,
+        skip: usize,
+        search_string: &[u8],
+        prefix: &[u8],
+        suffix_str: &[u8],
+        il_locations: &[usize],
+        equate_il: bool,
+        tryptic: bool,
+        matching_suffixes: &mut Vec<i64>,
+        max_matches: usize,
+    ) -> bool {
+        // Batch size for two-pass prefetch: large enough that all prefetches from pass 1
+        // resolve before they are consumed in pass 2 (DRAM latency ~100 ns, each SA read ~3 ns,
+        // so 64 entries × 3 ns = 192 ns gap is sufficient).
+        const BATCH_SIZE: usize = 64;
+        let mut raw_batch: Vec<i64> = Vec::with_capacity(BATCH_SIZE);
+
+        loop {
+            // --- Pass 1: fill batch and prefetch text positions ---
+            raw_batch.clear();
+            for s in &mut sa_iter {
+                let su = s as usize;
+                if su >= skip {
+                    Self::prefetch_match_positions(text, su - skip, su + search_string.len() - skip);
+                }
+                raw_batch.push(s);
+                if raw_batch.len() == BATCH_SIZE { break; }
+            }
+            if raw_batch.is_empty() { break; }
+
+            // --- Pass 2: validate (prefetches have had time to complete) ---
+            for &raw in &raw_batch {
+                if let Some(v) = self.validate_candidate(
+                    text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+                ) {
+                    matching_suffixes.push(v);
+                    if matching_suffixes.len() >= max_matches { return true; }
+                }
+            }
+        }
+        false
+    }
+
+    /// Preloaded build: single-pass, no prefetch overhead.
+    #[cfg(not(feature = "mmap"))]
+    fn iterate_sa_range_preloaded(
+        &self,
+        sa_iter: impl Iterator<Item = i64>,
+        text: &text_compression::ProteinText,
+        skip: usize,
+        search_string: &[u8],
+        prefix: &[u8],
+        suffix_str: &[u8],
+        il_locations: &[usize],
+        equate_il: bool,
+        tryptic: bool,
+        matching_suffixes: &mut Vec<i64>,
+        max_matches: usize,
+    ) -> bool {
+        for raw in sa_iter {
+            if let Some(v) = self.validate_candidate(
+                text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+            ) {
+                matching_suffixes.push(v);
+                if matching_suffixes.len() >= max_matches { return true; }
+            }
+        }
+        false
     }
 }
 
