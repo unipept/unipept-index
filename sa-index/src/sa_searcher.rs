@@ -38,17 +38,6 @@ pub enum SearchAllSuffixesResult {
 /// the same values, but the order can be different
 impl PartialEq for SearchAllSuffixesResult {
     fn eq(&self, other: &Self) -> bool {
-        /// Returns true if `arr1` and `arr2` contains the same elements, the order of the elements
-        /// is ignored
-        ///
-        /// # Arguments
-        /// * `arr1` - The first array used in the comparison
-        /// * `arr2` - The second array used in the comparison
-        ///
-        /// # Returns
-        ///
-        /// Returns true if arr1 and arr2 contains the same elements, the order of the elements is
-        /// ignored
         fn array_eq_unordered(arr1: &[i64], arr2: &[i64]) -> bool {
             let mut arr1_copy = arr1.to_owned();
             let mut arr2_copy = arr2.to_owned();
@@ -369,13 +358,9 @@ impl Searcher {
     ) -> SearchAllSuffixesResult {
         self.prefetch_kmer_range(search_string);
 
-        // Pre-allocate up to 1M entries (8 MB); fall back to empty Vec for very large or
-        // unbounded max_matches (e.g. usize::MAX in tests) to avoid a capacity overflow.
-        let mut matching_suffixes: Vec<i64> = if max_matches <= 1 << 20 {
-            Vec::with_capacity(max_matches)
-        } else {
-            Vec::new()
-        };
+        // Cap pre-allocation at 4096 entries (32 KB) so callers passing large max_matches
+        // don't wastefully over-allocate for peptides that match rarely.
+        let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(4096));
         let mut il_locations = vec![];
         for (i, &character) in search_string.iter().enumerate() {
             if character == b'I' || character == b'L' {
@@ -387,7 +372,8 @@ impl Searcher {
         while skip < self.sa.sample_rate() as usize {
             // il_locations is built in ascending index order, so partition_point gives us
             // the first position that is relevant for this skip value in O(log n).
-            let il_locations_current_suffix = &il_locations[il_locations.partition_point(|&x| x < skip)..];
+            // These are still absolute positions within `search_string`, not within the suffix.
+            let il_locations_from_skip = &il_locations[il_locations.partition_point(|&x| x < skip)..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
             let t_bounds = Instant::now();
@@ -429,7 +415,7 @@ impl Searcher {
                         search_string,
                         current_search_string_prefix,
                         current_search_string_suffix,
-                        il_locations_current_suffix,
+                        il_locations_from_skip,
                         equate_il,
                         tryptic,
                         &mut matching_suffixes,
@@ -558,6 +544,9 @@ impl Searcher {
     ///           already in cache from D/2 iterations ago), build result.
     #[cfg(feature = "mmap")]
     fn retrieve_proteins_mmap(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
+        // Tuned on x86_64 Zen4/Intel Sapphire Rapids: ~80–100 ns DRAM latency, each
+        // suffix_to_protein lookup ~3–5 ns at that cache level → 16 entries ≈ 64 ns gap.
+        // Re-benchmark on ARM or NVMe-backed mmap.
         const PREFETCH_DISTANCE: usize = 16;
 
         // Pass 1: prefetch suffix_to_protein mapping, collect protein_indices
@@ -717,26 +706,29 @@ impl Searcher {
         max_matches: usize,
     ) -> bool {
         // Batch size for two-pass prefetch: large enough that all prefetches from pass 1
-        // resolve before they are consumed in pass 2 (DRAM latency ~100 ns, each SA read ~3 ns,
-        // so 64 entries × 3 ns = 192 ns gap is sufficient).
+        // resolve before they are consumed in pass 2.
+        // Tuned on x86_64 Zen4/Intel Sapphire Rapids: DRAM latency ~80–100 ns, one SA entry
+        // read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably above
+        // the latency floor. Re-benchmark on ARM or NVMe-backed mmap.
         const BATCH_SIZE: usize = 64;
-        let mut raw_batch: Vec<i64> = Vec::with_capacity(BATCH_SIZE);
+        let mut raw_batch = [0i64; BATCH_SIZE];
 
         loop {
             // --- Pass 1: fill batch and prefetch text positions ---
-            raw_batch.clear();
+            let mut batch_len = 0usize;
             for s in &mut sa_iter {
                 let su = s as usize;
                 if su >= skip {
                     Self::prefetch_match_positions(text, su - skip, su + search_string.len() - skip);
                 }
-                raw_batch.push(s);
-                if raw_batch.len() == BATCH_SIZE { break; }
+                raw_batch[batch_len] = s;
+                batch_len += 1;
+                if batch_len == BATCH_SIZE { break; }
             }
-            if raw_batch.is_empty() { break; }
+            if batch_len == 0 { break; }
 
             // --- Pass 2: validate (prefetches have had time to complete) ---
-            for &raw in &raw_batch {
+            for &raw in &raw_batch[..batch_len] {
                 if let Some(v) = self.validate_candidate(
                     text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
                 ) {

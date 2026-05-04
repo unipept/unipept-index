@@ -37,7 +37,7 @@ impl BitArray {
         let extra = if (capacity * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
         Self {
             data: vec![0; capacity * bits_per_value / 64 + extra],
-            mask: (1 << bits_per_value) - 1,
+            mask: if bits_per_value == 64 { u64::MAX } else { (1 << bits_per_value) - 1 },
             len: capacity,
             bits_per_value
         }
@@ -468,5 +468,81 @@ mod tests {
         assert_eq!(gcd(64, 40), 8);
         assert_eq!(gcd(64, 64), 64);
         assert_eq!(gcd(32, 64), 32);
+    }
+
+    // --- BitArrayRangeIter unit tests ---
+
+    fn collect_range(ba: &BitArray, start: usize, end: usize) -> Vec<i64> {
+        ba.iter_range(start, end).collect()
+    }
+
+    fn expected_range(ba: &BitArray, start: usize, end: usize) -> Vec<i64> {
+        (start..end).map(|i| ba.get(i) as i64).collect()
+    }
+
+    #[test]
+    fn test_iter_range_empty() {
+        let ba = BitArray::with_capacity(8, 32);
+        assert!(collect_range(&ba, 3, 3).is_empty());
+        assert!(collect_range(&ba, 5, 3).is_empty()); // inverted range — must not panic
+    }
+
+    #[test]
+    fn test_iter_range_single_entry() {
+        let mut ba = BitArray::with_capacity(4, 40);
+        ba.set(2, 0xABCDEF1234_u64);
+        assert_eq!(collect_range(&ba, 2, 3), vec![0xABCDEF1234_i64]);
+    }
+
+    #[test]
+    fn test_iter_range_mid_block_start() {
+        // Start at an index whose bit offset is non-zero within the first u64 block.
+        // With bits_per_value=32: block boundary every 2 entries. Start=1 → bit_off=32.
+        let values: Vec<u64> = (0..8).map(|i| i * 111 + 7).collect();
+        let mut ba = BitArray::with_capacity(8, 32);
+        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
+
+        assert_eq!(collect_range(&ba, 1, 6), expected_range(&ba, 1, 6));
+    }
+
+    #[test]
+    fn test_iter_range_crosses_block_boundary() {
+        // bits_per_value=40: 64/gcd(40,64)=8 entries per cycle, 5 entries per u64 block approx.
+        // Any range spanning >5 entries will cross a 64-bit boundary.
+        let values: Vec<u64> = (0..16).map(|i| i as u64 * 0x100000001 + 3).collect();
+        let mut ba = BitArray::with_capacity(16, 40);
+        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
+
+        assert_eq!(collect_range(&ba, 0, 16), expected_range(&ba, 0, 16));
+        assert_eq!(collect_range(&ba, 3, 13), expected_range(&ba, 3, 13));
+    }
+
+    #[test]
+    fn test_iter_range_bits_per_value_64() {
+        // Each entry occupies exactly one u64 block — no boundary crossing needed.
+        let values: Vec<u64> = (0..8).map(|i| i as u64 * 0xDEAD_BEEF + 1).collect();
+        let mut ba = BitArray::with_capacity(8, 64);
+        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
+
+        assert_eq!(collect_range(&ba, 0, 8), expected_range(&ba, 0, 8));
+        assert_eq!(collect_range(&ba, 2, 6), expected_range(&ba, 2, 6));
+    }
+
+    #[test]
+    fn test_iter_range_bits_per_value_1() {
+        // 64 entries per block; exercises many iterations before a boundary crossing.
+        let mut ba = BitArray::with_capacity(128, 1);
+        for i in (0..128).step_by(3) { ba.set(i, 1); }
+
+        assert_eq!(collect_range(&ba, 0, 128), expected_range(&ba, 0, 128));
+        assert_eq!(collect_range(&ba, 60, 70), expected_range(&ba, 60, 70)); // crosses block boundary at 64
+    }
+
+    #[test]
+    fn test_iter_range_exact_size_iterator() {
+        let mut ba = BitArray::with_capacity(10, 40);
+        for i in 0..10 { ba.set(i, i as u64 * 99); }
+        let iter = ba.iter_range(2, 8);
+        assert_eq!(iter.len(), 6);
     }
 }

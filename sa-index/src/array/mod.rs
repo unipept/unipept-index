@@ -260,7 +260,7 @@ impl ReadBinaryMmap for SuffixArray {
         let total_bits = amount_of_items
             .checked_mul(bits_per_value)
             .ok_or("The SA header declares too many items or bits per value")?;
-        let data_bytes = total_bits.div_ceil(64);
+        let data_bytes = total_bits.div_ceil(8);
 
         if mmap.len() < header_bytes + data_bytes {
             return Err("The binary file is too small to contain the SA data".into());

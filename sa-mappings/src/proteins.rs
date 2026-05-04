@@ -78,13 +78,29 @@ pub enum Proteins {
         /// The total number of proteins stored in the file.
         protein_count: usize,
         /// Byte offset into `mmap` where the fixed-size per-protein table begins.
-        /// Each entry is 16 bytes: taxon_id (u32), uid_offset (u32), uid_len (u16), fa_offset (u32), fa_len (u16).
+        /// Each entry is 16 bytes laid out as:
+        ///   [0..4]  taxon_id   u32
+        ///   [4..8]  uid_offset u32
+        ///   [8..10] uid_len    u16
+        ///  [10..14] fa_offset  u32
+        ///  [14..16] fa_len     u16
         fixed_table_offset: usize,
         /// Byte offset into `mmap` where the concatenated UniProt ID byte data begins.
         uid_data_offset: usize,
         /// Byte offset into `mmap` where the concatenated functional annotation byte data begins.
         fa_data_offset: usize,
     },
+}
+
+/// Byte layout of each 16-byte fixed-table entry in the MmapBacked format.
+#[cfg(feature = "mmap")]
+mod entry_offsets {
+    pub const TAXON_ID:    std::ops::Range<usize> = 0..4;
+    pub const UID_OFFSET:  std::ops::Range<usize> = 4..8;
+    pub const UID_LEN:     std::ops::Range<usize> = 8..10;
+    pub const FA_OFFSET:   std::ops::Range<usize> = 10..14;
+    pub const FA_LEN:      std::ops::Range<usize> = 14..16;
+    pub const ENTRY_SIZE:  usize = 16;
 }
 
 impl Proteins {
@@ -142,8 +158,8 @@ impl Proteins {
     #[inline]
     pub fn prefetch(&self, index: usize) {
         if let Proteins::MmapBacked { mmap, fixed_table_offset, .. } = self {
-            let off = fixed_table_offset + index * 16;
-            if off + 16 <= mmap.len() {
+            let off = fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
+            if off + entry_offsets::ENTRY_SIZE <= mmap.len() {
                 prefetch::prefetch_read(&mmap[off] as *const u8);
             }
         }
@@ -155,11 +171,12 @@ impl Proteins {
     #[cfg(feature = "mmap")]
     #[inline]
     pub fn prefetch_strings(&self, index: usize) {
+        use entry_offsets as eo;
         if let Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } = self {
-            let entry_off = fixed_table_offset + index * 16;
-            if entry_off + 16 > mmap.len() { return; }
-            let uid_off = u32::from_le_bytes(mmap[entry_off + 4..entry_off + 8].try_into().unwrap()) as usize;
-            let fa_off  = u32::from_le_bytes(mmap[entry_off + 10..entry_off + 14].try_into().unwrap()) as usize;
+            let entry_off = fixed_table_offset + index * eo::ENTRY_SIZE;
+            if entry_off + eo::ENTRY_SIZE > mmap.len() { return; }
+            let uid_off = u32::from_le_bytes(mmap[entry_off + eo::UID_OFFSET.start..entry_off + eo::UID_OFFSET.end].try_into().unwrap()) as usize;
+            let fa_off  = u32::from_le_bytes(mmap[entry_off + eo::FA_OFFSET.start ..entry_off + eo::FA_OFFSET.end ].try_into().unwrap()) as usize;
             let uid_ptr = uid_data_offset + uid_off;
             let fa_ptr  = fa_data_offset  + fa_off;
             if uid_ptr < mmap.len() { prefetch::prefetch_read(&mmap[uid_ptr] as *const u8); }
@@ -180,21 +197,33 @@ impl Proteins {
             }
             #[cfg(feature = "mmap")]
             Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } => {
-                let entry_off = fixed_table_offset + index * 16;
-                let entry = &mmap[entry_off..entry_off + 16];
+                use entry_offsets as eo;
+                let entry_off = fixed_table_offset + index * eo::ENTRY_SIZE;
+                assert!(
+                    entry_off + eo::ENTRY_SIZE <= mmap.len(),
+                    "protein index {index} is out of range (mmap too short for fixed-table entry)"
+                );
+                let entry = &mmap[entry_off..entry_off + eo::ENTRY_SIZE];
 
-                let taxon_id = u32::from_le_bytes(entry[0..4].try_into().unwrap());
-                let uid_offset = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as usize;
-                let uid_len = u16::from_le_bytes(entry[8..10].try_into().unwrap()) as usize;
-                let fa_offset = u32::from_le_bytes(entry[10..14].try_into().unwrap()) as usize;
-                let fa_len = u16::from_le_bytes(entry[14..16].try_into().unwrap()) as usize;
+                let taxon_id   = u32::from_le_bytes(entry[eo::TAXON_ID  ].try_into().unwrap());
+                let uid_offset = u32::from_le_bytes(entry[eo::UID_OFFSET].try_into().unwrap()) as usize;
+                let uid_len    = u16::from_le_bytes(entry[eo::UID_LEN   ].try_into().unwrap()) as usize;
+                let fa_offset  = u32::from_le_bytes(entry[eo::FA_OFFSET ].try_into().unwrap()) as usize;
+                let fa_len     = u16::from_le_bytes(entry[eo::FA_LEN    ].try_into().unwrap()) as usize;
+
+                let uid_start = uid_data_offset + uid_offset;
+                let uid_end   = uid_start + uid_len;
+                let fa_start  = fa_data_offset + fa_offset;
+                let fa_end    = fa_start + fa_len;
+
+                assert!(uid_end <= mmap.len(), "uid data for protein {index} extends beyond mmap");
+                assert!(fa_end  <= mmap.len(), "fa data for protein {index} extends beyond mmap");
 
                 ProteinRef {
-                    uniprot_id: std::str::from_utf8(
-                        &mmap[uid_data_offset + uid_offset..uid_data_offset + uid_offset + uid_len]
-                    ).unwrap(),
+                    uniprot_id: std::str::from_utf8(&mmap[uid_start..uid_end])
+                        .expect("invalid UTF-8 in protein UID data"),
                     taxon_id,
-                    functional_annotations: &mmap[fa_data_offset + fa_offset..fa_data_offset + fa_offset + fa_len],
+                    functional_annotations: &mmap[fa_start..fa_end],
                 }
             }
         }

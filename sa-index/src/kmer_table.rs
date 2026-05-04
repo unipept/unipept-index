@@ -16,6 +16,16 @@ const ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYXBUZO";
 /// Number of distinct amino acid values after normalizing L → I. No J; L shares I's slot → 24.
 pub const AMINO_ACID_COUNT: usize = 24;
 
+/// Maximum allowed k for a k-mer table.
+///
+/// Memory cost is `AMINO_ACID_COUNT^k × 16 bytes`:
+///   k=4 →   ~5 MB (L3-cache friendly, recommended)
+///   k=5 → ~128 MB
+///   k=6 →   ~3 GB
+///
+/// Values above 7 are almost certainly a misconfiguration.
+pub const MAX_KMER_K: usize = 7;
+
 /// Builds the `ascii_array` lookup table at compile time: maps ASCII byte → 1-based amino acid
 /// index (0 = not in alphabet). L is mapped to the same slot as I so L→I normalization is free.
 fn build_ascii_array() -> [u8; 128] {
@@ -72,6 +82,11 @@ impl KmerTable {
     }
 
     fn build_kmer_table(sa_len: usize, get_sa: impl Fn(usize) -> usize + Sync, text: &ProteinText, k: usize) -> Self {
+        assert!(
+            k <= MAX_KMER_K,
+            "k={k} exceeds MAX_KMER_K={MAX_KMER_K} (memory cost would be ~{} MB)",
+            AMINO_ACID_COUNT.saturating_pow(k as u32).saturating_mul(16) / (1024 * 1024)
+        );
         let ascii_array = build_ascii_array();
         let table_size = AMINO_ACID_COUNT.pow(k as u32);
 
@@ -133,7 +148,10 @@ impl KmerTable {
     pub fn lookup(&self, kmer: &[u8]) -> Option<(usize, usize)> {
         debug_assert_eq!(kmer.len(), self.k, "kmer length must equal table k");
         let idx = self.bytes_to_kmer_index(kmer)?;
-        // SAFETY: each iteration keeps idx < AMINO_ACID_COUNT^k == self.bounds.len().
+        // SAFETY: bytes_to_kmer_index accumulates idx = idx * AMINO_ACID_COUNT + (char_idx - 1)
+        // for exactly k characters, each contributing a value in [0, AMINO_ACID_COUNT).
+        // The result is therefore < AMINO_ACID_COUNT^k == self.bounds.len().
+        debug_assert!(idx < self.bounds.len(), "kmer index {idx} out of bounds (len={})", self.bounds.len());
         let &(min, max) = unsafe { self.bounds.get_unchecked(idx) };
         if min > max { None } else { Some((min, max)) }
     }
@@ -141,6 +159,9 @@ impl KmerTable {
 
 impl WriteBinary for KmerTable {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        if self.k > u8::MAX as usize {
+            return Err(format!("k={} exceeds the maximum serializable value of 255", self.k).into());
+        }
         writer.write_all(&[self.k as u8])?;
         writer.write_all(&(AMINO_ACID_COUNT as u64).to_le_bytes())?;
         let mut buf = [0u8; 16];
@@ -168,6 +189,12 @@ impl ReadBinary for KmerTable {
                 "k-mer table: expected amino_acid_count={AMINO_ACID_COUNT}, got {amino_acid_count}"
             )
             .into());
+        }
+
+        if k > MAX_KMER_K {
+            return Err(format!(
+                "k-mer table: k={k} exceeds MAX_KMER_K={MAX_KMER_K}"
+            ).into());
         }
 
         let table_size = AMINO_ACID_COUNT.pow(k as u32);
