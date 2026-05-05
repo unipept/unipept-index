@@ -199,14 +199,24 @@ impl ProteinText {
     }
 
     /// Non-blocking hardware prefetch hint for the cache line holding character `index`.
-    /// Only available and used in mmap builds.
-    #[cfg(feature = "mmap")]
+    /// For in-memory builds, prefetches the u64 word containing the 5-bit encoded character.
+    /// For mmap builds, prefetches the byte offset in the mapped region.
     #[inline]
     pub fn prefetch_at(&self, index: usize) {
-        if let ProteinText::MmapBacked { mmap, data_offset, .. } = self {
-            let bit_off = data_offset + (index * 5) / 8;
-            if bit_off < mmap.len() {
-                prefetch::prefetch_read(&mmap[bit_off] as *const u8);
+        match self {
+            ProteinText::InMemory { bit_array, .. } => {
+                if index < bit_array.len() {
+                    let word_idx = (index * 5) / 64;
+                    let slice = bit_array.get_data_slice(word_idx, word_idx + 1);
+                    prefetch::prefetch_read(&slice[0] as *const u64);
+                }
+            }
+            #[cfg(feature = "mmap")]
+            ProteinText::MmapBacked { mmap, data_offset, .. } => {
+                let bit_off = data_offset + (index * 5) / 8;
+                if bit_off < mmap.len() {
+                    prefetch::prefetch_read(&mmap[bit_off] as *const u8);
+                }
             }
         }
     }

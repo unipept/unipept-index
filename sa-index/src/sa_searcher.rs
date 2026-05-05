@@ -569,7 +569,6 @@ impl Searcher {
     /// Issues hardware prefetch hints for all text positions that will be accessed
     /// during validation of a candidate match at [ms, me). Called in Pass 1 of the
     /// two-pass batching loop to give DRAM latency hiding time before Pass 2 reads.
-    #[cfg(feature = "mmap")]
     #[inline]
     fn prefetch_match_positions(text: &text_compression::ProteinText, ms: usize, me: usize) {
         text.prefetch_at(ms.saturating_sub(1));
@@ -636,41 +635,10 @@ impl Searcher {
     /// Iterates the SA range and validates each candidate suffix.
     /// Returns `true` if `max_matches` was reached, `false` otherwise.
     ///
-    /// Dispatches to a two-pass prefetch implementation (mmap builds) or a simple
-    /// single-pass implementation (preloaded builds) at compile time.
-    fn iterate_sa_range(
-        &self,
-        sa_iter: impl Iterator<Item = i64>,
-        text: &text_compression::ProteinText,
-        skip: usize,
-        search_string: &[u8],
-        prefix: &[u8],
-        suffix_str: &[u8],
-        il_locations: &[usize],
-        equate_il: bool,
-        tryptic: bool,
-        matching_suffixes: &mut Vec<i64>,
-        max_matches: usize,
-    ) -> bool {
-        #[cfg(feature = "mmap")]
-        return self.iterate_sa_range_mmap(
-            sa_iter, text, skip, search_string, prefix, suffix_str,
-            il_locations, equate_il, tryptic, matching_suffixes, max_matches,
-        );
-
-        #[cfg(not(feature = "mmap"))]
-        return self.iterate_sa_range_preloaded(
-            sa_iter, text, skip, search_string, prefix, suffix_str,
-            il_locations, equate_il, tryptic, matching_suffixes, max_matches,
-        );
-    }
-
-    /// mmap build: two-pass batching with hardware prefetch hints to hide DRAM latency.
-    ///
-    /// Pass 1 — fills a batch and issues prefetch hints for text positions to read.
+    /// Two-pass batching with hardware prefetch hints to hide DRAM latency:
+    /// Pass 1 — fills a batch and issues prefetch hints for the text positions to validate.
     /// Pass 2 — validates candidates after prefetches have had time to complete.
-    #[cfg(feature = "mmap")]
-    fn iterate_sa_range_mmap(
+    fn iterate_sa_range(
         &self,
         mut sa_iter: impl Iterator<Item = i64>,
         text: &text_compression::ProteinText,
@@ -684,8 +652,6 @@ impl Searcher {
         matching_suffixes: &mut Vec<i64>,
         max_matches: usize,
     ) -> bool {
-        // Batch size for two-pass prefetch: large enough that all prefetches from pass 1
-        // resolve before they are consumed in pass 2.
         // Tuned on x86_64 Zen4/Intel Sapphire Rapids: DRAM latency ~80–100 ns, one SA entry
         // read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably above
         // the latency floor. Re-benchmark on ARM or NVMe-backed mmap.
@@ -714,33 +680,6 @@ impl Searcher {
                     matching_suffixes.push(v);
                     if matching_suffixes.len() >= max_matches { return true; }
                 }
-            }
-        }
-        false
-    }
-
-    /// Preloaded build: single-pass, no prefetch overhead.
-    #[cfg(not(feature = "mmap"))]
-    fn iterate_sa_range_preloaded(
-        &self,
-        sa_iter: impl Iterator<Item = i64>,
-        text: &text_compression::ProteinText,
-        skip: usize,
-        search_string: &[u8],
-        prefix: &[u8],
-        suffix_str: &[u8],
-        il_locations: &[usize],
-        equate_il: bool,
-        tryptic: bool,
-        matching_suffixes: &mut Vec<i64>,
-        max_matches: usize,
-    ) -> bool {
-        for raw in sa_iter {
-            if let Some(v) = self.validate_candidate(
-                text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
-            ) {
-                matching_suffixes.push(v);
-                if matching_suffixes.len() >= max_matches { return true; }
             }
         }
         false
