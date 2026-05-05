@@ -366,9 +366,18 @@ impl Searcher {
             }
         }
 
+        self.prefetch_kmer_range(search_string);
+
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
-            self.prefetch_kmer_range(&search_string[skip..]);
+            // Prefetch the SA range for the next skip value now, so the entire current
+            // iteration (search_bounds + SA range walk) serves as madvise lead time.
+            // madvise(MADV_WILLNEED) targets the OS page cache, not the CPU cache, so
+            // it won't be evicted by the CPU-level accesses in the current iteration.
+            let next_skip = skip + 1;
+            if next_skip < self.sa.sample_rate() as usize {
+                self.prefetch_kmer_range(&search_string[next_skip..]);
+            }
 
             // il_locations is built in ascending index order, so partition_point gives us
             // the first position that is relevant for this skip value in O(log n).
