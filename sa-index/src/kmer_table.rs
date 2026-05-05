@@ -148,11 +148,7 @@ impl KmerTable {
     pub fn lookup(&self, kmer: &[u8]) -> Option<(usize, usize)> {
         debug_assert_eq!(kmer.len(), self.k, "kmer length must equal table k");
         let idx = self.bytes_to_kmer_index(kmer)?;
-        // SAFETY: bytes_to_kmer_index accumulates idx = idx * AMINO_ACID_COUNT + (char_idx - 1)
-        // for exactly k characters, each contributing a value in [0, AMINO_ACID_COUNT).
-        // The result is therefore < AMINO_ACID_COUNT^k == self.bounds.len().
-        debug_assert!(idx < self.bounds.len(), "kmer index {idx} out of bounds (len={})", self.bounds.len());
-        let &(min, max) = unsafe { self.bounds.get_unchecked(idx) };
+        let &(min, max) = &self.bounds[idx];
         if min > max { None } else { Some((min, max)) }
     }
 }
