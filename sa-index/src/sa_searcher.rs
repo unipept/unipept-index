@@ -356,6 +356,8 @@ impl Searcher {
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
+        self.prefetch_kmer_range(search_string);
+
         // Cap pre-allocation at 4096 entries (32 KB) so callers passing large max_matches
         // don't wastefully over-allocate for peptides that match rarely.
         let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(4096));
@@ -366,19 +368,8 @@ impl Searcher {
             }
         }
 
-        self.prefetch_kmer_range(search_string);
-
         let mut skip: usize = 0;
         while skip < self.sa.sample_rate() as usize {
-            // Prefetch the SA range for the next skip value now, so the entire current
-            // iteration (search_bounds + SA range walk) serves as madvise lead time.
-            // madvise(MADV_WILLNEED) targets the OS page cache, not the CPU cache, so
-            // it won't be evicted by the CPU-level accesses in the current iteration.
-            let next_skip = skip + 1;
-            if next_skip < self.sa.sample_rate() as usize {
-                self.prefetch_kmer_range(&search_string[next_skip..]);
-            }
-
             // il_locations is built in ascending index order, so partition_point gives us
             // the first position that is relevant for this skip value in O(log n).
             // These are still absolute positions within `search_string`, not within the suffix.
@@ -436,7 +427,14 @@ impl Searcher {
                     }
                 }
             }
+
             skip += 1;
+
+            // Only prefetch skip+1's SA range after confirming we're not returning early.
+            // Issuing madvise when skip+1 will never execute wastes a syscall
+            if skip < self.sa.sample_rate() as usize {
+                self.prefetch_kmer_range(&search_string[skip..]);
+            }
         }
 
         if matching_suffixes.is_empty() {
