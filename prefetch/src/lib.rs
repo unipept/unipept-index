@@ -2,7 +2,7 @@
 /// On unsupported platforms this is a no-op. The function itself is always
 /// defined so callers don't need `cfg` guards.
 #[inline(always)]
-pub fn prefetch_read(ptr: *const u8) {
+pub fn prefetch_read<T>(ptr: *const T) {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: `_mm_prefetch` is a pure hint — it never faults and never reads.
     unsafe { std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0) }

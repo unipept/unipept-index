@@ -531,31 +531,16 @@ impl Searcher {
 
     /// Returns all the proteins that correspond with the provided suffixes.
     ///
-    /// Dispatches to a two-pass prefetch implementation (mmap builds) or a simple
-    /// single-pass implementation (preloaded builds) at compile time.
+    /// Two-pass prefetch pipeline (PREFETCH_DISTANCE = 32):
+    /// Pass 1 — prefetch suffix_to_protein mapping entries D iterations ahead, collect protein_indices.
+    /// Pass 2 — prefetch protein entries D iterations ahead, build ProteinRef result.
+    ///
+    /// Note: prefetch_strings is intentionally omitted — it reads the fixed-table entry to obtain
+    /// string offsets, which causes a stall when the entry has not yet landed from the earlier
+    /// prefetch hint (D/2 iterations × ~5 ns < ~80–100 ns DRAM latency).
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        #[cfg(feature = "mmap")]
-        return self.retrieve_proteins_mmap(suffixes);
-
-        #[cfg(not(feature = "mmap"))]
-        return self.retrieve_proteins_preloaded(suffixes);
-    }
-
-    /// mmap build: two-pass prefetch pipeline.
-    ///
-    /// Pass 1 — prefetch suffix_to_protein mapping entries D iterations ahead,
-    ///           collect protein_indices.
-    /// Pass 2 — prefetch fixed-table entries D iterations ahead, build result.
-    ///
-    /// Note: prefetch_strings is intentionally omitted. It reads the fixed-table entry
-    /// (a blocking DRAM access) to obtain string offsets, which causes a stall when the
-    /// entry has not yet landed from the earlier prefetch hint (D/2 iterations × ~5 ns ≈
-    /// 40 ns < ~80–100 ns DRAM latency). Prefetching only the fixed table and leaving
-    /// strings to the hardware prefetcher is measurably faster in practice.
-    #[cfg(feature = "mmap")]
-    fn retrieve_proteins_mmap(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        // D=32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the fixed-table read in
+        // D=32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the protein read in
         // proteins.get(), giving the prefetch hint time to complete for most DRAM configs.
         const PREFETCH_DISTANCE: usize = 32;
 
@@ -568,25 +553,12 @@ impl Searcher {
             protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
         }
 
-        // Pass 2: prefetch fixed table (D ahead), build ProteinRefs
+        // Pass 2: prefetch proteins (D ahead), build ProteinRefs
         let mut res = Vec::with_capacity(suffixes.len());
         for (i, &protein_index) in protein_indices.iter().enumerate() {
             if let Some(&fpi) = protein_indices.get(i + PREFETCH_DISTANCE) {
                 if !fpi.is_null() { self.proteins.prefetch(fpi as usize); }
             }
-            if !protein_index.is_null() {
-                res.push(self.proteins.get(protein_index as usize));
-            }
-        }
-        res
-    }
-
-    /// Preloaded build: direct single-pass, no intermediate Vec, no prefetch calls.
-    #[cfg(not(feature = "mmap"))]
-    fn retrieve_proteins_preloaded(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        let mut res = Vec::with_capacity(suffixes.len());
-        for &suffix in suffixes {
-            let protein_index = self.suffix_index_to_protein.suffix_to_protein(suffix);
             if !protein_index.is_null() {
                 res.push(self.proteins.get(protein_index as usize));
             }

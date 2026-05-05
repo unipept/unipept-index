@@ -29,6 +29,14 @@ impl SuffixToProteinIndex for DenseSuffixToProtein {
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         self.mapping[suffix as usize]
     }
+
+    #[inline]
+    fn prefetch_for_suffix(&self, suffix: i64) {
+        let idx = suffix as usize;
+        if idx < self.mapping.len() {
+            prefetch::prefetch_read(&self.mapping[idx] as *const u32);
+        }
+    }
 }
 
 #[cfg(feature = "mmap")]

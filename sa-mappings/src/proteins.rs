@@ -153,14 +153,23 @@ impl Proteins {
     #[cfg(not(feature = "mmap"))]
     pub fn touch_all_pages(&self) {}
 
-    /// Non-blocking hardware prefetch hint for the fixed-table entry of protein `index`.
-    #[cfg(feature = "mmap")]
+    /// Non-blocking hardware prefetch hint for the protein entry at `index`.
+    /// For in-memory builds, prefetches the `Protein` struct (taxon_id + string pointer blocks).
+    /// For mmap builds, prefetches the fixed-table entry in the mapped region.
     #[inline]
     pub fn prefetch(&self, index: usize) {
-        if let Proteins::MmapBacked { mmap, fixed_table_offset, .. } = self {
-            let off = fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
-            if off + entry_offsets::ENTRY_SIZE <= mmap.len() {
-                prefetch::prefetch_read(&mmap[off] as *const u8);
+        match self {
+            Proteins::InMemory { proteins, .. } => {
+                if index < proteins.len() {
+                    prefetch::prefetch_read(&proteins[index] as *const Protein);
+                }
+            }
+            #[cfg(feature = "mmap")]
+            Proteins::MmapBacked { mmap, fixed_table_offset, .. } => {
+                let off = fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
+                if off + entry_offsets::ENTRY_SIZE <= mmap.len() {
+                    prefetch::prefetch_read(&mmap[off] as *const u8);
+                }
             }
         }
     }
