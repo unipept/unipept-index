@@ -410,6 +410,7 @@ impl Searcher {
                     let text = self.proteins.text();
                     let hit_max = self.iterate_sa_range(
                         self.sa.iter_range(min_bound, max_bound),
+                        max_bound.saturating_sub(min_bound),
                         text,
                         skip,
                         search_string,
@@ -641,6 +642,7 @@ impl Searcher {
     fn iterate_sa_range(
         &self,
         mut sa_iter: impl Iterator<Item = i64>,
+        range_size: usize,
         text: &text_compression::ProteinText,
         skip: usize,
         search_string: &[u8],
@@ -656,6 +658,22 @@ impl Searcher {
         // read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably above
         // the latency floor. Re-benchmark on ARM or NVMe-backed mmap.
         const BATCH_SIZE: usize = 64;
+        // Minimum range for prefetch to resolve before use.
+        // Below this threshold the two-pass overhead exceeds the latency-hiding benefit.
+        const PREFETCH_THRESHOLD: usize = 32;
+
+        if range_size < PREFETCH_THRESHOLD {
+            for raw in sa_iter {
+                if let Some(v) = self.validate_candidate(
+                    text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+                ) {
+                    matching_suffixes.push(v);
+                    if matching_suffixes.len() >= max_matches { return true; }
+                }
+            }
+            return false;
+        }
+
         let mut raw_batch = [0i64; BATCH_SIZE];
 
         loop {
