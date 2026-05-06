@@ -597,11 +597,8 @@ impl Searcher {
     /// call. One fetch will be wasted; both are free (single non-blocking CPU instruction).
     /// From iteration 2 onward the needed SA entry is already in L1/L2 cache.
     #[inline]
-    #[cfg_attr(not(feature = "mmap"), allow(unused_variables))]
     fn prefetch_binary_search_pivots(&self, lo: usize, center: usize, hi: usize) {
-        #[cfg(feature = "mmap")]
         self.sa.prefetch_sa_index((lo + center) / 2);
-        #[cfg(feature = "mmap")]
         self.sa.prefetch_sa_index((center + hi) / 2);
     }
 

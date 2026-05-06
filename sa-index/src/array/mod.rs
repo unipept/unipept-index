@@ -85,14 +85,32 @@ impl SuffixArray {
     }
 
     /// Issues a non-blocking hardware prefetch hint for the cache line holding SA entry `index`.
-    #[cfg(feature = "mmap")]
     #[inline]
     pub fn prefetch_sa_index(&self, index: usize) {
-        if let SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } = self {
-            let byte_offset = data_offset + (index * bits_per_value) / 8;
-            if byte_offset < mmap.len() {
-                let ptr: *const u8 = &mmap[byte_offset];
-                prefetch::prefetch_read(ptr);
+        match self {
+            SuffixArray::Original(sa, _) => {
+                if index < sa.len() {
+                    let ptr: *const i64 = &sa[index];
+                    prefetch::prefetch_read(ptr);
+                }
+            }
+            SuffixArray::Compressed(ba, _) => {
+                if index < ba.len() {
+                    // Prefetch the u64 word holding the start bits of entry `index`.
+                    // bpv ≤ 64, so the value spans at most 2 adjacent words; one 64-byte
+                    // cache line (8 words) covers both in all but pathological layouts.
+                    let word_idx = (index * ba.bits_per_value()) / 64;
+                    let ptr: *const u64 = ba.get_data_slice(word_idx, word_idx + 1).as_ptr();
+                    prefetch::prefetch_read(ptr);
+                }
+            }
+            #[cfg(feature = "mmap")]
+            SuffixArray::MmapBacked { mmap, data_offset, bits_per_value, .. } => {
+                let byte_offset = data_offset + (index * bits_per_value) / 8;
+                if byte_offset < mmap.len() {
+                    let ptr: *const u8 = &mmap[byte_offset];
+                    prefetch::prefetch_read(ptr);
+                }
             }
         }
     }
