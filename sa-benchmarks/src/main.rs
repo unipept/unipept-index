@@ -31,15 +31,23 @@ enum WarmupMode {
     All,
     /// Search the first N peptides from warmup.txt to partially warm the page cache.
     Count(usize),
+    /// Touch all pages, then run N peptides through the search + retrieval pipeline.
+    /// Recommended for mmap: page-cache warmup alone leaves CPU caches and TLB cold.
+    AllThenCount(usize),
 }
 
 impl std::str::FromStr for WarmupMode {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "all" { return Ok(WarmupMode::All); }
+        if let Some(rest) = s.strip_prefix("all:") {
+            return rest.parse::<usize>()
+                .map(WarmupMode::AllThenCount)
+                .map_err(|_| format!("expected 'all:<count>', got '{}'", s));
+        }
         s.parse::<usize>()
             .map(WarmupMode::Count)
-            .map_err(|_| format!("expected a non-negative integer, got '{}'", s))
+            .map_err(|_| format!("expected 'all', 'all:<N>', or a non-negative integer, got '{}'", s))
     }
 }
 
@@ -102,8 +110,10 @@ struct Args {
     runs: u32,
 
     /// Warm up the index before timing.
-    /// Without a value: touch every page of every mmap-backed region (fully populates page cache).
-    /// With N: search the first N peptides from {index-dir}/warmup.txt.
+    /// "all": touch every page of every mmap-backed region (populates page cache only).
+    /// "all:N": touch every page then push N peptides from warmup.txt through the pipeline
+    ///          (recommended for mmap — also warms CPU caches and TLB).
+    /// N: push N peptides from warmup.txt through the pipeline (used for preloaded).
     #[arg(long, num_args = 0..=1, default_missing_value = "all")]
     warmup: Option<WarmupMode>,
 
@@ -441,6 +451,42 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(WarmupMode::Count(warmup_count)) => {
             let warmup_path = args.index_dir.join("warmup.txt");
             eprintln!("Warming up with {} peptides from {} (batch size {})...", warmup_count, warmup_path.display(), WARMUP_BATCH_SIZE);
+            let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
+            let mut remaining = *warmup_count;
+            while remaining > 0 {
+                let batch_size = remaining.min(WARMUP_BATCH_SIZE);
+                let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
+                if batch.is_empty() {
+                    break;
+                }
+                remaining -= batch.len();
+                batch.par_iter().for_each(|peptide| {
+                    let result = searcher.search_matching_suffixes(
+                        peptide.trim_end().to_uppercase().as_bytes(),
+                        args.max_matches,
+                        args.equate_il,
+                        args.tryptic,
+                    );
+                    match result {
+                        SearchAllSuffixesResult::SearchResult(ref suf)
+                        | SearchAllSuffixesResult::MaxMatches(ref suf) => {
+                            let _ = searcher.retrieve_proteins(suf);
+                        }
+                        SearchAllSuffixesResult::NoMatches => {}
+                    }
+                });
+            }
+            eprintln!("Warmup complete.");
+        }
+        Some(WarmupMode::AllThenCount(warmup_count)) => {
+            eprintln!("Warming up: touching all mmap pages...");
+            rayon::scope(|s| {
+                s.spawn(|_| searcher.sa.touch_all_pages());
+                s.spawn(|_| searcher.proteins.touch_all_pages());
+                s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
+            });
+            eprintln!("Page warmup complete. Running pipeline warmup with {} peptides (batch size {})...", warmup_count, WARMUP_BATCH_SIZE);
+            let warmup_path = args.index_dir.join("warmup.txt");
             let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
             let mut remaining = *warmup_count;
             while remaining > 0 {
