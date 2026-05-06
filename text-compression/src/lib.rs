@@ -203,20 +203,20 @@ impl ProteinText {
     /// For mmap builds, prefetches the byte offset in the mapped region.
     #[inline]
     pub fn prefetch_at(&self, index: usize) {
-        match self {
-            ProteinText::InMemory { bit_array, .. } => {
-                if index < bit_array.len() {
-                    let word_idx = (index * 5) / 64;
-                    let slice = bit_array.get_data_slice(word_idx, word_idx + 1);
-                    prefetch::prefetch_read(&slice[0] as *const u64);
-                }
+        #[cfg(feature = "mmap")]
+        if let ProteinText::MmapBacked { mmap, data_offset, .. } = self {
+            let bit_off = data_offset + (index * 5) / 8;
+            if bit_off < mmap.len() {
+                prefetch::prefetch_read(&mmap[bit_off] as *const u8);
             }
-            #[cfg(feature = "mmap")]
-            ProteinText::MmapBacked { mmap, data_offset, .. } => {
-                let bit_off = data_offset + (index * 5) / 8;
-                if bit_off < mmap.len() {
-                    prefetch::prefetch_read(&mmap[bit_off] as *const u8);
-                }
+        }
+
+        #[cfg(not(feature = "mmap"))]
+        if let ProteinText::InMemory { bit_array, .. } = self {
+            if index < bit_array.len() {
+                let word_idx = (index * 5) / 64;
+                let slice = bit_array.get_data_slice(word_idx, word_idx + 1);
+                prefetch::prefetch_read(&slice[0] as *const u64);
             }
         }
     }
