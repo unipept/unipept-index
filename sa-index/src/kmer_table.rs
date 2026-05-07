@@ -7,7 +7,7 @@ use std::{
 use rayon::prelude::*;
 use text_compression::ProteinText;
 
-use crate::{ReadBinary, SuffixArray, WriteBinary};
+use crate::{ReadBinary, WriteBinary, array::SuffixArrayBackend};
 
 /// Amino acid alphabet used for k-mer indexing (no J; L is treated as I).
 /// Index in this slice + 1 gives the 1-based `ascii_array` value for each character.
@@ -69,19 +69,28 @@ impl KmerTable {
     ///
     /// Because the SA is sorted, each k-mer's entries are contiguous: the first
     /// occurrence gives `min_bound` and the last gives `max_bound`.
-    pub fn build_from_sa(sa: &SuffixArray, text: &ProteinText, k: usize) -> Self {
-        Self::build_kmer_table(sa.len(), |i| sa.get(i) as usize, text, k)
+    pub fn build_from_sa<SA: SuffixArrayBackend>(sa: &SA, text: &ProteinText, k: usize) -> Self {
+        Self::build_kmer_table(sa.len(), |i| sa.get(i) as usize, text.len(), |i| text.get(i), k)
     }
 
-    /// Same as [`build`] but accepts the raw suffix array as a plain slice.
-    ///
-    /// Use this in contexts where the `SuffixArray` enum has not yet been constructed
-    /// (e.g. inside the builder, before the `Vec<i64>` is consumed by the dump step).
-    pub fn build_from_raw_sa(sa: &[i64], text: &ProteinText, k: usize) -> Self {
-        Self::build_kmer_table(sa.len(), |i| sa[i] as usize, text, k)
+    /// Same as [`build_from_sa`] but accepts the raw suffix array as a plain slice
+    /// and text access via closures — works regardless of whether the mmap feature is active.
+    pub fn build_from_raw_sa(
+        sa: &[i64],
+        text_len: usize,
+        get_char: impl Fn(usize) -> u8 + Sync,
+        k: usize
+    ) -> Self {
+        Self::build_kmer_table(sa.len(), |i| sa[i] as usize, text_len, get_char, k)
     }
 
-    fn build_kmer_table(sa_len: usize, get_sa: impl Fn(usize) -> usize + Sync, text: &ProteinText, k: usize) -> Self {
+    fn build_kmer_table(
+        sa_len: usize,
+        get_sa: impl Fn(usize) -> usize + Sync,
+        text_len: usize,
+        get_char: impl Fn(usize) -> u8 + Sync,
+        k: usize
+    ) -> Self {
         assert!(
             k <= MAX_KMER_K,
             "k={k} exceeds MAX_KMER_K={MAX_KMER_K} (memory cost would be ~{} MB)",
@@ -100,8 +109,8 @@ impl KmerTable {
             let mut idx = 0usize;
             for j in 0..k {
                 let pos = suffix_start + j;
-                if pos >= text.len() { return None; }
-                let char_idx = ascii_array[text.get(pos) as usize];
+                if pos >= text_len { return None; }
+                let char_idx = ascii_array[get_char(pos) as usize];
                 if char_idx == 0 { return None; }
                 idx = idx * AMINO_ACID_COUNT + (char_idx as usize - 1);
             }
@@ -207,15 +216,15 @@ impl ReadBinary for KmerTable {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "mmap")))]
 mod tests {
     use text_compression::ProteinText;
 
-    use crate::{SuffixArray, kmer_table::KmerTable};
+    use crate::{SuffixArray, kmer_table::KmerTable, array::OriginalSA};
 
     fn build_test_table(input: &str, sa_values: Vec<i64>, k: usize) -> KmerTable {
         let text = ProteinText::from_string(input);
-        let sa = SuffixArray::Original(sa_values, 1);
+        let sa = SuffixArray::Original(OriginalSA(sa_values, 1));
         KmerTable::build_from_sa(&sa, &text, k)
     }
 

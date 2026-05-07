@@ -8,7 +8,7 @@ use clap::Parser;
 use rand::Rng;
 use rayon::prelude::*;
 use sa_index::kmer_table::AMINO_ACID_COUNT;
-use sa_index::sa_searcher::{SearchAllSuffixesResult, Searcher};
+use sa_index::{sa_searcher::{SearchAllSuffixesResult, Searcher}, SuffixArray, SuffixArrayBackend};
 use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
@@ -201,7 +201,7 @@ fn generate_peptides(count: usize, min_len: usize, max_len: usize) -> Vec<String
 /// This is derived from the actual data sizes, **not** from disk file sizes, so it remains
 /// accurate when new structures are added to the `Searcher`. When you add a new structure,
 /// extend this function with its memory calculation.
-fn theoretical_memory(searcher: &Searcher, mapping_type: &str, use_mmap: bool) -> u64 {
+fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, use_mmap: bool) -> u64 {
     let text_len = searcher.proteins.text().len() as u64;
     let protein_count = searcher.proteins.len() as u64;
 
@@ -261,7 +261,7 @@ fn measure_process_memory() -> u64 {
 // Benchmark run
 // ---------------------------------------------------------------------------
 
-fn run_benchmark(searcher: &Searcher, args: &Args, peptides: &[String], theoretical_max_memory: u64, baseline_memory: u64) -> BenchmarkResult {
+fn run_benchmark(searcher: &Searcher<SuffixArray>, args: &Args, peptides: &[String], theoretical_max_memory: u64, baseline_memory: u64) -> BenchmarkResult {
     // Memory snapshot before any timing starts — captures index-resident pages only
     let index_memory = measure_process_memory().saturating_sub(baseline_memory);
 

@@ -83,10 +83,14 @@ impl SuffixToProteinIndex for MmapSparseSuffixToProtein {
 impl SparseSuffixToProtein {
     /// Creates a new SparseSuffixToProtein mapping
     pub fn new(text: &ProteinText) -> Self {
+        Self::from_text_parts(text.len(), |i| text.get(i))
+    }
+
+    pub fn from_text_parts(text_len: usize, get_char: impl Fn(usize) -> u8) -> Self {
         let mut suffix_index_to_protein: Vec<i64> = vec![0];
-        for (index, char) in text.iter().enumerate() {
-            if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
-                suffix_index_to_protein.push(index as i64 + 1);
+        for i in 0..text_len {
+            if get_char(i) == SEPARATION_CHARACTER || get_char(i) == TERMINATION_CHARACTER {
+                suffix_index_to_protein.push(i as i64 + 1);
             }
         }
         suffix_index_to_protein.shrink_to_fit();
@@ -115,7 +119,7 @@ pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffi
     Ok(SparseSuffixToProtein { mapping })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "mmap")))]
 mod tests {
     use std::io::Cursor;
     use std::io::Write as IoWrite;

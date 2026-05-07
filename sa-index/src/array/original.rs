@@ -2,13 +2,52 @@ use std::{
     error::Error,
     io::{BufRead, Read, Write}
 };
+use text_compression::WriteBinary;
 
-/// Fills the buffer with data read from the input.
-///
-/// # Returns
-///
-/// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input
-/// is reached, and `bytes_read` is the number of bytes read into the buffer.
+/// Owned, in-memory original (uncompressed) suffix array backend.
+pub struct OriginalSA(pub Vec<i64>, pub u8);
+
+/// Wrapper around `slice::Iter` that yields `i64` values directly.
+pub struct OriginalRangeIter<'a>(pub std::slice::Iter<'a, i64>);
+
+impl Iterator for OriginalRangeIter<'_> {
+    type Item = i64;
+    #[inline]
+    fn next(&mut self) -> Option<i64> { self.0.next().copied() }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) { let n = self.0.len(); (n, Some(n)) }
+}
+
+impl ExactSizeIterator for OriginalRangeIter<'_> {}
+
+impl super::SuffixArrayBackend for OriginalSA {
+    type RangeIter<'a> = OriginalRangeIter<'a>;
+
+    fn len(&self) -> usize { self.0.len() }
+    fn bits_per_value(&self) -> usize { 64 }
+    fn sample_rate(&self) -> u8 { self.1 }
+    fn get(&self, index: usize) -> i64 { self.0[index] }
+
+    fn iter_range(&self, start: usize, end: usize) -> OriginalRangeIter<'_> {
+        OriginalRangeIter(self.0.get(start..end).unwrap_or(&[]).iter())
+    }
+
+    fn prefetch_sa_index(&self, index: usize) {
+        if index < self.0.len() {
+            let ptr: *const i64 = &self.0[index];
+            prefetch::prefetch_read(ptr);
+        }
+    }
+}
+
+impl WriteBinary for OriginalSA {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        dump_suffix_array(self.0, self.1, writer)
+    }
+}
+
+// ── I/O helpers ──────────────────────────────────────────────────────────────
+
 fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<(bool, usize)> {
     let buffer_size = buffer.len();
     let mut writable_buffer_space = buffer.as_mut();
@@ -63,10 +102,9 @@ pub fn dump_suffix_array(sa: Vec<i64>, sparseness_factor: u8, writer: &mut impl 
 }
 
 /// Inner helper: load the original (uncompressed) suffix array body after the header is already read.
-pub(super) fn load_original(reader: &mut impl BufRead, sample_rate: u8, size: usize) -> Result<Vec<i64>, Box<dyn Error>> {
+pub(super) fn load_original(reader: &mut impl BufRead, _sample_rate: u8, size: usize) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut sa = Vec::with_capacity(size);
     read_vec_i64(&mut sa, reader).map_err(|_| "Could not read the suffix array from the binary file")?;
-    let _ = sample_rate; // used by caller
     Ok(sa)
 }
 
@@ -74,43 +112,29 @@ pub(super) fn load_original(reader: &mut impl BufRead, sample_rate: u8, size: us
 mod tests {
     use super::*;
 
-    pub struct FailingWriter {
-        pub valid_write_count: usize
-    }
+    pub struct FailingWriter { pub valid_write_count: usize }
 
     impl Write for FailingWriter {
         fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
-            if self.valid_write_count == 0 {
-                return Err(std::io::Error::other("Write failed"));
-            }
+            if self.valid_write_count == 0 { return Err(std::io::Error::other("Write failed")); }
             self.valid_write_count -= 1;
             Ok(1)
         }
-
-        fn flush(&mut self) -> Result<(), std::io::Error> {
-            Ok(())
-        }
+        fn flush(&mut self) -> Result<(), std::io::Error> { Ok(()) }
     }
 
-    pub struct FailingReader {
-        pub valid_read_count: usize
-    }
+    pub struct FailingReader { pub valid_read_count: usize }
 
     impl Read for FailingReader {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.valid_read_count == 0 {
-                return Err(std::io::Error::other("Read failed"));
-            }
+            if self.valid_read_count == 0 { return Err(std::io::Error::other("Read failed")); }
             self.valid_read_count -= 1;
             Ok(buf.len())
         }
     }
 
     impl BufRead for FailingReader {
-        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-            Ok(&[])
-        }
-
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> { Ok(&[]) }
         fn consume(&mut self, _: usize) {}
     }
 
@@ -119,15 +143,10 @@ mod tests {
         let input_str = "a".repeat(8_000);
         let mut input = input_str.as_bytes();
         let mut buffer = vec![0; 800];
-
         loop {
             let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer).unwrap();
-            if finished {
-                assert!(bytes_read < 800);
-                break;
-            } else {
-                assert_eq!(bytes_read, 800);
-            }
+            if finished { assert!(bytes_read < 800); break; }
+            else { assert_eq!(bytes_read, 800); }
         }
     }
 
@@ -141,41 +160,36 @@ mod tests {
     #[test]
     fn test_dump_suffix_array() {
         let mut buffer = Vec::new();
-        let sa = vec![1, 2, 3, 4, 5];
-
-        dump_suffix_array(sa, 1, &mut buffer).unwrap();
-
+        dump_suffix_array(vec![1, 2, 3, 4, 5], 1, &mut buffer).unwrap();
         assert_eq!(buffer, vec![
             64, 1, 5, 0, 0, 0, 0, 0, 0, 0,
-            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+            3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0,
+            5, 0, 0, 0, 0, 0, 0, 0,
         ]);
     }
 
     #[test]
     #[should_panic(expected = "Could not write the required bits to the writer")]
     fn test_dump_suffix_array_fail_required_bits() {
-        let mut writer = FailingWriter { valid_write_count: 0 };
-        dump_suffix_array(vec![], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![], 1, &mut FailingWriter { valid_write_count: 0 }).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "Could not write the sparseness factor to the writer")]
     fn test_dump_suffix_array_fail_sparseness_factor() {
-        let mut writer = FailingWriter { valid_write_count: 1 };
-        dump_suffix_array(vec![], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![], 1, &mut FailingWriter { valid_write_count: 1 }).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "Could not write the size of the suffix array to the writer")]
     fn test_dump_suffix_array_fail_size() {
-        let mut writer = FailingWriter { valid_write_count: 2 };
-        dump_suffix_array(vec![], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![], 1, &mut FailingWriter { valid_write_count: 2 }).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "Could not write the suffix array to the writer")]
     fn test_dump_suffix_array_fail_suffix_array() {
-        let mut writer = FailingWriter { valid_write_count: 3 };
-        dump_suffix_array(vec![1], 1, &mut writer).unwrap();
+        dump_suffix_array(vec![1], 1, &mut FailingWriter { valid_write_count: 3 }).unwrap();
     }
 }

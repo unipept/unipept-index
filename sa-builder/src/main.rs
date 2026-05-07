@@ -10,7 +10,7 @@ use sa_index::array::dump_compressed_suffix_array;
 use sa_index::array::dump_suffix_array;
 use sa_index::suffix_to_protein_index::dump_mapping;
 use sa_index::{KmerTable, WriteBinary};
-use sa_mappings::proteins::Proteins;
+use sa_mappings::proteins::InMemoryProteins;
 
 fn main() {
     let Arguments {
@@ -27,7 +27,7 @@ fn main() {
     } = Arguments::parse();
 
     let proteins = timed("loading the proteins", || {
-        Proteins::load_from_tsv(&database_file)
+        InMemoryProteins::load_from_tsv(&database_file)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
     });
     let bits_per_value = (proteins.text().len() as f64).log2().ceil() as usize;
@@ -43,7 +43,7 @@ fn main() {
     // Build the k-mer table while the SA Vec is still in memory (before it is consumed below).
     let kmer_table: Option<KmerTable> = output_kmer_table.as_ref().map(|_| {
         timed(&format!("building k-mer table (k={})", kmer_size), || {
-            KmerTable::build_from_raw_sa(&sa, proteins.text(), kmer_size)
+            KmerTable::build_from_raw_sa(&sa, proteins.text().len(), |i| proteins.text().get(i), kmer_size)
         })
     });
 
@@ -68,7 +68,7 @@ fn main() {
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     timed("writing suffix-to-protein mapping binary", || {
-        dump_mapping(&mapping_style, proteins.text(), &mut mapping_file)
+        dump_mapping(&mapping_style, proteins.text().len(), |i| proteins.text().get(i), &mut mapping_file)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });
     eprintln!("\tOutput: {}", output_mapping);

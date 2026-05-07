@@ -2,7 +2,7 @@ use rayon::prelude::*;
 use sa_mappings::proteins::ProteinRef;
 use serde::Serialize;
 
-use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
+use crate::{sa_searcher::{SearchAllSuffixesResult, Searcher}, array::SuffixArrayBackend};
 
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
@@ -47,8 +47,8 @@ impl From<ProteinRef<'_>> for ProteinInfo {
 /// The second argument is a list of all matching proteins for the peptide
 /// Returns None if the peptides does not have any matches, or if the peptide is shorter than the
 /// sparseness factor k used in the index
-pub fn search_proteins_for_peptide<'a>(
-    searcher: &'a Searcher,
+pub fn search_proteins_for_peptide<'a, SA: SuffixArrayBackend>(
+    searcher: &'a Searcher<SA>,
     peptide: &str,
     cutoff: usize,
     equate_il: bool,
@@ -73,14 +73,14 @@ pub fn search_proteins_for_peptide<'a>(
     Some((cutoff_used, proteins))
 }
 
-pub fn search_peptide(
-    searcher: &Searcher,
+pub fn search_peptide<SA: SuffixArrayBackend>(
+    searcher: &Searcher<SA>,
     peptide: &str,
     cutoff: usize,
     equate_il: bool,
     tryptic: bool
 ) -> Option<SearchResult> {
-    let (cutoff_used, proteins) = search_proteins_for_peptide(searcher, peptide, cutoff, equate_il, tryptic)?;
+    let (cutoff_used, proteins) = search_proteins_for_peptide::<SA>(searcher, peptide, cutoff, equate_il, tryptic)?;
 
     Some(SearchResult {
         sequence: peptide.to_string(),
@@ -104,8 +104,8 @@ pub fn search_peptide(
 /// # Returns
 ///
 /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
-pub fn search_all_peptides(
-    searcher: &Searcher,
+pub fn search_all_peptides<SA: SuffixArrayBackend>(
+    searcher: &Searcher<SA>,
     peptides: &Vec<String>,
     cutoff: usize,
     equate_il: bool,
@@ -113,7 +113,7 @@ pub fn search_all_peptides(
 ) -> Vec<SearchResult> {
     peptides
         .par_iter()
-        .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il, tryptic))
+        .filter_map(|peptide| search_peptide::<SA>(searcher, peptide, cutoff, equate_il, tryptic))
         .collect()
 }
 

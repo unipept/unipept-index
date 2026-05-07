@@ -137,19 +137,16 @@ impl BitVecSuffixToProtein {
     ///
     /// Returns a new BitVecSuffixToProtein build over the provided text
     pub fn new(text: &ProteinText) -> Self {
-        let num_bits = text.len();
+        Self::from_text_parts(text.len(), |i| text.get(i))
+    }
 
-        // Create a BitVec (dynamic) first
-        let mut bits = BitVector::with_capacity(num_bits as u64);
-
-        // Set bits
-        for c in text.iter() {
+    pub fn from_text_parts(text_len: usize, get_char: impl Fn(usize) -> u8) -> Self {
+        let mut bits = BitVector::with_capacity(text_len as u64);
+        for i in 0..text_len {
+            let c = get_char(i);
             bits.push_bit(c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER);
         }
-
-        let rank = Rank9::new(bits);
-
-        BitVecSuffixToProtein { rank }
+        BitVecSuffixToProtein { rank: Rank9::new(bits) }
     }
 }
 
@@ -227,7 +224,7 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     Ok(BitVecSuffixToProtein { rank: Rank9::new(bits) })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "mmap")))]
 mod tests {
     use std::io::Cursor;
     use std::io::Write as IoWrite;

@@ -4,7 +4,7 @@ use sa_mappings::proteins::{ProteinRef, Proteins, SEPARATION_CHARACTER, TERMINAT
 use text_compression::ProteinTextSlice;
 
 use crate::{
-    KmerTable, Nullable, SuffixArray,
+    KmerTable, Nullable, SuffixArray, array::SuffixArrayBackend,
     sa_searcher::BoundSearch::{Maximum, Minimum},
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein, SuffixToProteinIndex}
 };
@@ -61,54 +61,54 @@ impl PartialEq for SearchAllSuffixesResult {
     }
 }
 
-pub struct SparseSearcher(Searcher);
+pub struct SparseSearcher<SA: SuffixArrayBackend>(Searcher<SA>);
 
-impl SparseSearcher {
-    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+impl<SA: SuffixArrayBackend> SparseSearcher<SA> {
+    pub fn new(sa: SA, proteins: Proteins) -> Self {
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
-impl Deref for SparseSearcher {
-    type Target = Searcher;
+impl<SA: SuffixArrayBackend> Deref for SparseSearcher<SA> {
+    type Target = Searcher<SA>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct BitVecSearcher(Searcher);
+pub struct BitVecSearcher<SA: SuffixArrayBackend>(Searcher<SA>);
 
-impl BitVecSearcher {
-    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+impl<SA: SuffixArrayBackend> BitVecSearcher<SA> {
+    pub fn new(sa: SA, proteins: Proteins) -> Self {
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
-impl Deref for BitVecSearcher {
-    type Target = Searcher;
+impl<SA: SuffixArrayBackend> Deref for BitVecSearcher<SA> {
+    type Target = Searcher<SA>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct DenseSearcher(Searcher);
+pub struct DenseSearcher<SA: SuffixArrayBackend>(Searcher<SA>);
 
-impl DenseSearcher {
-    pub fn new(sa: SuffixArray, proteins: Proteins) -> Self {
+impl<SA: SuffixArrayBackend> DenseSearcher<SA> {
+    pub fn new(sa: SA, proteins: Proteins) -> Self {
         let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
-impl Deref for DenseSearcher {
-    type Target = Searcher;
+impl<SA: SuffixArrayBackend> Deref for DenseSearcher<SA> {
+    type Target = Searcher<SA>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -127,8 +127,8 @@ impl Deref for DenseSearcher {
 ///   taxonomic analysis provided by Unipept
 /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
 ///   the functional analysis provided by Unipept
-pub struct Searcher {
-    pub sa: SuffixArray,
+pub struct Searcher<SA: SuffixArrayBackend> {
+    pub sa: SA,
     pub proteins: Proteins,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     pub kmer_table: Option<KmerTable>,
@@ -138,7 +138,7 @@ pub struct Searcher {
     pub match_iter_ns: AtomicU64,
 }
 
-impl Searcher {
+impl<SA: SuffixArrayBackend> Searcher<SA> {
     /// Creates a new Searcher object
     ///
     /// # Arguments
@@ -155,7 +155,7 @@ impl Searcher {
     /// # Returns
     ///
     /// Returns a new Searcher object
-    pub fn new(sa: SuffixArray, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
+    pub fn new(sa: SA, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
         Self {
             sa,
             proteins,
@@ -581,9 +581,7 @@ impl Searcher {
     /// Issues an early OS prefetch hint for the k-mer's SA range (skip=0 case), giving the OS
     /// more lead time to load those pages into the page cache before binary search starts.
     #[inline]
-    #[cfg_attr(not(feature = "mmap"), allow(unused_variables))]
     fn prefetch_kmer_range(&self, search_string: &[u8]) {
-        #[cfg(feature = "mmap")]
         if let Some(table) = &self.kmer_table {
             if search_string.len() >= table.k {
                 if let Some((lo, hi)) = table.lookup(&search_string[..table.k]) {
@@ -701,13 +699,14 @@ impl Searcher {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "mmap")))]
 mod tests {
     use sa_mappings::proteins::{Protein, Proteins};
     use text_compression::ProteinText;
 
     use crate::{
-        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher}, suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}, SuffixArray
+        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher}, suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}, SuffixArray,
+        array::{OriginalSA, SuffixArrayBackend},
     };
 
     #[test]
@@ -761,7 +760,7 @@ mod tests {
     #[test]
     fn test_search_simple() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
+        let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
 
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
@@ -782,7 +781,7 @@ mod tests {
     #[test]
     fn test_search_sparse() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
@@ -799,7 +798,7 @@ mod tests {
     #[test]
     fn test_search_dense() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
 
         let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
@@ -816,7 +815,7 @@ mod tests {
     #[test]
     fn test_il_equality() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1);
+        let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
 
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
@@ -832,7 +831,7 @@ mod tests {
     #[test]
     fn test_il_equality_sparse() {
         let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(vec![9, 0, 3, 12, 15, 6, 18], 3);
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
@@ -858,7 +857,7 @@ mod tests {
             functional_annotations: vec![]
         }]);
 
-        let sparse_sa = SuffixArray::Original(vec![0, 2, 4], 2);
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![0, 2, 4], 2));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
@@ -878,7 +877,7 @@ mod tests {
             functional_annotations: vec![]
         }]);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 0, 1, 5, 4, 3, 2], 1);
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 0, 1, 5, 4, 3, 2], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
@@ -897,7 +896,7 @@ mod tests {
             functional_annotations: vec![]
         }]);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 5, 4, 3, 2, 1, 0], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
@@ -916,7 +915,7 @@ mod tests {
             functional_annotations: vec![]
         }]);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 4, 2, 0], 2);
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 4, 2, 0], 2));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
@@ -937,7 +936,7 @@ mod tests {
             functional_annotations: vec![]
         }]);
 
-        let sparse_sa = SuffixArray::Original(vec![6, 5, 4, 3, 2, 1, 0], 1);
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 5, 4, 3, 2, 1, 0], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 
@@ -957,7 +956,7 @@ mod tests {
             functional_annotations: vec![]
         }]);
 
-        let sparse_sa = SuffixArray::Original(vec![13, 3, 12, 11, 1, 4, 2, 5, 9, 8, 6, 10, 0, 7], 1);
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![13, 3, 12, 11, 1, 4, 2, 5, 9, 8, 6, 10, 0, 7], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
 

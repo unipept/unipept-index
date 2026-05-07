@@ -9,7 +9,7 @@ use axum::{
     routing::post
 };
 use clap::Parser;
-use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher::Searcher, suffix_to_protein_index::SuffixToProteinMapping};
+use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher::Searcher, suffix_to_protein_index::SuffixToProteinMapping, SuffixArray, SuffixArrayBackend};
 use serde::Deserialize;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 
@@ -79,7 +79,7 @@ async fn main() {
 ///
 /// Returns the search results from the index as a JSON
 async fn search(
-    State(searcher): State<Arc<Searcher>>,
+    State(searcher): State<Arc<Searcher<SuffixArray>>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);

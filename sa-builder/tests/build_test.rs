@@ -1,3 +1,4 @@
+#![cfg(feature = "mmap")]
 use std::io::Write;
 use std::process::Command;
 

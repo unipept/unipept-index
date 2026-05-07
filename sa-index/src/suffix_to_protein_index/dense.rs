@@ -78,9 +78,15 @@ impl DenseSuffixToProtein {
     ///
     /// Returns a new DenseSuffixToProtein build over the provided text
     pub fn new(text: &ProteinText) -> Self {
+        Self::from_text_parts(text.len(), |i| text.get(i))
+    }
+
+    /// Closure-based constructor — works with any text type that exposes `len()` + `get()`.
+    pub fn from_text_parts(text_len: usize, get_char: impl Fn(usize) -> u8) -> Self {
         let mut current_protein_index: u32 = 0;
         let mut suffix_index_to_protein: Vec<u32> = vec![];
-        for char in text.iter() {
+        for i in 0..text_len {
+            let char = get_char(i);
             if char == SEPARATION_CHARACTER || char == TERMINATION_CHARACTER {
                 current_protein_index += 1;
                 suffix_index_to_protein.push(u32::NULL);
@@ -116,7 +122,7 @@ pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixT
     Ok(DenseSuffixToProtein { mapping })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "mmap")))]
 mod tests {
     use std::io::Cursor;
     use std::io::Write as IoWrite;

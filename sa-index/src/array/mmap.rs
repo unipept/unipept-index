@@ -1,4 +1,99 @@
+// This entire file is mmap-only.
+use std::{fs::File, path::Path};
+use std::error::Error;
 use memmap2::Mmap;
+use text_compression::ReadBinaryMmap;
+
+/// Owned, mmap-backed suffix array backend.
+pub struct MmapBackedSA {
+    pub mmap: Mmap,
+    pub data_offset: usize,
+    pub len: usize,
+    pub bits_per_value: usize,
+    pub sample_rate: u8,
+}
+
+impl super::SuffixArrayBackend for MmapBackedSA {
+    type RangeIter<'a> = MmapSaRangeIter<'a>;
+
+    fn len(&self) -> usize { self.len }
+    fn bits_per_value(&self) -> usize { self.bits_per_value }
+    fn sample_rate(&self) -> u8 { self.sample_rate }
+
+    fn get(&self, index: usize) -> i64 {
+        get_mmap(&self.mmap, self.data_offset, self.bits_per_value, index)
+    }
+
+    fn iter_range(&self, start: usize, end: usize) -> MmapSaRangeIter<'_> {
+        MmapSaRangeIter::new(&self.mmap, self.data_offset, self.bits_per_value, start, end)
+    }
+
+    fn prefetch_sa_index(&self, index: usize) {
+        let byte_offset = self.data_offset + (index * self.bits_per_value) / 8;
+        if byte_offset < self.mmap.len() {
+            let ptr: *const u8 = &self.mmap[byte_offset];
+            prefetch::prefetch_read(ptr);
+        }
+    }
+
+    fn touch_all_pages(&self) {
+        #[cfg(unix)]
+        let _ = self.mmap.advise(memmap2::Advice::Sequential);
+
+        let byte_len = (self.len * self.bits_per_value).div_ceil(8);
+        let data = &self.mmap[self.data_offset..self.data_offset + byte_len];
+        for chunk in data.chunks(4096) {
+            std::hint::black_box(chunk[0]);
+        }
+
+        #[cfg(unix)]
+        let _ = self.mmap.advise(memmap2::Advice::Random);
+    }
+
+    fn prefetch_sa_range(&self, lo: usize, hi_exclusive: usize) {
+        #[cfg(unix)]
+        {
+            let byte_lo = self.data_offset + (lo * self.bits_per_value) / 8;
+            let byte_hi = self.data_offset + (hi_exclusive * self.bits_per_value).div_ceil(8);
+            let len = byte_hi.saturating_sub(byte_lo);
+            if len > 0 && byte_hi <= self.mmap.len() {
+                let _ = self.mmap.advise_range(memmap2::Advice::WillNeed, byte_lo, len);
+            }
+        }
+    }
+}
+
+impl ReadBinaryMmap for MmapBackedSA {
+    fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Random)?;
+
+        if mmap.len() < 10 {
+            return Err("The binary file is too small to contain the SA header".into());
+        }
+
+        let bits_per_value = mmap[0] as usize;
+        let sample_rate = mmap[1];
+        let amount_of_items = u64::from_le_bytes(mmap[2..10].try_into()?) as usize;
+
+        let header_bytes = 10usize;
+        let total_bits = amount_of_items
+            .checked_mul(bits_per_value)
+            .ok_or("The SA header declares too many items or bits per value")?;
+        let data_bytes = total_bits.div_ceil(8);
+
+        if mmap.len() < header_bytes + data_bytes {
+            return Err("The binary file is too small to contain the SA data".into());
+        }
+
+        Ok(MmapBackedSA { mmap, data_offset: 10, len: amount_of_items, bits_per_value, sample_rate })
+    }
+}
+
+// ── range iterator ────────────────────────────────────────────────────────────
 
 /// Reads a u64 value in little-endian byte order from the given mmap at the given byte offset.
 pub(super) fn read_u64_le(mmap: &Mmap, byte_offset: usize) -> u64 {
@@ -8,24 +103,20 @@ pub(super) fn read_u64_le(mmap: &Mmap, byte_offset: usize) -> u64 {
 
 /// Streaming sequential iterator over a contiguous range of a compressed or uncompressed
 /// mmap-backed suffix array.
-///
-/// Keeps `current_word` and `next_word` in local variables (register-allocated by the
-/// compiler) so that a new mmap read only occurs when crossing a 64-bit block boundary —
-/// roughly once per 1.6 entries for a 40-bit SA, vs 1–2 reads per entry with `get_mmap`.
-pub(crate) struct MmapSaRangeIter<'a> {
+pub struct MmapSaRangeIter<'a> {
     mmap: &'a Mmap,
     data_offset: usize,
     bits_per_value: usize,
     mask: u64,
-    current_word: u64, // u64 block containing the next value to yield
-    next_word: u64,    // u64 block after current_word (pre-loaded)
-    block_idx: usize,  // index of current_word within the data section
-    bit_off: usize,    // bit offset of next value within current_word (0..64)
-    remaining: usize,  // entries left to yield
+    current_word: u64,
+    next_word: u64,
+    block_idx: usize,
+    bit_off: usize,
+    remaining: usize,
 }
 
 impl<'a> MmapSaRangeIter<'a> {
-    pub(crate) fn new(
+    pub fn new(
         mmap: &'a Mmap,
         data_offset: usize,
         bits_per_value: usize,
@@ -41,7 +132,6 @@ impl<'a> MmapSaRangeIter<'a> {
             };
         }
 
-        // (1u64 << 64) overflows; use u64::MAX for the 64-bit uncompressed case
         let mask = if bits_per_value == 64 { u64::MAX } else { (1u64 << bits_per_value) - 1 };
 
         let bit_pos   = start * bits_per_value;
@@ -60,9 +150,7 @@ impl Iterator for MmapSaRangeIter<'_> {
     type Item = i64;
 
     #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
-    }
+    fn size_hint(&self) -> (usize, Option<usize>) { (self.remaining, Some(self.remaining)) }
 
     #[inline]
     fn next(&mut self) -> Option<i64> {
@@ -70,15 +158,12 @@ impl Iterator for MmapSaRangeIter<'_> {
         self.remaining -= 1;
 
         let val = if self.bit_off + self.bits_per_value <= 64 {
-            // Value fits entirely within current_word
             (self.current_word >> (64 - self.bit_off - self.bits_per_value)) & self.mask
         } else {
-            // Value spans current_word and next_word
             let end_off = (self.bit_off + self.bits_per_value) % 64;
             ((self.current_word << end_off) | (self.next_word >> (64 - end_off))) & self.mask
         };
 
-        // Advance bit cursor; load next word from mmap only on block-boundary crossing
         self.bit_off += self.bits_per_value;
         if self.bit_off >= 64 {
             self.bit_off   -= 64;
