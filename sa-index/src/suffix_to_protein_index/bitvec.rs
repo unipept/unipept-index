@@ -5,7 +5,7 @@ use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
 use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
-use text_compression::ProteinText;
+use text_compression::ProteinTextBackend;
 
 use crate::Nullable;
 use super::SuffixToProteinIndex;
@@ -136,7 +136,7 @@ impl BitVecSuffixToProtein {
     /// # Returns
     ///
     /// Returns a new BitVecSuffixToProtein build over the provided text
-    pub fn new(text: &ProteinText) -> Self {
+    pub fn new<T: ProteinTextBackend>(text: &T) -> Self {
         Self::from_text_parts(text.len(), |i| text.get(i))
     }
 
@@ -224,24 +224,27 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     Ok(BitVecSuffixToProtein { rank: Rank9::new(bits) })
 }
 
-#[cfg(all(test, not(feature = "mmap")))]
+#[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    #[cfg(feature = "mmap")]
     use std::io::Write as IoWrite;
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::ProteinText;
+    use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
     use crate::Nullable;
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
-    use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
+    use crate::suffix_to_protein_index::SuffixToProteinIndex;
+    #[cfg(feature = "mmap")]
+    use crate::suffix_to_protein_index::SuffixToProteinMapping;
     use super::{BitVecSuffixToProtein, write_bitvec_mapping, read_bitvec_mapping};
 
-    fn build_text() -> ProteinText {
+    fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
         text.push(TERMINATION_CHARACTER as char);
-        ProteinText::from_string(&text)
+        InMemoryProteinText::from_string(&text)
     }
 
     #[cfg(feature = "mmap")]
@@ -314,7 +317,7 @@ mod tests {
         let last = raw.len() - 1;
         raw.replace_range(last..=last, "$");
 
-        let text = ProteinText::from_string(&raw);
+        let text = InMemoryProteinText::from_string(&raw);
         let original = BitVecSuffixToProtein::new(&text);
 
         let mut buf = Vec::new();
@@ -352,7 +355,7 @@ mod tests {
         raw.pop();
         raw.push('$');
 
-        let text = ProteinText::from_string(&raw);
+        let text = InMemoryProteinText::from_string(&raw);
         let original = BitVecSuffixToProtein::new(&text);
 
         let mut buf = vec![2u8];

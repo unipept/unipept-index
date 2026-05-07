@@ -15,10 +15,10 @@ pub use preloaded::InMemoryProteins;
 pub use mmap::MmapBackedProteins;
 
 /// Type alias — resolves to the active backend for this build.
-#[cfg(not(feature = "mmap"))]
-pub type Proteins = InMemoryProteins;
 #[cfg(feature = "mmap")]
 pub type Proteins = MmapBackedProteins;
+#[cfg(not(feature = "mmap"))]
+pub type Proteins = InMemoryProteins;
 
 // Re-export I/O traits used by callers.
 pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};

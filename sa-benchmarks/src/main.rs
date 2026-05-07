@@ -13,7 +13,7 @@ use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
-use text_compression::WriteBinary;
+use text_compression::ProteinTextBackend as _;
 
 /// Schema version — increment when the output JSON format changes
 const SCHEMA_VERSION: u32 = 1;

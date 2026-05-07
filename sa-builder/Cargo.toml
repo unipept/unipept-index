@@ -17,3 +17,4 @@ libsais64-rs = { path = "../libsais64-rs" }
 libdivsufsort-rs = "0.1.0"
 sa-mappings = { path = "../sa-mappings" }
 sa-index = { path = "../sa-index" }
+text-compression = { path = "../text-compression" }

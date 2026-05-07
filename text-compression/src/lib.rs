@@ -1,5 +1,3 @@
-use std::io::Write;
-
 pub mod traits;
 pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
 
@@ -9,11 +7,14 @@ pub mod mmap;
 
 pub use preloaded::{InMemoryProteinText, dump_compressed_text, load_compressed_text};
 #[cfg(feature = "mmap")]
-pub use mmap::MmapProteinText;
+pub use mmap::MmapBackedProteinText;
+
+/// Decode table shared by both backends: 5-bit index → ASCII amino acid byte.
+pub const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
 /// Type alias — resolves to the single active backend for this build.
 #[cfg(feature = "mmap")]
-pub type ProteinText = MmapProteinText;
+pub type ProteinText = MmapBackedProteinText;
 #[cfg(not(feature = "mmap"))]
 pub type ProteinText = InMemoryProteinText;
 
@@ -23,16 +24,36 @@ pub fn bit_array_byte_size(text_length: usize) -> usize {
     (text_length * 5 / 64 + extra) * 8
 }
 
+// ── ProteinTextBackend ─────────────────────────────────────────────────────────
+
+/// Full access interface for protein text backends.
+pub trait ProteinTextBackend {
+    fn get(&self, index: usize) -> u8;
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool { self.len() == 0 }
+
+    fn prefetch_at(&self, index: usize);
+
+    fn iter(&self) -> ProteinTextIterator<'_, Self> where Self: Sized {
+        ProteinTextIterator { protein_text: self, index: 0 }
+    }
+
+    fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_, Self> where Self: Sized {
+        ProteinTextSlice::new(self, start, end)
+    }
+}
+
 // ── ProteinTextSlice ──────────────────────────────────────────────────────────
 
-pub struct ProteinTextSlice<'a> {
-    text: &'a ProteinText,
+pub struct ProteinTextSlice<'a, T: ProteinTextBackend> {
+    text: &'a T,
     start: usize,
     end: usize,
 }
 
-impl<'a> ProteinTextSlice<'a> {
-    pub fn new(text: &'a ProteinText, start: usize, end: usize) -> Self {
+impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
+    pub fn new(text: &'a T, start: usize, end: usize) -> Self {
         Self { text, start, end }
     }
 
@@ -59,34 +80,38 @@ impl<'a> ProteinTextSlice<'a> {
         true
     }
 
-    pub fn iter(&self) -> ProteinTextSliceIterator<'_> {
-        ProteinTextSliceIterator { text_slice: self, index: 0 }
+    pub fn iter(&self) -> ProteinTextSliceIterator<'_, T> {
+        ProteinTextSliceIterator { text: self.text, pos: self.start, end: self.end }
     }
 }
 
 // ── ProteinTextIterator ───────────────────────────────────────────────────────
 
-pub struct ProteinTextIterator<'a> {
-    pub protein_text: &'a ProteinText,
-    pub index: usize,
+pub struct ProteinTextIterator<'a, T: ProteinTextBackend> {
+    pub(crate) protein_text: &'a T,
+    pub(crate) index: usize,
 }
 
-pub struct ProteinTextSliceIterator<'a> {
-    text_slice: &'a ProteinTextSlice<'a>,
-    index: usize,
+pub struct ProteinTextSliceIterator<'a, T: ProteinTextBackend> {
+    text: &'a T,
+    pos: usize,
+    end: usize,
 }
 
-impl Iterator for ProteinTextSliceIterator<'_> {
+impl<T: ProteinTextBackend> Iterator for ProteinTextSliceIterator<'_, T> {
     type Item = u8;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.text_slice.len() { return None; }
-        self.index += 1;
-        Some(self.text_slice.get(self.index - 1))
+        if self.pos >= self.end { return None; }
+        let c = self.text.get(self.pos);
+        self.pos += 1;
+        Some(c)
     }
 }
 
-impl Iterator for ProteinTextIterator<'_> {
+impl<T: ProteinTextBackend> Iterator for ProteinTextIterator<'_, T> {
     type Item = u8;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.protein_text.len() { return None; }
         self.index += 1;

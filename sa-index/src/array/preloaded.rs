@@ -18,23 +18,23 @@ macro_rules! dispatch {
     };
 }
 
-// ── PreloadedSA ───────────────────────────────────────────────────────────────
+// ── InMemorySA ───────────────────────────────────────────────────────────────
 
 /// Wraps either an Original or Compressed SA loaded from disk.
 /// The variant is determined at runtime by the `bits_per_value` field in the binary header.
-pub enum PreloadedSA {
+pub enum InMemorySA {
     Original(OriginalSA),
     Compressed(CompressedSA),
 }
 
-// ── PreloadedRangeIter ────────────────────────────────────────────────────────
+// ── InMemoryRangeIter ────────────────────────────────────────────────────────
 
-pub enum PreloadedRangeIter<'a> {
+pub enum InMemoryRangeIter<'a> {
     Original(OriginalRangeIter<'a>),
     Compressed(BitArrayRangeIter<'a>),
 }
 
-impl Iterator for PreloadedRangeIter<'_> {
+impl Iterator for InMemoryRangeIter<'_> {
     type Item = i64;
 
     #[inline]
@@ -47,12 +47,12 @@ impl Iterator for PreloadedRangeIter<'_> {
     }
 }
 
-impl ExactSizeIterator for PreloadedRangeIter<'_> {}
+impl ExactSizeIterator for InMemoryRangeIter<'_> {}
 
-// ── SuffixArrayBackend for PreloadedSA ────────────────────────────────────────
+// ── SuffixArrayBackend for InMemorySA ────────────────────────────────────────
 
-impl SuffixArrayBackend for PreloadedSA {
-    type RangeIter<'a> = PreloadedRangeIter<'a>;
+impl SuffixArrayBackend for InMemorySA {
+    type RangeIter<'a> = InMemoryRangeIter<'a>;
 
     fn len(&self) -> usize            { dispatch!(self, len()) }
     fn bits_per_value(&self) -> usize { dispatch!(self, bits_per_value()) }
@@ -61,18 +61,18 @@ impl SuffixArrayBackend for PreloadedSA {
     fn prefetch_sa_index(&self, index: usize) { dispatch!(self, prefetch_sa_index(index)) }
 
     // iter_range needs a manual match: each arm wraps its backend's native iterator
-    // type into the appropriate PreloadedRangeIter variant.
-    fn iter_range(&self, start: usize, end: usize) -> PreloadedRangeIter<'_> {
+    // type into the appropriate InMemoryRangeIter variant.
+    fn iter_range(&self, start: usize, end: usize) -> InMemoryRangeIter<'_> {
         match self {
-            Self::Original(b)   => PreloadedRangeIter::Original(b.iter_range(start, end)),
-            Self::Compressed(b) => PreloadedRangeIter::Compressed(b.iter_range(start, end)),
+            Self::Original(b)   => InMemoryRangeIter::Original(b.iter_range(start, end)),
+            Self::Compressed(b) => InMemoryRangeIter::Compressed(b.iter_range(start, end)),
         }
     }
 }
 
 // ── ReadBinary / WriteBinary ──────────────────────────────────────────────────
 
-impl ReadBinary for PreloadedSA {
+impl ReadBinary for InMemorySA {
     fn read_binary<R: BufRead>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
         let mut buf1 = [0u8; 1];
         reader.read_exact(&mut buf1).map_err(|_| "Could not read the required bits from the binary file")?;
@@ -87,15 +87,15 @@ impl ReadBinary for PreloadedSA {
 
         if bits_per_value == 64 {
             let sa = load_original(reader, sample_rate, size)?;
-            Ok(PreloadedSA::Original(OriginalSA(sa, sample_rate)))
+            Ok(InMemorySA::Original(OriginalSA(sa, sample_rate)))
         } else {
             let sa = load_compressed(reader, bits_per_value, size)?;
-            Ok(PreloadedSA::Compressed(CompressedSA(sa, sample_rate)))
+            Ok(InMemorySA::Compressed(CompressedSA(sa, sample_rate)))
         }
     }
 }
 
-impl WriteBinary for PreloadedSA {
+impl WriteBinary for InMemorySA {
     fn write_binary<W: std::io::Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         dispatch!(self, write_binary(writer))
     }

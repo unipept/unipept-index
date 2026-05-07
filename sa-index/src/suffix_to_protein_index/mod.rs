@@ -2,7 +2,6 @@ use std::io::Write;
 use std::error::Error;
 
 use clap::ValueEnum;
-use text_compression::ProteinText;
 use crate::ReadBinary;
 #[cfg(feature = "mmap")]
 use std::{path::Path, fs::File};
@@ -165,23 +164,23 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
     }
 }
 
-#[cfg(all(test, not(feature = "mmap")))]
+#[cfg(test)]
 mod tests {
     use std::io::Cursor;
 
     use clap::ValueEnum;
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::ProteinText;
+    use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
     use crate::{Nullable, ReadBinary};
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingStyle, dump_mapping};
 
-    fn build_text() -> ProteinText {
+    fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
         text.push(TERMINATION_CHARACTER as char);
-        ProteinText::from_string(&text)
+        InMemoryProteinText::from_string(&text)
     }
 
     #[cfg(feature = "mmap")]

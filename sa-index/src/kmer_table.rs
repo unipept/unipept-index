@@ -5,7 +5,7 @@ use std::{
 };
 
 use rayon::prelude::*;
-use text_compression::ProteinText;
+use text_compression::ProteinTextBackend;
 
 use crate::{ReadBinary, WriteBinary, array::SuffixArrayBackend};
 
@@ -69,7 +69,7 @@ impl KmerTable {
     ///
     /// Because the SA is sorted, each k-mer's entries are contiguous: the first
     /// occurrence gives `min_bound` and the last gives `max_bound`.
-    pub fn build_from_sa<SA: SuffixArrayBackend>(sa: &SA, text: &ProteinText, k: usize) -> Self {
+    pub fn build_from_sa<SA: SuffixArrayBackend, T: ProteinTextBackend + Sync>(sa: &SA, text: &T, k: usize) -> Self {
         Self::build_kmer_table(sa.len(), |i| sa.get(i) as usize, text.len(), |i| text.get(i), k)
     }
 
@@ -216,15 +216,15 @@ impl ReadBinary for KmerTable {
     }
 }
 
-#[cfg(all(test, not(feature = "mmap")))]
+#[cfg(test)]
 mod tests {
-    use text_compression::ProteinText;
+    use text_compression::InMemoryProteinText;
 
-    use crate::{SuffixArray, kmer_table::KmerTable, array::OriginalSA};
+    use crate::{kmer_table::KmerTable, array::{OriginalSA, InMemorySA}};
 
     fn build_test_table(input: &str, sa_values: Vec<i64>, k: usize) -> KmerTable {
-        let text = ProteinText::from_string(input);
-        let sa = SuffixArray::Original(OriginalSA(sa_values, 1));
+        let text = InMemoryProteinText::from_string(input);
+        let sa = InMemorySA::Original(OriginalSA(sa_values, 1));
         KmerTable::build_from_sa(&sa, &text, k)
     }
 

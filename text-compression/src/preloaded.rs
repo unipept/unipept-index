@@ -6,65 +6,48 @@ use std::io::{BufRead, Write};
 use bitarray::{Binary, BitArray, data_to_writer};
 
 use crate::traits::{WriteBinary, ReadBinary};
-use crate::bit_array_byte_size;
+use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
 
 // ── InMemoryProteinText ───────────────────────────────────────────────────────
 
 pub struct InMemoryProteinText {
     pub(crate) bit_array: BitArray,
     pub(crate) char_to_5bit: HashMap<u8, u8>,
-    pub(crate) bit5_to_char: Vec<u8>,
 }
 
 impl InMemoryProteinText {
-    fn create_char_to_5bit_hashmap() -> HashMap<u8, u8> {
-        let mut hashmap = HashMap::<u8, u8>::new();
-        for (i, c) in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars().enumerate() {
-            hashmap.insert(c as u8, i as u8);
-        }
-        hashmap
-    }
-
-    fn create_bit5_to_char() -> Vec<u8> {
-        "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars().map(|c| c as u8).collect()
+    pub(crate) fn create_char_to_5bit_hashmap() -> HashMap<u8, u8> {
+        BIT5_TO_CHAR.iter().enumerate().map(|(i, &c)| (c, i as u8)).collect()
     }
 
     pub fn from_string(input_string: &str) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
-        let bit5_to_char = Self::create_bit5_to_char();
         let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 = *char_to_5bit.get(&(c as u8))
                 .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
             bit_array.set(i, char_5bit as u64);
         }
-        Self { bit_array, char_to_5bit, bit5_to_char }
+        Self { bit_array, char_to_5bit }
     }
 
     pub fn from_vec(input_vec: &[u8]) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
-        let bit5_to_char = Self::create_bit5_to_char();
         let mut bit_array = BitArray::with_capacity(input_vec.len(), 5);
         for (i, e) in input_vec.iter().enumerate() {
             let char_5bit: u8 = *char_to_5bit.get(e)
                 .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
             bit_array.set(i, char_5bit as u64);
         }
-        Self { bit_array, char_to_5bit, bit5_to_char }
+        Self { bit_array, char_to_5bit }
     }
 
     pub fn new(bit_array: BitArray) -> Self {
-        Self { bit_array, char_to_5bit: Self::create_char_to_5bit_hashmap(), bit5_to_char: Self::create_bit5_to_char() }
+        Self { bit_array, char_to_5bit: Self::create_char_to_5bit_hashmap() }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self::new(BitArray::with_capacity(capacity, 5))
-    }
-
-    #[inline]
-    pub fn get(&self, index: usize) -> u8 {
-        let char_5bit = self.bit_array.get(index) as usize;
-        self.bit5_to_char[char_5bit]
     }
 
     pub fn set(&mut self, index: usize, value: u8) {
@@ -73,24 +56,19 @@ impl InMemoryProteinText {
         self.bit_array.set(index, char_5bit as u64);
     }
 
-    pub fn len(&self) -> usize { self.bit_array.len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
-
     pub fn clear(&mut self) { self.bit_array.clear(); }
+}
 
-    /// Iterator that works in all builds (not tied to the `ProteinText` alias).
-    pub fn iter(&self) -> InMemoryProteinTextIterator<'_> {
-        InMemoryProteinTextIterator { text: self, index: 0 }
+impl ProteinTextBackend for InMemoryProteinText {
+    #[inline]
+    fn get(&self, index: usize) -> u8 {
+        BIT5_TO_CHAR[self.bit_array.get(index) as usize]
     }
 
-    // slice() is only valid when InMemoryProteinText IS ProteinText (non-mmap builds).
-    #[cfg(not(feature = "mmap"))]
-    pub fn slice(&self, start: usize, end: usize) -> crate::ProteinTextSlice<'_> {
-        crate::ProteinTextSlice::new(self, start, end)
-    }
+    fn len(&self) -> usize { self.bit_array.len() }
 
     #[inline]
-    pub fn prefetch_at(&self, index: usize) {
+    fn prefetch_at(&self, index: usize) {
         if index < self.bit_array.len() {
             let word_idx = (index * 5) / 64;
             let ptr: *const u64 = self.bit_array.get_data_slice(word_idx, word_idx + 1).as_ptr();
@@ -147,24 +125,6 @@ pub fn load_compressed_text(reader: &mut impl BufRead) -> Result<InMemoryProtein
     Ok(InMemoryProteinText::new(compressed_text))
 }
 
-// ── InMemoryProteinTextIterator ───────────────────────────────────────────────
-
-/// Iterator over characters of an [`InMemoryProteinText`].
-/// Works in all builds — not tied to the `ProteinText` type alias.
-pub struct InMemoryProteinTextIterator<'a> {
-    text: &'a InMemoryProteinText,
-    index: usize,
-}
-
-impl Iterator for InMemoryProteinTextIterator<'_> {
-    type Item = u8;
-    fn next(&mut self) -> Option<u8> {
-        if self.index >= self.text.len() { return None; }
-        self.index += 1;
-        Some(self.text.get(self.index - 1))
-    }
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -196,10 +156,10 @@ mod tests {
     #[test]
     fn test_u8_5bit_conversion() {
         let char_to_5bit = InMemoryProteinText::create_char_to_5bit_hashmap();
-        let bit5_to_char = InMemoryProteinText::create_bit5_to_char();
-        for c in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars() {
-            let char_5bit = char_to_5bit.get(&(c as u8)).unwrap();
-            assert_eq!(c as u8, bit5_to_char[*char_5bit as usize]);
+        for (i, &c) in BIT5_TO_CHAR.iter().enumerate() {
+            let idx = *char_to_5bit.get(&c).unwrap() as usize;
+            assert_eq!(i, idx);
+            assert_eq!(BIT5_TO_CHAR[idx], c);
         }
     }
 
@@ -243,7 +203,6 @@ mod tests {
         for (i, c) in "ACACA-CAC$".chars().enumerate() { assert_eq!(c as u8, text.get(i)); }
     }
 
-    #[cfg(not(feature = "mmap"))]
     #[test]
     fn test_text_slice() {
         let text = InMemoryProteinText::from_string("ACACA-CAC$");
@@ -253,7 +212,6 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "mmap"))]
     #[test]
     fn test_equals_slice() {
         let text = InMemoryProteinText::from_string("ACICA-CAC$");
@@ -263,7 +221,6 @@ mod tests {
         assert!(text_slice.equals_slice(&[b'C', b'L', b'C', b'A'], true));
     }
 
-    #[cfg(not(feature = "mmap"))]
     #[test]
     fn test_check_il_locations() {
         let text = InMemoryProteinText::from_string("ACILA-CAC$");

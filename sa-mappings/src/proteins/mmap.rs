@@ -4,7 +4,7 @@ use std::{error::Error, path::Path, sync::Arc};
 use memmap2::Mmap;
 use text_compression::{ReadBinaryMmap, ProteinText, bit_array_byte_size};
 
-use super::{Protein, ProteinRef};
+use super::ProteinRef;
 
 // ── MmapBackedProteins ────────────────────────────────────────────────────────
 
@@ -12,9 +12,9 @@ pub struct MmapBackedProteins {
     pub mmap: Arc<Mmap>,
     pub text: ProteinText,
     pub protein_count: usize,
-    pub fixed_table_offset: usize,
-    pub uid_data_offset: usize,
-    pub fa_data_offset: usize,
+    pub(crate) fixed_table_offset: usize,
+    pub(crate) uid_data_offset: usize,
+    pub(crate) fa_data_offset: usize,
 }
 
 mod entry_offsets {
@@ -125,5 +125,72 @@ impl ReadBinaryMmap for MmapBackedProteins {
         }
 
         Ok(Self { mmap, text, protein_count, fixed_table_offset, uid_data_offset, fa_data_offset })
+    }
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io::Write, path::PathBuf};
+    use tempdir::TempDir;
+    use text_compression::{ReadBinaryMmap, WriteBinary};
+    use super::MmapBackedProteins;
+    use crate::proteins::preloaded::InMemoryProteins;
+
+    fn create_database_file(tmp_dir: &TempDir) -> PathBuf {
+        let path = tmp_dir.path().join("database.tsv");
+        let mut f = File::create(&path).unwrap();
+        f.write_all("P12345\t1\tMLPGLALLLLAAWTARALEV\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()).unwrap();
+        f.write_all("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()).unwrap();
+        f.write_all("P67890\t6\tKWDSDPSGTKTCIDT\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()).unwrap();
+        path
+    }
+
+    fn write_binary_to_tempfile(tmp_dir: &TempDir) -> PathBuf {
+        let db = create_database_file(tmp_dir);
+        let original = InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap();
+        let bin_path = tmp_dir.path().join("proteins.bin");
+        let mut bin_file = File::create(&bin_path).unwrap();
+        original.write_binary(&mut bin_file).unwrap();
+        bin_path
+    }
+
+    #[test]
+    fn test_mmap_roundtrip_len() {
+        let tmp_dir = TempDir::new("test_mmap_len").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        assert_eq!(mmap.len(), 3);
+    }
+
+    #[test]
+    fn test_mmap_roundtrip_taxon() {
+        let tmp_dir = TempDir::new("test_mmap_taxon").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        for (i, &taxon) in [1u32, 2, 6].iter().enumerate() {
+            assert_eq!(mmap.get(i).taxon_id, taxon);
+        }
+    }
+
+    #[test]
+    fn test_mmap_roundtrip_uniprot_id() {
+        let tmp_dir = TempDir::new("test_mmap_uid").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        assert_eq!(mmap.get(0).uniprot_id, "P12345");
+        assert_eq!(mmap.get(1).uniprot_id, "P54321");
+        assert_eq!(mmap.get(2).uniprot_id, "P67890");
+    }
+
+    #[test]
+    fn test_mmap_roundtrip_functional_annotations() {
+        let tmp_dir = TempDir::new("test_mmap_fa").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        for i in 0..mmap.len() {
+            assert_eq!(mmap.get(i).get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
+        }
     }
 }

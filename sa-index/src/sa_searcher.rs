@@ -1,10 +1,10 @@
 use std::{cmp::min, ops::Deref, sync::atomic::{AtomicU64, Ordering}, time::Instant};
 
 use sa_mappings::proteins::{ProteinRef, Proteins, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::ProteinTextSlice;
+use text_compression::{ProteinText, ProteinTextBackend, ProteinTextSlice};
 
 use crate::{
-    KmerTable, Nullable, SuffixArray, array::SuffixArrayBackend,
+    KmerTable, Nullable, array::SuffixArrayBackend,
     sa_searcher::BoundSearch::{Maximum, Minimum},
     suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein, SuffixToProteinIndex}
 };
@@ -499,7 +499,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
     /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise
     /// false
     #[inline]
-    fn check_prefix(search_string_prefix: &[u8], index_prefix: ProteinTextSlice, equate_il: bool) -> bool {
+    fn check_prefix(search_string_prefix: &[u8], index_prefix: ProteinTextSlice<'_, ProteinText>, equate_il: bool) -> bool {
         index_prefix.equals_slice(search_string_prefix, equate_il)
     }
 
@@ -524,7 +524,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
         skip: usize,
         il_locations: &[usize],
         search_string: &[u8],
-        text_slice: ProteinTextSlice,
+        text_slice: ProteinTextSlice<'_, ProteinText>,
         equate_il: bool
     ) -> bool {
         if equate_il { true } else { text_slice.check_il_locations(skip, il_locations, search_string) }

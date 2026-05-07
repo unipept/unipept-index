@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use rand::Rng;
 use sa_server::load_proteins_file;
+use text_compression::ProteinTextBackend as _;
 
 /// Characters that delimit protein boundaries in the text.
 /// b'-' is SEPARATION_CHARACTER, b'$' is TERMINATION_CHARACTER.

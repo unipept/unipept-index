@@ -1160,6 +1160,7 @@ dependencies = [
  "sa-index",
  "sa-mappings",
  "tempfile",
+ "text-compression",
 ]
 
 [[package]]

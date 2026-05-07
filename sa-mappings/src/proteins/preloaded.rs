@@ -3,7 +3,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::str::from_utf8;
 
 use bytelines::ByteLines;
-use fa_compression::algorithm1::decode;
 use fa_compression::algorithm1::encode;
 pub use text_compression::{WriteBinary, ReadBinary};
 use text_compression::InMemoryProteinText;
@@ -26,6 +25,9 @@ impl InMemoryProteins {
     pub fn len(&self) -> usize { self.proteins.len() }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
     pub fn touch_all_pages(&self) {}
+
+    #[inline]
+    pub fn prefetch_strings(&self, _index: usize) {}
 
     #[inline]
     pub fn prefetch(&self, index: usize) {
@@ -149,12 +151,12 @@ impl ReadBinary for InMemoryProteins {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-#[cfg(all(test, not(feature = "mmap")))]
+#[cfg(test)]
 mod tests {
     use std::{fs::File, io::Write, path::PathBuf};
     use tempdir::TempDir;
     use super::*;
-    use text_compression::ReadBinary as _;
+    use text_compression::ProteinTextBackend as _;
 
     fn create_database_file(tmp_dir: &TempDir) -> PathBuf {
         let path = tmp_dir.path().join("database.tsv");

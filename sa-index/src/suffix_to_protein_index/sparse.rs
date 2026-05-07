@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::error::Error;
 
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::ProteinText;
+use text_compression::ProteinTextBackend;
 
 use crate::Nullable;
 use super::SuffixToProteinIndex;
@@ -82,7 +82,7 @@ impl SuffixToProteinIndex for MmapSparseSuffixToProtein {
 
 impl SparseSuffixToProtein {
     /// Creates a new SparseSuffixToProtein mapping
-    pub fn new(text: &ProteinText) -> Self {
+    pub fn new<T: ProteinTextBackend>(text: &T) -> Self {
         Self::from_text_parts(text.len(), |i| text.get(i))
     }
 
@@ -119,24 +119,27 @@ pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffi
     Ok(SparseSuffixToProtein { mapping })
 }
 
-#[cfg(all(test, not(feature = "mmap")))]
+#[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    #[cfg(feature = "mmap")]
     use std::io::Write as IoWrite;
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::ProteinText;
+    use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
     use crate::Nullable;
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
-    use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
+    use crate::suffix_to_protein_index::SuffixToProteinIndex;
+    #[cfg(feature = "mmap")]
+    use crate::suffix_to_protein_index::SuffixToProteinMapping;
     use super::{SparseSuffixToProtein, write_sparse_mapping, read_sparse_mapping};
 
-    fn build_text() -> ProteinText {
+    fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
         text.push(TERMINATION_CHARACTER as char);
-        ProteinText::from_string(&text)
+        InMemoryProteinText::from_string(&text)
     }
 
     #[cfg(feature = "mmap")]
