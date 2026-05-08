@@ -4,7 +4,7 @@ use std::error::Error;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
-use crate::Nullable;
+use crate::{Nullable, WriteBinary};
 use super::SuffixToProteinIndex;
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
@@ -98,13 +98,15 @@ impl SparseSuffixToProtein {
     }
 }
 
-pub(super) fn write_sparse_mapping<W: Write>(mapping: &SparseSuffixToProtein, writer: &mut W) -> Result<(), Box<dyn Error>> {
-    let count = mapping.mapping.len() as u64;
-    writer.write_all(&count.to_le_bytes())?;
-    for &val in &mapping.mapping {
-        writer.write_all(&val.to_le_bytes())?;
+impl WriteBinary for SparseSuffixToProtein {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        writer.write_all(&[1u8])?;
+        writer.write_all(&(self.mapping.len() as u64).to_le_bytes())?;
+        for &val in &self.mapping {
+            writer.write_all(&val.to_le_bytes())?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffixToProtein, Box<dyn Error>> {
@@ -119,6 +121,15 @@ pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffi
     Ok(SparseSuffixToProtein { mapping })
 }
 
+#[cfg(feature = "mmap")]
+pub(super) fn read_sparse_mmap(mmap: Mmap) -> Result<MmapSparseSuffixToProtein, Box<dyn Error>> {
+    if mmap.len() < 9 {
+        return Err("Sparse mapping file is truncated: missing count header".into());
+    }
+    let count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
+    Ok(MmapSparseSuffixToProtein { mmap, count, data_offset: 9 })
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -126,15 +137,15 @@ mod tests {
     use std::io::Write as IoWrite;
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::{InMemoryProteinText, ProteinTextBackend};
+    use text_compression::InMemoryProteinText;
 
-    use crate::Nullable;
+    use crate::{Nullable, WriteBinary};
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::SuffixToProteinIndex;
     #[cfg(feature = "mmap")]
     use crate::suffix_to_protein_index::SuffixToProteinMapping;
-    use super::{SparseSuffixToProtein, write_sparse_mapping, read_sparse_mapping};
+    use super::{SparseSuffixToProtein, read_sparse_mapping};
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -173,27 +184,25 @@ mod tests {
     #[test]
     fn test_sparse_roundtrip() {
         let text = build_text();
-        let original = SparseSuffixToProtein::new(&text);
         let mut buf = Vec::new();
-        write_sparse_mapping(&original, &mut buf).unwrap();
-        let mut cursor = Cursor::new(buf);
+        SparseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
+        assert_eq!(buf[0], 1u8);
+        let mut cursor = Cursor::new(&buf[1..]);
         let restored = read_sparse_mapping(&mut cursor).unwrap();
-        assert_eq!(original, restored);
+        assert_eq!(SparseSuffixToProtein::new(&text), restored);
     }
 
     #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_sparse_roundtrip() {
         let text = build_text();
-        let original = SparseSuffixToProtein::new(&text);
-
         let mut buf = Vec::new();
-        buf.push(1u8); // type byte
-        write_sparse_mapping(&original, &mut buf).unwrap();
+        SparseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
 
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
+        let original = SparseSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
             assert_eq!(
                 original.suffix_to_protein(i),
@@ -209,8 +218,7 @@ mod tests {
     fn test_search_mmap_sparse() {
         let text = build_text();
         let mut buf = Vec::new();
-        buf.push(1u8);
-        write_sparse_mapping(&SparseSuffixToProtein::new(&text), &mut buf).unwrap();
+        SparseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
         let tmp = write_to_tempfile(&buf);
         let index = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 

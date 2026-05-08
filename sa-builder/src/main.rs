@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    io::BufWriter,
+    io::{BufWriter, Write},
     time::{SystemTime, SystemTimeError, UNIX_EPOCH}
 };
 
@@ -8,7 +8,7 @@ use clap::Parser;
 use sa_builder::{Arguments, build_ssa};
 use sa_index::array::dump_compressed_suffix_array;
 use sa_index::array::dump_suffix_array;
-use sa_index::suffix_to_protein_index::dump_mapping;
+use sa_index::suffix_to_protein_index::{SuffixToProteinMappingStyle, DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein};
 use sa_index::{KmerTable, WriteBinary};
 use sa_mappings::proteins::InMemoryProteins;
 use text_compression::ProteinTextBackend as _;
@@ -69,8 +69,17 @@ fn main() {
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     timed("writing suffix-to-protein mapping binary", || {
-        dump_mapping(&mapping_style, proteins.text().len(), |i| proteins.text().get(i), &mut mapping_file)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        let text_len = proteins.text().len();
+        let result = match &mapping_style {
+            SuffixToProteinMappingStyle::Dense =>
+                DenseSuffixToProtein::from_text_parts(text_len, |i: usize| proteins.text().get(i)).write_binary(&mut mapping_file),
+            SuffixToProteinMappingStyle::Sparse =>
+                SparseSuffixToProtein::from_text_parts(text_len, |i: usize| proteins.text().get(i)).write_binary(&mut mapping_file),
+            SuffixToProteinMappingStyle::BitVec =>
+                BitVecSuffixToProtein::from_text_parts(text_len, |i: usize| proteins.text().get(i)).write_binary(&mut mapping_file),
+        };
+        result.unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        mapping_file.flush().unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });
     eprintln!("\tOutput: {}", output_mapping);
 

@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::error::Error;
 
 use clap::ValueEnum;
@@ -51,40 +50,6 @@ pub trait SuffixToProteinIndex: Send + Sync {
     fn touch_all_pages(&self) {}
 }
 
-/// Constructs the appropriate mapping from text and writes type byte + data to the writer.
-///
-/// # Arguments
-/// * `style` - The style of mapping to construct
-/// * `text` - The protein text over which to build the mapping
-/// * `writer` - The writer to write the mapping to
-///
-/// # Returns
-///
-/// Returns Ok(()) on success, or an error if writing fails
-pub fn dump_mapping<W: Write>(
-    style: &SuffixToProteinMappingStyle,
-    text_len: usize,
-    get_char: impl Fn(usize) -> u8,
-    writer: &mut W
-) -> Result<(), Box<dyn Error>> {
-    match style {
-        SuffixToProteinMappingStyle::Dense => {
-            writer.write_all(&[0u8])?;
-            dense::write_dense_mapping(&DenseSuffixToProtein::from_text_parts(text_len, &get_char), writer)?;
-        }
-        SuffixToProteinMappingStyle::Sparse => {
-            writer.write_all(&[1u8])?;
-            sparse::write_sparse_mapping(&SparseSuffixToProtein::from_text_parts(text_len, &get_char), writer)?;
-        }
-        SuffixToProteinMappingStyle::BitVec => {
-            writer.write_all(&[2u8])?;
-            bitvec::write_bitvec_mapping(&BitVecSuffixToProtein::from_text_parts(text_len, &get_char), writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
 /// A newtype wrapping a boxed `SuffixToProteinIndex` to enable trait-based loading.
 pub struct SuffixToProteinMapping(pub Box<dyn SuffixToProteinIndex>);
 
@@ -116,48 +81,9 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
         }
 
         let index: Box<dyn SuffixToProteinIndex> = match mmap[0] {
-            0 => {
-                // Dense mapping: expect at least 8 bytes of count after the type byte.
-                if mmap.len() < 9 {
-                    return Err("Dense mapping file is truncated: missing count header".into());
-                }
-
-                let _count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
-
-                Box::new(dense::MmapDenseSuffixToProtein { mmap, data_offset: 9 })
-            }
-            1 => {
-                // Sparse mapping: expect at least 8 bytes of count after the type byte.
-                if mmap.len() < 9 {
-                    return Err("Sparse mapping file is truncated: missing count header".into());
-                }
-
-                let count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
-
-                Box::new(sparse::MmapSparseSuffixToProtein { mmap, count, data_offset: 9 })
-            }
-            2 => {
-                // Bitvec mapping: expect at least 8 bytes of bit_len and 8 bytes of block_count.
-                if mmap.len() < 17 {
-                    return Err("Bitvec mapping file is truncated: missing header fields".into());
-                }
-
-                let bit_len = u64::from_le_bytes(mmap[1..9].try_into()?);
-                let block_count = u64::from_le_bytes(mmap[9..17].try_into()?) as usize;
-
-                let expected_size = 17 + block_count * 8 + (block_count / 8 + 1) * 16;
-                if mmap.len() < expected_size {
-                    return Err(format!(
-                        "Bitvec mapping file is truncated: expected {} bytes, got {}",
-                        expected_size, mmap.len()
-                    ).into());
-                }
-
-                let bits_offset = 17;
-                let counts_offset = bits_offset + block_count * 8;
-
-                Box::new(bitvec::MmapBitVecSuffixToProtein { mmap, bit_len, bits_offset, counts_offset })
-            }
+            0 => Box::new(dense::read_dense_mmap(mmap)?),
+            1 => Box::new(sparse::read_sparse_mmap(mmap)?),
+            2 => Box::new(bitvec::read_bitvec_mmap(mmap)?),
             t => return Err(format!("Unknown mapping type byte: {}", t).into()),
         };
         Ok(SuffixToProteinMapping(index))
@@ -172,10 +98,10 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use crate::{Nullable, ReadBinary};
+    use crate::{Nullable, ReadBinary, WriteBinary};
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
-    use crate::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingStyle, dump_mapping};
+    use crate::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingStyle, DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein};
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -209,7 +135,7 @@ mod tests {
     fn test_dump_and_load_mapping_dense() {
         let text = build_text();
         let mut buf = Vec::new();
-        dump_mapping(&SuffixToProteinMappingStyle::Dense, text.len(), |i| text.get(i), &mut buf).unwrap();
+        DenseSuffixToProtein::from_text_parts(text.len(), |i| text.get(i)).write_binary(&mut buf).unwrap();
         assert_eq!(buf[0], 0u8);
         let mut cursor = Cursor::new(buf);
         let loaded = SuffixToProteinMapping::read_binary(&mut cursor).unwrap().0;
@@ -221,7 +147,7 @@ mod tests {
     fn test_dump_and_load_mapping_sparse() {
         let text = build_text();
         let mut buf = Vec::new();
-        dump_mapping(&SuffixToProteinMappingStyle::Sparse, text.len(), |i| text.get(i), &mut buf).unwrap();
+        SparseSuffixToProtein::from_text_parts(text.len(), |i| text.get(i)).write_binary(&mut buf).unwrap();
         assert_eq!(buf[0], 1u8);
         let mut cursor = Cursor::new(buf);
         let loaded = SuffixToProteinMapping::read_binary(&mut cursor).unwrap().0;
@@ -233,7 +159,7 @@ mod tests {
     fn test_dump_and_load_mapping_bitvec() {
         let text = build_text();
         let mut buf = Vec::new();
-        dump_mapping(&SuffixToProteinMappingStyle::BitVec, text.len(), |i| text.get(i), &mut buf).unwrap();
+        BitVecSuffixToProtein::from_text_parts(text.len(), |i| text.get(i)).write_binary(&mut buf).unwrap();
         assert_eq!(buf[0], 2u8);
         let mut cursor = Cursor::new(buf);
         let loaded = SuffixToProteinMapping::read_binary(&mut cursor).unwrap().0;
@@ -263,7 +189,7 @@ mod tests {
     fn test_dump_and_load_mmap_dense() {
         let text = build_text();
         let mut buf = Vec::new();
-        dump_mapping(&SuffixToProteinMappingStyle::Dense, text.len(), |i| text.get(i), &mut buf).unwrap();
+        DenseSuffixToProtein::from_text_parts(text.len(), |i| text.get(i)).write_binary(&mut buf).unwrap();
         assert_eq!(buf[0], 0u8);
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
@@ -276,7 +202,7 @@ mod tests {
     fn test_dump_and_load_mmap_sparse() {
         let text = build_text();
         let mut buf = Vec::new();
-        dump_mapping(&SuffixToProteinMappingStyle::Sparse, text.len(), |i| text.get(i), &mut buf).unwrap();
+        SparseSuffixToProtein::from_text_parts(text.len(), |i| text.get(i)).write_binary(&mut buf).unwrap();
         assert_eq!(buf[0], 1u8);
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
@@ -289,7 +215,7 @@ mod tests {
     fn test_dump_and_load_mmap_bitvec() {
         let text = build_text();
         let mut buf = Vec::new();
-        dump_mapping(&SuffixToProteinMappingStyle::BitVec, text.len(), |i| text.get(i), &mut buf).unwrap();
+        BitVecSuffixToProtein::from_text_parts(text.len(), |i| text.get(i)).write_binary(&mut buf).unwrap();
         assert_eq!(buf[0], 2u8);
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;

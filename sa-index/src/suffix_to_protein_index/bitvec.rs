@@ -7,7 +7,7 @@ use memmap2::Mmap;
 use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
 use text_compression::ProteinTextBackend;
 
-use crate::Nullable;
+use crate::{Nullable, WriteBinary};
 use super::SuffixToProteinIndex;
 
 /// Mapping that uses O(n) memory (1-2 bits per suffix) with n the size of the input text, with retrieval
@@ -150,48 +150,44 @@ impl BitVecSuffixToProtein {
     }
 }
 
-pub(super) fn write_bitvec_mapping<W: Write>(mapping: &BitVecSuffixToProtein, writer: &mut W) -> Result<(), Box<dyn Error>> {
-    let bit_len = mapping.rank.bit_len();
-    let block_count = mapping.rank.block_len();
-    writer.write_all(&bit_len.to_le_bytes())?;
-    writer.write_all(&(block_count as u64).to_le_bytes())?;
+impl WriteBinary for BitVecSuffixToProtein {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        writer.write_all(&[2u8])?;
+        let bit_len = self.rank.bit_len();
+        let block_count = self.rank.block_len();
+        writer.write_all(&bit_len.to_le_bytes())?;
+        writer.write_all(&(block_count as u64).to_le_bytes())?;
 
-    // Write raw 64-bit blocks
-    for i in 0..block_count {
-        let block: u64 = mapping.rank.get_block(i);
-        writer.write_all(&block.to_le_bytes())?;
-    }
-
-    // Write superblock array: block_count/8 + 1 entries of 16 bytes each.
-    // Each entry: [level1: u64 LE] [packed_level2: u64 LE]
-    //   level1        = cumulative 1-bit count before this 512-bit superblock
-    //   packed_level2 = 7 × 9-bit counts (before words 1..=7 in the superblock)
-    //                   bits (w-1)*9..(w-1)*9+9 hold the count before word w
-    let sb_count = block_count / 8 + 1;
-    let mut level1: u64 = 0;
-
-    for sb in 0..sb_count {
-        let word_start = sb * 8;
-        let mut packed_level2: u64 = 0;
-        let mut running: u64 = 0; // cumulative count within this superblock
-
-        for w in 0..8usize {
-            if w > 0 {
-                // Store count-before-word-w at bits (w-1)*9 .. (w-1)*9+8
-                packed_level2 |= (running & 0x1FF) << ((w - 1) * 9);
-            }
-            let word_idx = word_start + w;
-            if word_idx < block_count {
-                running += mapping.rank.get_block(word_idx).count_ones() as u64;
-            }
+        for i in 0..block_count {
+            let block: u64 = self.rank.get_block(i);
+            writer.write_all(&block.to_le_bytes())?;
         }
 
-        writer.write_all(&level1.to_le_bytes())?;
-        writer.write_all(&packed_level2.to_le_bytes())?;
-        level1 += running;
-    }
+        let sb_count = block_count / 8 + 1;
+        let mut level1: u64 = 0;
 
-    Ok(())
+        for sb in 0..sb_count {
+            let word_start = sb * 8;
+            let mut packed_level2: u64 = 0;
+            let mut running: u64 = 0;
+
+            for w in 0..8usize {
+                if w > 0 {
+                    packed_level2 |= (running & 0x1FF) << ((w - 1) * 9);
+                }
+                let word_idx = word_start + w;
+                if word_idx < block_count {
+                    running += self.rank.get_block(word_idx).count_ones() as u64;
+                }
+            }
+
+            writer.write_all(&level1.to_le_bytes())?;
+            writer.write_all(&packed_level2.to_le_bytes())?;
+            level1 += running;
+        }
+
+        Ok(())
+    }
 }
 
 pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffixToProtein, Box<dyn Error>> {
@@ -224,6 +220,25 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     Ok(BitVecSuffixToProtein { rank: Rank9::new(bits) })
 }
 
+#[cfg(feature = "mmap")]
+pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, Box<dyn Error>> {
+    if mmap.len() < 17 {
+        return Err("Bitvec mapping file is truncated: missing header fields".into());
+    }
+    let bit_len = u64::from_le_bytes(mmap[1..9].try_into()?);
+    let block_count = u64::from_le_bytes(mmap[9..17].try_into()?) as usize;
+    let expected_size = 17 + block_count * 8 + (block_count / 8 + 1) * 16;
+    if mmap.len() < expected_size {
+        return Err(format!(
+            "Bitvec mapping file is truncated: expected {} bytes, got {}",
+            expected_size, mmap.len()
+        ).into());
+    }
+    let bits_offset = 17;
+    let counts_offset = bits_offset + block_count * 8;
+    Ok(MmapBitVecSuffixToProtein { mmap, bit_len, bits_offset, counts_offset })
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -233,13 +248,13 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use crate::Nullable;
+    use crate::{Nullable, WriteBinary};
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::SuffixToProteinIndex;
     #[cfg(feature = "mmap")]
     use crate::suffix_to_protein_index::SuffixToProteinMapping;
-    use super::{BitVecSuffixToProtein, write_bitvec_mapping, read_bitvec_mapping};
+    use super::{BitVecSuffixToProtein, read_bitvec_mapping};
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -270,14 +285,14 @@ mod tests {
     #[test]
     fn test_bitvec_roundtrip() {
         let text = build_text();
-        let original = BitVecSuffixToProtein::new(&text);
         let mut buf = Vec::new();
-        write_bitvec_mapping(&original, &mut buf).unwrap();
-        let mut cursor = Cursor::new(buf);
+        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
+        assert_eq!(buf[0], 2u8);
+        let mut cursor = Cursor::new(&buf[1..]);
         let restored = read_bitvec_mapping(&mut cursor).unwrap();
-        // BitVecSuffixToProtein does not derive PartialEq, compare via suffix_to_protein
+        let reference = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
-            assert_eq!(original.suffix_to_protein(i), restored.suffix_to_protein(i));
+            assert_eq!(reference.suffix_to_protein(i), restored.suffix_to_protein(i));
         }
     }
 
@@ -285,15 +300,13 @@ mod tests {
     #[test]
     fn test_mmap_bitvec_roundtrip() {
         let text = build_text();
-        let original = BitVecSuffixToProtein::new(&text);
-
         let mut buf = Vec::new();
-        buf.push(2u8); // type byte
-        write_bitvec_mapping(&original, &mut buf).unwrap();
+        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
 
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
+        let original = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
             assert_eq!(
                 original.suffix_to_protein(i),
@@ -318,15 +331,13 @@ mod tests {
         raw.replace_range(last..=last, "$");
 
         let text = InMemoryProteinText::from_string(&raw);
-        let original = BitVecSuffixToProtein::new(&text);
-
         let mut buf = Vec::new();
-        buf.push(2u8);
-        write_bitvec_mapping(&original, &mut buf).unwrap();
+        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
 
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
+        let original = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
             assert_eq!(
                 original.suffix_to_protein(i),
@@ -356,13 +367,12 @@ mod tests {
         raw.push('$');
 
         let text = InMemoryProteinText::from_string(&raw);
-        let original = BitVecSuffixToProtein::new(&text);
-
-        let mut buf = vec![2u8];
-        write_bitvec_mapping(&original, &mut buf).unwrap();
+        let mut buf = Vec::new();
+        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
         let tmp = write_to_tempfile(&buf);
         let mmap_idx = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
+        let original = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
             assert_eq!(
                 original.suffix_to_protein(i),
@@ -378,8 +388,7 @@ mod tests {
     fn test_search_mmap_bitvec() {
         let text = build_text();
         let mut buf = Vec::new();
-        buf.push(2u8);
-        write_bitvec_mapping(&BitVecSuffixToProtein::new(&text), &mut buf).unwrap();
+        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
         let tmp = write_to_tempfile(&buf);
         let index = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 

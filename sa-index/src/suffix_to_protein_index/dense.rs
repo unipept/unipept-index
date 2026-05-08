@@ -4,7 +4,7 @@ use std::error::Error;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
-use crate::Nullable;
+use crate::{Nullable, WriteBinary};
 use super::SuffixToProteinIndex;
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
@@ -100,13 +100,15 @@ impl DenseSuffixToProtein {
     }
 }
 
-pub(super) fn write_dense_mapping<W: Write>(mapping: &DenseSuffixToProtein, writer: &mut W) -> Result<(), Box<dyn Error>> {
-    let count = mapping.mapping.len() as u64;
-    writer.write_all(&count.to_le_bytes())?;
-    for &val in &mapping.mapping {
-        writer.write_all(&val.to_le_bytes())?;
+impl WriteBinary for DenseSuffixToProtein {
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        writer.write_all(&[0u8])?;
+        writer.write_all(&(self.mapping.len() as u64).to_le_bytes())?;
+        for &val in &self.mapping {
+            writer.write_all(&val.to_le_bytes())?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixToProtein, Box<dyn Error>> {
@@ -122,6 +124,15 @@ pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixT
     Ok(DenseSuffixToProtein { mapping })
 }
 
+#[cfg(feature = "mmap")]
+pub(super) fn read_dense_mmap(mmap: Mmap) -> Result<MmapDenseSuffixToProtein, Box<dyn Error>> {
+    if mmap.len() < 9 {
+        return Err("Dense mapping file is truncated: missing count header".into());
+    }
+    let _count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
+    Ok(MmapDenseSuffixToProtein { mmap, data_offset: 9 })
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -129,15 +140,15 @@ mod tests {
     use std::io::Write as IoWrite;
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::{InMemoryProteinText, ProteinTextBackend};
+    use text_compression::InMemoryProteinText;
 
-    use crate::Nullable;
+    use crate::{Nullable, WriteBinary};
     #[cfg(feature = "mmap")]
     use crate::ReadBinaryMmap;
     use crate::suffix_to_protein_index::SuffixToProteinIndex;
     #[cfg(feature = "mmap")]
     use crate::suffix_to_protein_index::SuffixToProteinMapping;
-    use super::{DenseSuffixToProtein, write_dense_mapping, read_dense_mapping};
+    use super::{DenseSuffixToProtein, read_dense_mapping};
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -178,27 +189,25 @@ mod tests {
     #[test]
     fn test_dense_roundtrip() {
         let text = build_text();
-        let original = DenseSuffixToProtein::new(&text);
         let mut buf = Vec::new();
-        write_dense_mapping(&original, &mut buf).unwrap();
-        let mut cursor = Cursor::new(buf);
+        DenseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
+        assert_eq!(buf[0], 0u8);
+        let mut cursor = Cursor::new(&buf[1..]);
         let restored = read_dense_mapping(&mut cursor).unwrap();
-        assert_eq!(original, restored);
+        assert_eq!(DenseSuffixToProtein::new(&text), restored);
     }
 
     #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_dense_roundtrip() {
         let text = build_text();
-        let original = DenseSuffixToProtein::new(&text);
-
         let mut buf = Vec::new();
-        buf.push(0u8); // type byte
-        write_dense_mapping(&original, &mut buf).unwrap();
+        DenseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
 
         let tmp = write_to_tempfile(&buf);
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
+        let original = DenseSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
             assert_eq!(
                 original.suffix_to_protein(i),
@@ -214,8 +223,7 @@ mod tests {
     fn test_search_mmap_dense() {
         let text = build_text();
         let mut buf = Vec::new();
-        buf.push(0u8);
-        write_dense_mapping(&DenseSuffixToProtein::new(&text), &mut buf).unwrap();
+        DenseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
         let tmp = write_to_tempfile(&buf);
         let index = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
