@@ -1,7 +1,7 @@
 // Non-mmap build: in-memory protein text backed by a BitArray.
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 
 use bitarray::{Binary, BitArray, data_to_writer};
 
@@ -93,10 +93,10 @@ impl ReadBinary for InMemoryProteinText {
         let text_length = u64::from_le_bytes(buf8) as usize;
 
         let n_bytes = bit_array_byte_size(text_length);
-        let mut raw = vec![0u8; n_bytes];
-        reader.read_exact(&mut raw).map_err(|_| "Could not parse BitArray data from binary file")?;
         let mut bit_array = BitArray::with_capacity(text_length, 5);
-        bit_array.read_binary(&mut std::io::Cursor::new(raw))
+        let mut limited = <&mut R as Read>::take(reader, n_bytes as u64);
+        bit_array
+            .read_binary(&mut limited)
             .map_err(|_| "Could not parse BitArray data from binary file")?;
 
         Ok(Self::new(bit_array))
