@@ -12,7 +12,7 @@ name = "generate-peptides"
 path = "src/generate_peptides.rs"
 
 [features]
-default = ["mmap"]
+default = []
 mmap = ["sa-index/mmap", "sa-server/mmap"]
 
 [dependencies]
