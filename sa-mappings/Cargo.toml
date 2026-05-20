@@ -11,5 +11,5 @@ tempdir = "0.3.7"
 [dependencies]
 fa-compression = { path = "../fa-compression" }
 bytelines = "2.5.0"
-bitarray = { path = "../bitarray" }
 text-compression = { path = "../text-compression" }
+memmap2 = "0.9"

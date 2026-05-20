@@ -1,10 +1,7 @@
 use std::{
     error::Error,
-    fs::File,
-    io::{BufReader, Read},
     sync::Arc
 };
-
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -12,25 +9,30 @@ use axum::{
     routing::post
 };
 use clap::Parser;
-use sa_compression::load_compressed_suffix_array;
 use sa_index::{
-    SuffixArray,
-    binary::load_suffix_array,
     peptide_search::{SearchResult, search_all_peptides},
-    sa_searcher::SparseSearcher
+    sa_searcher::Searcher,
+    suffix_to_protein_index::SuffixToProteinMapping
 };
-use sa_mappings::proteins::Proteins;
 use serde::Deserialize;
+use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// File with the proteins used to build the suffix tree. All the proteins are expected to be
-    /// concatenated using a `#`.
+    /// Path to the database file. This should point to the binary proteins file (.proteins.bin)
     #[arg(short, long)]
     database_file: String,
     #[arg(short, long)]
-    index_file: String
+    index_file: String,
+    /// Path to the prebuilt suffix-to-protein mapping binary file.
+    #[arg(long)]
+    mapping_file: String,
+    /// Use memory-mapped I/O to load the suffix array and ProteinText. When set, --database-file
+    /// must point to a binary proteins file (.proteins.bin). Makes startup near-instant by letting
+    /// the OS page in data on demand, at the cost of slower initial queries while pages are loaded.
+    #[arg(short, long, default_value_t = false)]
+    mmap: bool
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -82,7 +84,7 @@ async fn main() {
 ///
 /// Returns the search results from the index as a JSON
 async fn search(
-    State(searcher): State<Arc<SparseSearcher>>,
+    State(searcher): State<Arc<Searcher>>,
     data: Json<InputData>
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
     let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);
@@ -103,22 +105,27 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file } = args;
+    let Arguments { database_file, index_file, mmap, mapping_file } = args;
 
     eprintln!();
-    eprintln!("📋 Started loading the suffix array...");
-    let suffix_array = load_suffix_array_file(&index_file)?;
-    eprintln!("✅ Successfully loaded the suffix array!");
+    eprintln!("Started loading the suffix array...");
+    let suffix_array = load_suffix_array_file(&index_file, mmap)?;
+    eprintln!("Successfully loaded the suffix array!");
     eprintln!("\tAmount of items: {}", suffix_array.len());
     eprintln!("\tAmount of bits per item: {}", suffix_array.bits_per_value());
     eprintln!("\tSample rate: {}", suffix_array.sample_rate());
 
     eprintln!();
-    eprintln!("📋 Started loading the proteins...");
-    let proteins = Proteins::try_from_database_file(&database_file)?;
-    eprintln!("✅ Successfully loaded the proteins!");
+    eprintln!("Started loading the proteins...");
+    let proteins = load_proteins_file(&database_file, mmap)?;
+    eprintln!("Successfully loaded the proteins!");
 
-    let searcher = Arc::new(SparseSearcher::new(suffix_array, proteins));
+    eprintln!();
+    eprintln!("Started loading the suffix-to-protein mapping...");
+    let SuffixToProteinMapping(mapping) = load_mapping_file(&mapping_file, mmap)?;
+    eprintln!("Successfully loaded the suffix-to-protein mapping!");
+
+    let searcher = Arc::new(Searcher::new(suffix_array, proteins, mapping));
 
     // build our application with a route
     let app = Router::new()
@@ -133,25 +140,4 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-fn load_suffix_array_file(file: &str) -> Result<SuffixArray, Box<dyn Error>> {
-    // Open the suffix array file
-    let mut sa_file = File::open(file)?;
-
-    // Create a buffer reader for the file
-    let mut reader = BufReader::new(&mut sa_file);
-
-    // Read the bits per value from the binary file (1 byte)
-    let mut bits_per_value_buffer = [0_u8; 1];
-    reader
-        .read_exact(&mut bits_per_value_buffer)
-        .map_err(|_| "Could not read the flags from the binary file")?;
-    let bits_per_value = bits_per_value_buffer[0];
-
-    if bits_per_value == 64 {
-        load_suffix_array(&mut reader)
-    } else {
-        load_compressed_suffix_array(&mut reader, bits_per_value as usize)
-    }
 }

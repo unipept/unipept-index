@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use sa_mappings::proteins::Protein;
+use sa_mappings::proteins::ProteinRef;
 use serde::Serialize;
 
 use crate::sa_searcher::{SearchAllSuffixesResult, Searcher};
@@ -19,11 +19,11 @@ pub struct ProteinInfo {
     pub functional_annotations: String
 }
 
-impl From<&Protein> for ProteinInfo {
-    fn from(protein: &Protein) -> Self {
+impl From<ProteinRef<'_>> for ProteinInfo {
+    fn from(protein: ProteinRef<'_>) -> Self {
         ProteinInfo {
             taxon: protein.taxon_id,
-            uniprot_accession: protein.uniprot_id.clone(),
+            uniprot_accession: protein.uniprot_id.to_string(),
             functional_annotations: protein.get_functional_annotations()
         }
     }
@@ -53,7 +53,7 @@ pub fn search_proteins_for_peptide<'a>(
     cutoff: usize,
     equate_il: bool,
     tryptic: bool
-) -> Option<(bool, Vec<&'a Protein>)> {
+) -> Option<(bool, Vec<ProteinRef<'a>>)> {
     let peptide = peptide.trim_end().to_uppercase();
 
     // words that are shorter than the sample rate are not searchable
@@ -84,7 +84,7 @@ pub fn search_peptide(
 
     Some(SearchResult {
         sequence: peptide.to_string(),
-        proteins: proteins.iter().map(|&protein| protein.into()).collect(),
+        proteins: proteins.into_iter().map(|protein| protein.into()).collect(),
         cutoff_used
     })
 }

@@ -1,17 +1,24 @@
 use std::error::Error;
 
 use clap::{Parser, ValueEnum};
+use sa_index::suffix_to_protein_index::SuffixToProteinMappingStyle;
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
 pub struct Arguments {
     /// File with the proteins used to build the suffix tree. All the proteins are expected to be
-    /// concatenated using a hashtag `#`.
+    /// concatenated using a dash `-`.
     #[arg(short, long)]
     pub database_file: String,
     /// Output location where to store the suffix array
-    #[arg(short, long)]
-    pub output: String,
+    #[arg(long)]
+    pub output_sa: String,
+    /// Output location where to store the proteins binary
+    #[arg(long)]
+    pub output_proteins: String,
+    /// Output location where to store the suffix-to-protein mapping binary
+    #[arg(long)]
+    pub output_mapping: String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
     /// the SA is used)
     #[arg(short, long, default_value_t = 1)]
@@ -21,7 +28,10 @@ pub struct Arguments {
     pub construction_algorithm: SAConstructionAlgorithm,
     /// If the suffix array should be compressed (default value false)
     #[arg(short, long, default_value_t = false)]
-    pub compress_sa: bool
+    pub compress_sa: bool,
+    /// The style of suffix-to-protein mapping to build (default value BitVec)
+    #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::BitVec)]
+    pub mapping_style: SuffixToProteinMappingStyle
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array
@@ -81,6 +91,7 @@ fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static 
         libsais_sparseness -= 1;
     }
     let sample_rate = sparseness_factor / libsais_sparseness;
+
     eprintln!("\tSparseness factor: {}", sparseness_factor);
     eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
     eprintln!("\tSample rate: {}", sample_rate);
@@ -147,20 +158,29 @@ mod tests {
             "sa-builder",
             "--database-file",
             "database.fa",
-            "--output",
+            "--output-sa",
             "output.fa",
+            "--output-proteins",
+            "output.proteins",
             "--sparseness-factor",
             "2",
             "--construction-algorithm",
             "lib-div-suf-sort",
-            "--compress-sa"
+            "--compress-sa",
+            "--output-mapping",
+            "output.mapping",
+            "--mapping-style",
+            "dense"
         ]);
 
         assert_eq!(args.database_file, "database.fa");
-        assert_eq!(args.output, "output.fa");
+        assert_eq!(args.output_sa, "output.fa");
+        assert_eq!(args.output_proteins, "output.proteins");
         assert_eq!(args.sparseness_factor, 2);
         assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);
         assert!(args.compress_sa);
+        assert_eq!(args.output_mapping, "output.mapping".to_string());
+        assert_eq!(args.mapping_style, SuffixToProteinMappingStyle::Dense);
     }
 
     #[test]

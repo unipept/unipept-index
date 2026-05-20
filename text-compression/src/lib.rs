@@ -1,41 +1,54 @@
 use std::{
     collections::HashMap,
     error::Error,
-    io::{BufRead, Write}
+    fs::File,
+    io::{BufRead, Write},
+    path::Path,
+    sync::Arc
 };
 
 use bitarray::{Binary, BitArray, data_to_writer};
+use memmap2::Mmap;
+
+pub mod traits;
+pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
+
+/// The 5-bit-to-char lookup table for mmap-backed ProteinText.
+const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
+
+/// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
+pub fn bit_array_byte_size(text_length: usize) -> usize {
+    let extra = if (text_length * 5).is_multiple_of(64) { 0 } else { 1 };
+    (text_length * 5 / 64 + extra) * 8
+}
 
 /// Structure representing the proteins, stored in a bit array using 5 bits per amino acid.
-pub struct ProteinText {
-    /// Bit array holding the sequence of amino acids
-    bit_array: BitArray,
-    /// Hashmap storing the mapping between the character as `u8` and a 5 bit number.
-    char_to_5bit: HashMap<u8, u8>,
-    /// Vector storing the mapping between the 5 bit number and the character as `u8`.
-    bit5_to_char: Vec<u8>
+pub enum ProteinText {
+    /// In-memory representation using a BitArray.
+    InMemory {
+        bit_array: BitArray,
+        char_to_5bit: HashMap<u8, u8>,
+        bit5_to_char: Vec<u8>,
+    },
+    /// Memory-mapped representation backed by a file.
+    MmapBacked {
+        mmap: Arc<Mmap>,
+        data_offset: usize,
+        len: usize,
+    },
 }
 
 impl ProteinText {
     /// Creates the hashmap storing the mappings between the characters as `u8` and 5 bit numbers.
-    ///
-    /// # Returns
-    ///
-    /// Returns the hashmap
     fn create_char_to_5bit_hashmap() -> HashMap<u8, u8> {
         let mut hashmap = HashMap::<u8, u8>::new();
         for (i, c) in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars().enumerate() {
             hashmap.insert(c as u8, i as u8);
         }
-
         hashmap
     }
 
     /// Creates the vector storing the mappings between the 5 bit numbers and the characters as `u8`.
-    ///
-    /// # Returns
-    ///
-    /// Returns the vector
     fn create_bit5_to_char() -> Vec<u8> {
         let mut vec = Vec::<u8>::new();
         for c in "ABCDEFGHIKLMNOPQRSTUVWXYZ-$".chars() {
@@ -45,13 +58,6 @@ impl ProteinText {
     }
 
     /// Creates the compressed text from a string.
-    ///
-    /// # Arguments
-    /// * `input_string` - The text (proteins) in string format
-    ///
-    /// # Returns
-    ///
-    /// An instance of `ProteinText`
     pub fn from_string(input_string: &str) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
@@ -63,17 +69,10 @@ impl ProteinText {
             bit_array.set(i, char_5bit as u64);
         }
 
-        Self { bit_array, char_to_5bit, bit5_to_char }
+        ProteinText::InMemory { bit_array, char_to_5bit, bit5_to_char }
     }
 
     /// Creates the compressed text from a vector.
-    ///
-    /// # Arguments
-    /// * `input_vec` - The text (proteins) in a vector with elements of type `u8` representing the amino acids.
-    ///
-    /// # Returns
-    ///
-    /// An instance of `ProteinText`
     pub fn from_vec(input_vec: &[u8]) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
@@ -85,106 +84,184 @@ impl ProteinText {
             bit_array.set(i, char_5bit as u64);
         }
 
-        Self { bit_array, char_to_5bit, bit5_to_char }
+        ProteinText::InMemory { bit_array, char_to_5bit, bit5_to_char }
     }
 
     /// Creates the compressed text from a bit array.
-    ///
-    /// # Arguments
-    /// * `bit_array` - The text (proteins) in a bit array using 5 bits for each amino acid.
-    ///
-    /// # Returns
-    ///
-    /// An instance of `ProteinText`
     pub fn new(bit_array: BitArray) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
-        Self { bit_array, char_to_5bit, bit5_to_char }
+        ProteinText::InMemory { bit_array, char_to_5bit, bit5_to_char }
     }
 
     /// Creates an instance of `ProteinText` with a given capacity.
-    ///
-    /// # Arguments
-    /// * `capacity` - The amount of characters in the text.
-    ///
-    /// # Returns
-    ///
-    /// An instance of `ProteinText`
     pub fn with_capacity(capacity: usize) -> Self {
         Self::new(BitArray::with_capacity(capacity, 5))
     }
 
-    /// Search the character at a given position in the compressed text.
-    ///
-    /// # Arguments
-    /// * `index` - The index of the character to search.
-    ///
-    /// # Returns
-    ///
-    /// the character at position `index` as `u8`.
-    pub fn get(&self, index: usize) -> u8 {
-        let char_5bit = self.bit_array.get(index) as usize;
-        self.bit5_to_char[char_5bit]
+    /// Creates a memory-mapped ProteinText backed by an existing mmap.
+    pub fn from_mmap(mmap: Arc<Mmap>, data_offset: usize, len: usize) -> Self {
+        ProteinText::MmapBacked { mmap, data_offset, len }
     }
 
-    /// Set the character at a given index.
-    ///
-    /// # Arguments
-    /// * `index` - The index of the character to change.
-    /// * `value` - The character to fill in as `u8`.
+    /// Extract a 5-bit value from the mmap and convert to a character.
+    fn get_mmap(mmap: &Mmap, data_offset: usize, index: usize) -> u8 {
+        const BITS: usize = 5;
+        const MASK: u64 = (1u64 << BITS) - 1;
+
+        let bit_offset = index * BITS;
+        let start_block = bit_offset / 64;
+        let start_bit = bit_offset % 64;
+        let byte_off = data_offset + start_block * 8;
+
+        let lo = u64::from_le_bytes(mmap[byte_off..byte_off + 8].try_into().unwrap());
+
+        let raw = if start_bit + BITS <= 64 {
+            (lo >> (64 - start_bit - BITS)) & MASK
+        } else {
+            let end_bit = (index + 1) * BITS % 64;
+            let hi = u64::from_le_bytes(mmap[byte_off + 8..byte_off + 16].try_into().unwrap());
+            ((lo << end_bit) | (hi >> (64 - end_bit))) & MASK
+        };
+
+        BIT5_TO_CHAR[raw as usize]
+    }
+
+    /// Search the character at a given position in the compressed text.
+    pub fn get(&self, index: usize) -> u8 {
+        match self {
+            ProteinText::InMemory { bit_array, bit5_to_char, .. } => {
+                let char_5bit = bit_array.get(index) as usize;
+                bit5_to_char[char_5bit]
+            }
+            ProteinText::MmapBacked { mmap, data_offset, .. } => {
+                Self::get_mmap(mmap, *data_offset, index)
+            }
+        }
+    }
+
+    /// Set the character at a given index. Only valid for InMemory variant.
     pub fn set(&mut self, index: usize, value: u8) {
-        let char_5bit: u8 = *self
-            .char_to_5bit
-            .get(&value)
-            .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
-        self.bit_array.set(index, char_5bit as u64);
+        match self {
+            ProteinText::InMemory { bit_array, char_to_5bit, .. } => {
+                let char_5bit: u8 = *char_to_5bit
+                    .get(&value)
+                    .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
+                bit_array.set(index, char_5bit as u64);
+            }
+            ProteinText::MmapBacked { .. } => {
+                panic!("set() is not supported on MmapBacked ProteinText");
+            }
+        }
     }
 
     /// Queries the length of the text.
-    ///
-    /// # Returns
-    ///
-    /// the length of the text
     pub fn len(&self) -> usize {
-        self.bit_array.len()
+        match self {
+            ProteinText::InMemory { bit_array, .. } => bit_array.len(),
+            ProteinText::MmapBacked { len, .. } => *len,
+        }
     }
 
     /// Check if the text is empty (length 0).
-    ///
-    /// # Returns
-    ///
-    /// true if the the text has length 0, false otherwise.
     pub fn is_empty(&self) -> bool {
-        self.bit_array.len() == 0
+        self.len() == 0
     }
 
-    /// Clears the `BitArray`, setting all bits to 0.
+    /// Clears the `BitArray`, setting all bits to 0. Only valid for InMemory variant.
     pub fn clear(&mut self) {
-        self.bit_array.clear()
+        match self {
+            ProteinText::InMemory { bit_array, .. } => bit_array.clear(),
+            ProteinText::MmapBacked { .. } => {
+                panic!("clear() is not supported on MmapBacked ProteinText");
+            }
+        }
     }
 
     /// Get an iterator over the characters of the text.
-    ///
-    /// # Returns
-    ///
-    /// A `ProteinTextIterator`, which can iterate over the characters of the text.
     pub fn iter(&self) -> ProteinTextIterator<'_> {
         ProteinTextIterator { protein_text: self, index: 0 }
     }
 
-    /// Get a slice of the text
-    ///
-    /// # Returns
-    ///
-    /// A `ProteinTextSlice` representing a slice of the text.
+    /// Get a slice of the text.
     pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_> {
         ProteinTextSlice::new(self, start, end)
+    }
+
+}
+
+impl WriteBinary for ProteinText {
+    /// Writes this `ProteinText` to a writer in the binary proteins format.
+    ///
+    /// Format:
+    /// - 8 bytes: text_length (u64 le)
+    /// - N bytes: BitArray data where N = ceil(text_length * 5 / 64) * 8
+    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        match self {
+            ProteinText::InMemory { bit_array, .. } => {
+                let text_length = bit_array.len() as u64;
+                writer.write_all(&text_length.to_le_bytes())?;
+                bit_array.write_binary(writer)?;
+            }
+            ProteinText::MmapBacked { mmap, data_offset, len } => {
+                let text_length = len as u64;
+                writer.write_all(&text_length.to_le_bytes())?;
+                let n_bytes = bit_array_byte_size(len);
+                writer.write_all(&mmap[data_offset..data_offset + n_bytes])?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ReadBinary for ProteinText {
+    /// Reads a `ProteinText` from a reader in the binary proteins format.
+    fn read_binary<R: BufRead>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
+        let mut buf8 = [0u8; 8];
+        reader.read_exact(&mut buf8).map_err(|_| "Could not read text_length from binary file")?;
+        let text_length = u64::from_le_bytes(buf8) as usize;
+
+        let n_bytes = bit_array_byte_size(text_length);
+        let mut data_buf = vec![0u8; n_bytes];
+        reader.read_exact(&mut data_buf).map_err(|_| "Could not read BitArray data from binary file")?;
+
+        let mut bit_array = BitArray::with_capacity(text_length, 5);
+        bit_array
+            .read_binary(data_buf.as_slice())
+            .map_err(|_| "Could not parse BitArray data from binary file")?;
+
+        Ok(ProteinText::new(bit_array))
+    }
+}
+
+impl ReadBinaryMmap for ProteinText {
+    fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let f = File::open(path)?;
+        let mmap = Arc::new(unsafe { Mmap::map(&f)? });
+
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Random)?;
+
+        // Ensure the file is large enough to contain the 8-byte header.
+        if mmap.len() < 8 {
+            return Err("File is too small to contain ProteinText header (8 bytes required)".into());
+        }
+
+        let text_length = u64::from_le_bytes(mmap[0..8].try_into()
+            .map_err(|_| "Failed to parse ProteinText header")?) as usize;
+
+        // Ensure the file is large enough to contain the BitArray data for the declared text length.
+        if mmap.len() < 8 + bit_array_byte_size(text_length) {
+            return Err("File is too small to contain ProteinText BitArray data for declared length".into());
+        }
+
+        Ok(ProteinText::from_mmap(mmap, 8, text_length))
     }
 }
 
 /// Structure representing a slice of a `ProteinText`.
 pub struct ProteinTextSlice<'a> {
-    /// The `Proteintext` of whih to take a slice.
+    /// The `Proteintext` of which to take a slice.
     text: &'a ProteinText,
     /// The start of the slice.
     start: usize, // included
@@ -194,36 +271,16 @@ pub struct ProteinTextSlice<'a> {
 
 impl<'a> ProteinTextSlice<'a> {
     /// Creates an instance of `ProteintextSlice`, given the text and boundaries.
-    ///
-    /// # Arguments
-    /// * `text` - The `Proteintext` representing the text of proteins with 5 bits per amino acid.
-    /// * `start` - The start of the slice.
-    /// * `end` - The end of the slice.
-    ///
-    /// # Returns
-    ///
-    /// An instance of `ProteinTextSlice`
     pub fn new(text: &'a ProteinText, start: usize, end: usize) -> ProteinTextSlice<'a> {
         Self { text, start, end }
     }
 
     /// Get a character (amino acid) in the slice.
-    ///
-    /// # Arguments
-    /// * `index` - The index in the slice of the character to get.
-    ///
-    /// # Returns
-    ///
-    /// The character as `u8`.
     pub fn get(&self, index: usize) -> u8 {
         self.text.get(self.start + index)
     }
 
     /// Get the length of the slice.
-    ///
-    /// # Returns
-    ///
-    /// The length of the slice.
     pub fn len(&self) -> usize {
         self.end - self.start
     }
@@ -234,14 +291,6 @@ impl<'a> ProteinTextSlice<'a> {
 
     /// Checks if the slice and a given array of `u8` are equal.
     /// I and L can be equated.
-    ///
-    /// # Arguments
-    /// * `other` - the array of `u8` to compare the slice with.
-    /// * `equate_il` - true if I and L need to be equated, false otherwise.
-    ///
-    /// # Returns
-    ///
-    /// True if the slice is equal to the given array, false otherwise.
     #[inline]
     pub fn equals_slice(&self, other: &[u8], equate_il: bool) -> bool {
         if equate_il {
@@ -259,15 +308,6 @@ impl<'a> ProteinTextSlice<'a> {
     }
 
     /// Check if the slice and a given array of `u8` are equal on the I and L positions.
-    ///
-    /// # Arguments
-    /// * `skip` - The amount of positions this slice skipped, this has an influence on the I and L positions.
-    /// * `il_locations` - The positions where I and L occur.
-    /// * `search_string` -  An array of `u8` to compare the slice with.
-    ///
-    /// # Returns
-    ///
-    /// True if the slice and `search_string` have the same contents on the I and L positions, false otherwise.
     pub fn check_il_locations(&self, skip: usize, il_locations: &[usize], search_string: &[u8]) -> bool {
         for &il_location in il_locations {
             let index = il_location - skip;
@@ -279,22 +319,18 @@ impl<'a> ProteinTextSlice<'a> {
     }
 
     /// Get an iterator over the slice.
-    ///
-    /// # Returns
-    ///
-    /// An iterator over the slice.
     pub fn iter(&self) -> ProteinTextSliceIterator<'_> {
         ProteinTextSliceIterator { text_slice: self, index: 0 }
     }
 }
 
-/// Structure representing an iterator over a `ProteinText` instance, iterating the characters of the text.
+/// Structure representing an iterator over a `ProteinText` instance.
 pub struct ProteinTextIterator<'a> {
     protein_text: &'a ProteinText,
     index: usize
 }
 
-/// Structure representing an iterator over a `ProteintextSlice` instance, iterating the characters of the slice.
+/// Structure representing an iterator over a `ProteintextSlice` instance.
 pub struct ProteinTextSliceIterator<'a> {
     text_slice: &'a ProteinTextSlice<'a>,
     index: usize
@@ -303,11 +339,6 @@ pub struct ProteinTextSliceIterator<'a> {
 impl Iterator for ProteinTextSliceIterator<'_> {
     type Item = u8;
 
-    /// Get the next character in the `ProteinTextSlice`.
-    ///
-    /// # Returns
-    ///
-    /// The next character in the slice.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.text_slice.len() {
             return None;
@@ -321,11 +352,6 @@ impl Iterator for ProteinTextSliceIterator<'_> {
 impl Iterator for ProteinTextIterator<'_> {
     type Item = u8;
 
-    /// Get the next character in the `ProteinText`.
-    ///
-    /// # Returns
-    ///
-    /// The next character in the text.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.protein_text.len() {
             return None;
@@ -337,15 +363,6 @@ impl Iterator for ProteinTextIterator<'_> {
 }
 
 /// Writes the compressed text to a writer.
-///
-/// # Arguments
-///
-/// * `text` - The text to be compressed.
-/// * `writer` - The writer to which the compressed text will be written.
-///
-/// # Errors
-///
-/// Returns an error if writing to the writer fails.
 pub fn dump_compressed_text(text: Vec<u8>, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let bits_per_value = 5;
 
@@ -369,14 +386,6 @@ pub fn dump_compressed_text(text: Vec<u8>, writer: &mut impl Write) -> Result<()
 }
 
 /// Load the compressed text from a reader.
-///
-/// # Arguments
-///
-/// * `reader` - The reader from which the compressed text will be read.
-///
-/// # Errors
-///
-/// Returns an error if reading from the reader fails.
 pub fn load_compressed_text(reader: &mut impl BufRead) -> Result<ProteinText, Box<dyn Error>> {
     let bits_per_value: usize = 5;
     // Read the size of the text from the binary file (8 bytes)
@@ -630,5 +639,73 @@ mod tests {
         assert_eq!(reader.fill_buf().unwrap(), &right_buffer);
         let mut buffer = [0_u8; 1];
         assert!(reader.read(&mut buffer).is_err());
+    }
+
+    #[test]
+    fn test_write_and_read_binary() {
+        let input = "ACACA-CAC$";
+        let text = ProteinText::from_string(input);
+
+        let mut buf: Vec<u8> = Vec::new();
+        text.write_binary(&mut buf).unwrap();
+
+        let mut reader = std::io::BufReader::new(buf.as_slice());
+        let loaded = ProteinText::read_binary(&mut reader).unwrap();
+
+        for (i, c) in input.chars().enumerate() {
+            assert_eq!(loaded.get(i), c as u8);
+        }
+        assert_eq!(loaded.len(), input.len());
+    }
+
+    #[test]
+    fn test_mmap_roundtrip() {
+        use std::fs::File;
+        use memmap2::Mmap;
+
+        let input = "ACACA-CAC$MLPGLALLLL$";
+        let text = ProteinText::from_string(input);
+
+        // Write to a temp file
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        text.write_binary(tmp.as_file_mut()).unwrap();
+        tmp.as_file_mut().flush().unwrap();
+
+        // Mmap the file
+        let f = File::open(tmp.path()).unwrap();
+        let mmap = Arc::new(unsafe { Mmap::map(&f).unwrap() });
+
+        let text_length = u64::from_le_bytes(mmap[0..8].try_into().unwrap()) as usize;
+        let mmap_text = ProteinText::from_mmap(Arc::clone(&mmap), 8, text_length);
+
+        assert_eq!(mmap_text.len(), input.len());
+        for (i, c) in input.chars().enumerate() {
+            assert_eq!(mmap_text.get(i), c as u8, "mismatch at index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mmap_block_boundary() {
+        // 13 characters: 13*5=65 bits, crosses a u64 boundary at index 12 (bit 60..65)
+        let input = "ABCDEFGHIKLMN";
+        let text = ProteinText::from_string(input);
+
+        let mut buf: Vec<u8> = Vec::new();
+        text.write_binary(&mut buf).unwrap();
+
+        let mmap = Arc::new(unsafe {
+            let mut tmp = tempfile::NamedTempFile::new().unwrap();
+            tmp.write_all(&buf).unwrap();
+            tmp.flush().unwrap();
+            let f = std::fs::File::open(tmp.path()).unwrap();
+            Mmap::map(&f).unwrap()
+        });
+
+        let text_length = u64::from_le_bytes(mmap[0..8].try_into().unwrap()) as usize;
+        let mmap_text = ProteinText::from_mmap(Arc::clone(&mmap), 8, text_length);
+
+        for (i, c) in input.chars().enumerate() {
+            assert_eq!(mmap_text.get(i), c as u8, "boundary mismatch at index {}", i);
+        }
     }
 }
