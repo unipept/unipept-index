@@ -82,9 +82,9 @@ fn test_suffix_array_output() {
 
     let sa = SuffixArray::read_binary_mmap(&out_sa).unwrap();
 
-    assert_eq!(sa.sample_rate(), 1,           "expected sparseness factor 1");
-    assert_eq!(sa.bits_per_value(), 64,        "expected uncompressed (64 bits per value)");
-    assert_eq!(sa.len(), TEXT_LENGTH,          "SA length must equal text length");
+    assert_eq!(sa.sample_rate(), 1, "expected sparseness factor 1");
+    assert_eq!(sa.bits_per_value(), 64, "expected uncompressed (64 bits per value)");
+    assert_eq!(sa.len(), TEXT_LENGTH, "SA length must equal text length");
 
     // Every value must be a valid text position.
     for i in 0..sa.len() {
