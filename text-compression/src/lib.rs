@@ -168,7 +168,7 @@ impl ProteinText {
     /// # Returns
     ///
     /// A `ProteinTextIterator`, which can iterate over the characters of the text.
-    pub fn iter(&self) -> ProteinTextIterator {
+    pub fn iter(&self) -> ProteinTextIterator<'_> {
         ProteinTextIterator { protein_text: self, index: 0 }
     }
 
@@ -176,8 +176,8 @@ impl ProteinText {
     ///
     /// # Returns
     ///
-    /// An `ProteinTextSlice` representing a slice of the text.
-    pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice {
+    /// A `ProteinTextSlice` representing a slice of the text.
+    pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_> {
         ProteinTextSlice::new(self, start, end)
     }
 }
@@ -283,7 +283,7 @@ impl<'a> ProteinTextSlice<'a> {
     /// # Returns
     ///
     /// An iterator over the slice.
-    pub fn iter(&self) -> ProteinTextSliceIterator {
+    pub fn iter(&self) -> ProteinTextSliceIterator<'_> {
         ProteinTextSliceIterator { text_slice: self, index: 0 }
     }
 }
