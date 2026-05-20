@@ -1,17 +1,24 @@
 use std::error::Error;
 
 use clap::{Parser, ValueEnum};
+use sa_index::suffix_to_protein_index::SuffixToProteinMappingStyle;
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
 pub struct Arguments {
     /// File with the proteins used to build the suffix tree. All the proteins are expected to be
-    /// concatenated using a hashtag `#`.
+    /// concatenated using a dash `-`.
     #[arg(short, long)]
     pub database_file: String,
     /// Output location where to store the suffix array
-    #[arg(short, long)]
-    pub output: String,
+    #[arg(long)]
+    pub output_sa: String,
+    /// Output location where to store the proteins binary
+    #[arg(long)]
+    pub output_proteins: String,
+    /// Output location where to store the suffix-to-protein mapping binary
+    #[arg(long)]
+    pub output_mapping: String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
     /// the SA is used)
     #[arg(short, long, default_value_t = 1)]
@@ -19,9 +26,12 @@ pub struct Arguments {
     /// The algorithm used to construct the suffix array (default value LibSais)
     #[arg(short('a'), long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
     pub construction_algorithm: SAConstructionAlgorithm,
-    /// If the suffix array should be compressed (default value true)
+    /// If the suffix array should be compressed (default value false)
     #[arg(short, long, default_value_t = false)]
-    pub compress_sa: bool
+    pub compress_sa: bool,
+    /// The style of suffix-to-protein mapping to build (default value BitVec)
+    #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::BitVec)]
+    pub mapping_style: SuffixToProteinMappingStyle
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array
@@ -46,22 +56,51 @@ pub enum SAConstructionAlgorithm {
 ///
 /// The errors that occurred during the building of the suffix array itself
 pub fn build_ssa(
-    text: &mut Vec<u8>,
+    mut text: Vec<u8>,
     construction_algorithm: &SAConstructionAlgorithm,
     sparseness_factor: u8
 ) -> Result<Vec<i64>, Box<dyn Error>> {
     // translate all L's to a I
-    translate_l_to_i(text);
+    translate_l_to_i(&mut text);
 
     // Build the suffix array using the selected algorithm
     let mut sa = match construction_algorithm {
-        SAConstructionAlgorithm::LibSais => libsais64_rs::sais64(text),
-        SAConstructionAlgorithm::LibDivSufSort => libdivsufsort_rs::divsufsort64(text)
-    }
-    .ok_or("Building suffix array failed")?;
+        SAConstructionAlgorithm::LibSais => libsais64(text, sparseness_factor)?,
+        SAConstructionAlgorithm::LibDivSufSort => {
+            libdivsufsort_rs::divsufsort64(&text).ok_or("Building suffix array failed")?
+        }
+    };
 
     // make the SA sparse and decrease the vector size if we have sampling (sampling_rate > 1)
-    sample_sa(&mut sa, sparseness_factor);
+    if *construction_algorithm == SAConstructionAlgorithm::LibDivSufSort {
+        sample_sa(&mut sa, sparseness_factor);
+    }
+
+    Ok(sa)
+}
+
+// Max sparseness for libsais because it creates a bucket for each element of the alphabet (2 ^ (sparseness * bits_per_char) buckets).
+const MAX_SPARSENESS: usize = 5;
+fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+    let sparseness_factor = sparseness_factor as usize;
+
+    // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
+    // max 28 out of 32 bits used, because a bucket is created for every element of the alphabet 8 * 2^28).
+    let mut libsais_sparseness = MAX_SPARSENESS;
+    while !sparseness_factor.is_multiple_of(libsais_sparseness) {
+        libsais_sparseness -= 1;
+    }
+    let sample_rate = sparseness_factor / libsais_sparseness;
+
+    eprintln!("\tSparseness factor: {}", sparseness_factor);
+    eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
+    eprintln!("\tSample rate: {}", sample_rate);
+
+    let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
+
+    if sample_rate > 1 {
+        sample_sa(&mut sa, sample_rate as u8);
+    }
 
     Ok(sa)
 }
@@ -115,24 +154,33 @@ mod tests {
 
     #[test]
     fn test_arguments() {
-        let args = Arguments::parse_from(&[
+        let args = Arguments::parse_from([
             "sa-builder",
             "--database-file",
             "database.fa",
-            "--output",
+            "--output-sa",
             "output.fa",
+            "--output-proteins",
+            "output.proteins",
             "--sparseness-factor",
             "2",
             "--construction-algorithm",
             "lib-div-suf-sort",
-            "--compress-sa"
+            "--compress-sa",
+            "--output-mapping",
+            "output.mapping",
+            "--mapping-style",
+            "dense"
         ]);
 
         assert_eq!(args.database_file, "database.fa");
-        assert_eq!(args.output, "output.fa");
+        assert_eq!(args.output_sa, "output.fa");
+        assert_eq!(args.output_proteins, "output.proteins");
         assert_eq!(args.sparseness_factor, 2);
         assert_eq!(args.construction_algorithm, SAConstructionAlgorithm::LibDivSufSort);
-        assert_eq!(args.compress_sa, true);
+        assert!(args.compress_sa);
+        assert_eq!(args.output_mapping, "output.mapping".to_string());
+        assert_eq!(args.mapping_style, SuffixToProteinMappingStyle::Dense);
     }
 
     #[test]
@@ -146,43 +194,43 @@ mod tests {
 
     #[test]
     fn test_build_ssa_libsais() {
-        let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
+        let text = b"ABRACADABRA$".to_vec();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
         assert_eq!(sa, vec![11, 10, 7, 0, 3, 5, 8, 1, 4, 6, 9, 2]);
     }
 
     #[test]
     fn test_build_ssa_libsais_empty() {
-        let mut text = b"".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
+        let text = b"".to_vec();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
         assert_eq!(sa, vec![]);
     }
 
     #[test]
     fn test_build_ssa_libsais_sparse() {
-        let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibSais, 2).unwrap();
+        let text = b"ABRACADABRA$".to_vec();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 2).unwrap();
         assert_eq!(sa, vec![10, 0, 8, 4, 6, 2]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort() {
-        let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
+        let text = b"ABRACADABRA$".to_vec();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
         assert_eq!(sa, vec![11, 10, 7, 0, 3, 5, 8, 1, 4, 6, 9, 2]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort_empty() {
-        let mut text = b"".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
+        let text = b"".to_vec();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
         assert_eq!(sa, vec![]);
     }
 
     #[test]
     fn test_build_ssa_libdivsufsort_sparse() {
-        let mut text = b"ABRACADABRA$".to_vec();
-        let sa = build_ssa(&mut text, &SAConstructionAlgorithm::LibDivSufSort, 2).unwrap();
+        let text = b"ABRACADABRA$".to_vec();
+        let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 2).unwrap();
         assert_eq!(sa, vec![10, 0, 8, 4, 6, 2]);
     }
 

@@ -13,7 +13,7 @@ struct CompileError<'a> {
     exit_code: Option<i32>
 }
 
-impl<'a> Display for CompileError<'a> {
+impl Display for CompileError<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let end_text = if let Some(code) = self.exit_code {
             format!("with exit code {}", code)
@@ -25,7 +25,7 @@ impl<'a> Display for CompileError<'a> {
     }
 }
 
-impl<'a> Error for CompileError<'a> {}
+impl Error for CompileError<'_> {}
 
 /// Handles the exit statuses of the executed bash commands
 ///
@@ -39,8 +39,8 @@ impl<'a> Error for CompileError<'a> {}
 ///
 /// # Errors
 ///
-/// Returns a CompilationError if the command failed
-fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), CompileError> {
+/// Returns a CompileError if the command failed
+fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), CompileError<'_>> {
     match exit_status.success() {
         true => Ok(()),
         false => Err(CompileError { command: name, exit_code: exit_status.code() })
@@ -49,27 +49,27 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
 
 fn main() -> Result<(), Box<dyn Error>> {
     // remove the old libsais folder
-    Command::new("rm").args(["-rf", "libsais"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
+    Command::new("rm").args(["-rf", "libsais-packed"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
 
     // clone the c library
     Command::new("git")
-        .args(["clone", "https://github.com/IlyaGrebnov/libsais.git", "--depth=1"])
+        .args(["clone", "https://github.com/unipept/libsais-packed.git", "libsais-packed", "--depth=1"])
         .status()
-        .expect("Failed to clone the libsais repository");
+        .expect("Failed to clone the libsais-packed repository");
 
     // compile the c library
-    Command::new("rm").args(["libsais/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    Command::new("rm").args(["-f", "libsais-packed/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
     exit_status_to_result(
         "cmake",
-        Command::new("cmake").args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais", "-Blibsais"]).status()?
+        Command::new("cmake").args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais-packed", "-Blibsais-packed"]).status()?
     )?;
-    exit_status_to_result("make", Command::new("make").args(["-C", "libsais"]).status()?)?;
-
-    // link the c libsais library to rust
+    exit_status_to_result("make", Command::new("make").args(["-C", "libsais-packed"]).status()?)?;
+    
+    // link the c libsais-packed library to rust
     let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais").display());
+    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais-packed").display());
     println!("cargo:rustc-link-lib=static=libsais");
-
+    
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Finish the builder and generate the bindings.
         .generate()?;
-
+    
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     let out_path = PathBuf::from(env::var("OUT_DIR")?);
     bindings.write_to_file(out_path.join("bindings.rs"))?;

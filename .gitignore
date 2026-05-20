@@ -2,6 +2,7 @@ target/
 data/
 
 libsais64-rs/libsais
+libsais64-rs/libsais-packed
 
 .DS_Store
 

@@ -192,6 +192,7 @@ mod tests {
         CharacterSet::Semicolon
     ];
 
+    #[allow(clippy::needless_range_loop)]
     #[test]
     fn test_or() {
         for i in 0..CHARACTERS.len() {
@@ -243,7 +244,7 @@ mod tests {
     #[test]
     fn test_clone() {
         let character_set = CharacterSet::Empty;
-        let character_set_clone = character_set.clone();
+        let character_set_clone = character_set;
         assert_eq!(character_set, character_set_clone);
     }
 

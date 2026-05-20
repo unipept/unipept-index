@@ -38,4 +38,4 @@ cd $PBS_O_WORKDIR
 cargo build --release
 
 # execute
-./target/release/sa-builder -d "$prefix"/proteins.tsv -t "$prefix"/taxons.tsv -o "$prefix"/sa_sparse3_compressed.bin -s 3 -a lib-div-suf-sort -c
+./target/release/sa-builder -d "$prefix"/proteins.tsv -o "$prefix"/sa_sparse3_compressed.bin -s 2 -a "lib-sais" -c

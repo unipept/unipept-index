@@ -1,4 +1,4 @@
-use rand::{rngs::ThreadRng, Rng};
+use rand::{Rng, rngs::ThreadRng};
 
 /// Generate a random InterPro annotation.
 pub fn generate_ipr(random: &mut ThreadRng) -> String {
