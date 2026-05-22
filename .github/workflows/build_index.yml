@@ -65,8 +65,7 @@ jobs:
             --output-sa "$prefix/sa_sparse3_compressed.bin" \
             --output-proteins "$prefix/proteins.bin" \
             --output-mapping "$prefix/mappings.bin" \
-            -s 3 -a lib-div-suf-sort -c \
-            --mapping-style BitVec
+            -s 3 -a lib-div-suf-sort -c
 
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
