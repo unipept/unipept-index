@@ -64,13 +64,13 @@ jobs:
             -d "$prefix/proteins.tsv" \
             --output-sa "$prefix/sa_sparse3_compressed.bin" \
             --output-proteins "$prefix/proteins.bin" \
-            --output-mapping "$prefix/mappings.bin" \
+            --output-mapping "$prefix/mapping.bin" \
             -s 3 -a lib-div-suf-sort -c
 
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
         run: |
-          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin" "proteins.bin" "mappings.bin"
+          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin" "proteins.bin" "mapping.bin"
 
       # Create a GitHub release and upload the zip file and individual binary assets
       - name: Upload or Update Release
@@ -80,7 +80,7 @@ jobs:
           files: |
             build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
             build/${{ env.SP_VERSION }}/proteins.bin
-            build/${{ env.SP_VERSION }}/mappings.bin
+            build/${{ env.SP_VERSION }}/mapping.bin
           tag_name: index-${{ env.SP_VERSION }}
           name: Index ${{ env.SP_VERSION }}
           commitish: ${{ github.sha }}
