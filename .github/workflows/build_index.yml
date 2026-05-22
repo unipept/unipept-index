@@ -60,19 +60,28 @@ jobs:
       - name: Run sa-builder
         run: |
           prefix="build/$SP_VERSION"
-          ./target/release/sa-builder -d "$prefix/proteins.tsv" -o "$prefix/sa_sparse3_compressed.bin" -s 3 -a lib-div-suf-sort -c
-          
+          ./target/release/sa-builder \
+            -d "$prefix/proteins.tsv" \
+            --output-sa "$prefix/sa_sparse3_compressed.bin" \
+            --output-proteins "$prefix/proteins.bin" \
+            --output-mapping "$prefix/mappings.bin" \
+            -s 3 -a lib-div-suf-sort -c \
+            --mapping-style BitVec
+
       # Zip the contents of the build/$SP_VERSION directory
       - name: Zip build contents
         run: |
-          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin"
+          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin" "proteins.bin" "mappings.bin"
 
-      # Create a GitHub release and upload the zip file
+      # Create a GitHub release and upload the zip file and individual binary assets
       - name: Upload or Update Release
         id: upload_or_update_release
         uses: softprops/action-gh-release@v1
         with:
-          files: build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
+          files: |
+            build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
+            build/${{ env.SP_VERSION }}/proteins.bin
+            build/${{ env.SP_VERSION }}/mappings.bin
           tag_name: index-${{ env.SP_VERSION }}
           name: Index ${{ env.SP_VERSION }}
           commitish: ${{ github.sha }}
