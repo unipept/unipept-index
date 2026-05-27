@@ -5,7 +5,7 @@ use std::io::{BufRead, Read, Write};
 
 use bitarray::{Binary, BitArray, data_to_writer};
 
-use crate::traits::{WriteBinary, ReadBinary};
+use binary_traits::{ReadBinary, WriteBinary};
 use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
 
 // ── InMemoryProteinText ───────────────────────────────────────────────────────

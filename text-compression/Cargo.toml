@@ -9,6 +9,7 @@ edition = "2021"
 mmap = ["dep:memmap2"]
 
 [dependencies]
+binary-traits = { path = "../binary-traits" }
 bitarray = { path = "../bitarray" }
 prefetch = { path = "../prefetch" }
 memmap2 = { version = "0.9", optional = true }

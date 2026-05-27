@@ -1,5 +1,4 @@
-pub mod traits;
-pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
+pub use binary_traits::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
 pub mod preloaded;
 #[cfg(feature = "mmap")]
