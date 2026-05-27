@@ -26,9 +26,40 @@ pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
 // ── Shared types ──────────────────────────────────────────────────────────────
 
 use fa_compression::algorithm1::decode;
+pub use text_compression::ProteinTextBackend;
 
 pub static SEPARATION_CHARACTER: u8 = b'-';
 pub static TERMINATION_CHARACTER: u8 = b'$';
+
+// ── ProteinsBackend trait ─────────────────────────────────────────────────────
+
+/// Common interface for all proteins backends.
+///
+/// The associated type `Text` lets each backend declare its own concrete text
+/// type (`InMemoryProteinText` or `MmapBackedProteinText`) while keeping a
+/// single, unconditional trait impl per backend — no `#[cfg]` gates needed.
+pub trait ProteinsBackend: Send + Sync {
+    type Text: ProteinTextBackend + Sync;
+    fn text(&self) -> &Self::Text;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn get(&self, index: usize) -> ProteinRef<'_>;
+
+    /// Reads every OS page in the backing store into the page cache.
+    /// Default is a no-op; mmap-backed implementations override this.
+    #[inline]
+    fn touch_all_pages(&self) {}
+
+    /// Non-blocking hardware prefetch for the fixed-table entry at `index`.
+    /// Default is a no-op; backends override when a prefetch is meaningful.
+    #[inline]
+    fn prefetch(&self, _index: usize) {}
+
+    /// Non-blocking hardware prefetch for the string data (UID + FA) at `index`.
+    /// Default is a no-op; mmap-backed implementations override this.
+    #[inline]
+    fn prefetch_strings(&self, _index: usize) {}
+}
 
 pub struct Protein {
     pub uniprot_id: String,

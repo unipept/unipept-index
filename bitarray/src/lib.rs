@@ -199,11 +199,6 @@ impl Iterator for BitArrayRangeIter<'_> {
     type Item = i64;
 
     #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
-    }
-
-    #[inline]
     fn next(&mut self) -> Option<i64> {
         if self.remaining == 0 { return None; }
         self.remaining -= 1;
@@ -231,6 +226,11 @@ impl Iterator for BitArrayRangeIter<'_> {
         }
 
         Some(val as i64)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
     }
 }
 

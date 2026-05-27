@@ -8,6 +8,7 @@ pub use text_compression::{WriteBinary, ReadBinary};
 use text_compression::InMemoryProteinText;
 
 use super::{Protein, ProteinRef, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use super::ProteinsBackend;
 
 // ── InMemoryProteins ──────────────────────────────────────────────────────────
 
@@ -19,26 +20,6 @@ pub struct InMemoryProteins {
 impl InMemoryProteins {
     pub fn new(text: InMemoryProteinText, proteins: Vec<Protein>) -> Self {
         Self { text, proteins }
-    }
-
-    pub fn text(&self) -> &InMemoryProteinText { &self.text }
-    pub fn len(&self) -> usize { self.proteins.len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
-    pub fn touch_all_pages(&self) {}
-
-    #[inline]
-    pub fn prefetch_strings(&self, _index: usize) {}
-
-    #[inline]
-    pub fn prefetch(&self, index: usize) {
-        if index < self.proteins.len() {
-            prefetch::prefetch_read(&self.proteins[index] as *const Protein);
-        }
-    }
-
-    pub fn get(&self, index: usize) -> ProteinRef<'_> {
-        let p = &self.proteins[index];
-        ProteinRef { uniprot_id: &p.uniprot_id, taxon_id: p.taxon_id, functional_annotations: &p.functional_annotations }
     }
 
     // ── TSV loaders (non-mmap only) ───────────────────────────────────────────
@@ -87,6 +68,25 @@ impl InMemoryProteins {
             input_string.push(SEPARATION_CHARACTER.into());
         }
         Ok(input_string)
+    }
+}
+
+impl ProteinsBackend for InMemoryProteins {
+    type Text = InMemoryProteinText;
+
+    fn text(&self) -> &InMemoryProteinText { &self.text }
+    fn len(&self) -> usize { self.proteins.len() }
+
+    fn get(&self, index: usize) -> ProteinRef<'_> {
+        let p = &self.proteins[index];
+        ProteinRef { uniprot_id: &p.uniprot_id, taxon_id: p.taxon_id, functional_annotations: &p.functional_annotations }
+    }
+
+    #[inline]
+    fn prefetch(&self, index: usize) {
+        if index < self.proteins.len() {
+            prefetch::prefetch_read(&self.proteins[index] as *const Protein);
+        }
     }
 }
 

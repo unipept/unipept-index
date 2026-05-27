@@ -1,7 +1,7 @@
 use std::{cmp::min, ops::Deref, sync::atomic::{AtomicU64, Ordering}, time::Instant};
 
-use sa_mappings::proteins::{ProteinRef, Proteins, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::{ProteinText, ProteinTextBackend, ProteinTextSlice};
+use sa_mappings::proteins::{ProteinRef, Proteins, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use text_compression::{ProteinTextBackend, ProteinTextSlice};
 
 use crate::{
     KmerTable, Nullable, array::SuffixArrayBackend,
@@ -61,54 +61,54 @@ impl PartialEq for SearchAllSuffixesResult {
     }
 }
 
-pub struct SparseSearcher<SA: SuffixArrayBackend>(Searcher<SA>);
+pub struct SparseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P>);
 
-impl<SA: SuffixArrayBackend> SparseSearcher<SA> {
-    pub fn new(sa: SA, proteins: Proteins) -> Self {
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> SparseSearcher<SA, P> {
+    pub fn new(sa: SA, proteins: P) -> Self {
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
-impl<SA: SuffixArrayBackend> Deref for SparseSearcher<SA> {
-    type Target = Searcher<SA>;
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for SparseSearcher<SA, P> {
+    type Target = Searcher<SA, P>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct BitVecSearcher<SA: SuffixArrayBackend>(Searcher<SA>);
+pub struct BitVecSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P>);
 
-impl<SA: SuffixArrayBackend> BitVecSearcher<SA> {
-    pub fn new(sa: SA, proteins: Proteins) -> Self {
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> BitVecSearcher<SA, P> {
+    pub fn new(sa: SA, proteins: P) -> Self {
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
-impl<SA: SuffixArrayBackend> Deref for BitVecSearcher<SA> {
-    type Target = Searcher<SA>;
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for BitVecSearcher<SA, P> {
+    type Target = Searcher<SA, P>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct DenseSearcher<SA: SuffixArrayBackend>(Searcher<SA>);
+pub struct DenseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P>);
 
-impl<SA: SuffixArrayBackend> DenseSearcher<SA> {
-    pub fn new(sa: SA, proteins: Proteins) -> Self {
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> DenseSearcher<SA, P> {
+    pub fn new(sa: SA, proteins: P) -> Self {
         let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
-impl<SA: SuffixArrayBackend> Deref for DenseSearcher<SA> {
-    type Target = Searcher<SA>;
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for DenseSearcher<SA, P> {
+    type Target = Searcher<SA, P>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -127,9 +127,9 @@ impl<SA: SuffixArrayBackend> Deref for DenseSearcher<SA> {
 ///   taxonomic analysis provided by Unipept
 /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
 ///   the functional analysis provided by Unipept
-pub struct Searcher<SA: SuffixArrayBackend> {
+pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins> {
     pub sa: SA,
-    pub proteins: Proteins,
+    pub proteins: P,
     pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
     pub kmer_table: Option<KmerTable>,
     /// Total nanoseconds spent inside `search_bounds()` across all queries (since last drain).
@@ -138,7 +138,7 @@ pub struct Searcher<SA: SuffixArrayBackend> {
     pub match_iter_ns: AtomicU64,
 }
 
-impl<SA: SuffixArrayBackend> Searcher<SA> {
+impl<SA: SuffixArrayBackend, P: ProteinsBackend> Searcher<SA, P> {
     /// Creates a new Searcher object
     ///
     /// # Arguments
@@ -155,7 +155,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
     /// # Returns
     ///
     /// Returns a new Searcher object
-    pub fn new(sa: SA, proteins: Proteins, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
+    pub fn new(sa: SA, proteins: P, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
         Self {
             sa,
             proteins,
@@ -499,7 +499,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
     /// Returns true if `search_string_prefix` and `index_prefix` are considered the same, otherwise
     /// false
     #[inline]
-    fn check_prefix(search_string_prefix: &[u8], index_prefix: ProteinTextSlice<'_, ProteinText>, equate_il: bool) -> bool {
+    fn check_prefix(search_string_prefix: &[u8], index_prefix: ProteinTextSlice<'_, P::Text>, equate_il: bool) -> bool {
         index_prefix.equals_slice(search_string_prefix, equate_il)
     }
 
@@ -524,7 +524,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
         skip: usize,
         il_locations: &[usize],
         search_string: &[u8],
-        text_slice: ProteinTextSlice<'_, ProteinText>,
+        text_slice: ProteinTextSlice<'_, P::Text>,
         equate_il: bool
     ) -> bool {
         if equate_il { true } else { text_slice.check_il_locations(skip, il_locations, search_string) }
@@ -571,7 +571,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
     /// during validation of a candidate match at [ms, me). Called in Pass 1 of the
     /// two-pass batching loop to give DRAM latency hiding time before Pass 2 reads.
     #[inline]
-    fn prefetch_match_positions(text: &text_compression::ProteinText, ms: usize, me: usize) {
+    fn prefetch_match_positions(text: &P::Text, ms: usize, me: usize) {
         text.prefetch_at(ms.saturating_sub(1));
         text.prefetch_at(ms);
         text.prefetch_at(me.saturating_sub(1));
@@ -605,7 +605,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
     #[inline]
     fn validate_candidate(
         &self,
-        text: &text_compression::ProteinText,
+        text: &P::Text,
         raw: i64,
         skip: usize,
         search_string: &[u8],
@@ -638,7 +638,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
         &self,
         mut sa_iter: impl Iterator<Item = i64>,
         range_size: usize,
-        text: &text_compression::ProteinText,
+        text: &P::Text,
         skip: usize,
         search_string: &[u8],
         prefix: &[u8],
@@ -701,7 +701,7 @@ impl<SA: SuffixArrayBackend> Searcher<SA> {
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use sa_mappings::proteins::{Protein, Proteins};
+    use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
     use text_compression::ProteinText;
 
     use crate::{

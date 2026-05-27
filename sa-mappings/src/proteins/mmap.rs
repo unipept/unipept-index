@@ -4,7 +4,7 @@ use std::{error::Error, path::Path, sync::Arc};
 use memmap2::Mmap;
 use text_compression::{ReadBinaryMmap, ProteinText, bit_array_byte_size};
 
-use super::ProteinRef;
+use super::{ProteinRef, ProteinsBackend};
 
 // ── MmapBackedProteins ────────────────────────────────────────────────────────
 
@@ -26,12 +26,13 @@ mod entry_offsets {
     pub const ENTRY_SIZE: usize = 16;
 }
 
-impl MmapBackedProteins {
-    pub fn text(&self) -> &ProteinText { &self.text }
-    pub fn len(&self) -> usize { self.protein_count }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+impl ProteinsBackend for MmapBackedProteins {
+    type Text = ProteinText;
 
-    pub fn touch_all_pages(&self) {
+    fn text(&self) -> &ProteinText { &self.text }
+    fn len(&self) -> usize { self.protein_count }
+
+    fn touch_all_pages(&self) {
         #[cfg(unix)]
         let _ = self.mmap.advise(memmap2::Advice::Sequential);
         for chunk in self.mmap.chunks(4096) { std::hint::black_box(chunk[0]); }
@@ -40,7 +41,7 @@ impl MmapBackedProteins {
     }
 
     #[inline]
-    pub fn prefetch(&self, index: usize) {
+    fn prefetch(&self, index: usize) {
         let off = self.fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
         if off + entry_offsets::ENTRY_SIZE <= self.mmap.len() {
             prefetch::prefetch_read(&self.mmap[off] as *const u8);
@@ -48,7 +49,7 @@ impl MmapBackedProteins {
     }
 
     #[inline]
-    pub fn prefetch_strings(&self, index: usize) {
+    fn prefetch_strings(&self, index: usize) {
         use entry_offsets as eo;
         let entry_off = self.fixed_table_offset + index * eo::ENTRY_SIZE;
         if entry_off + eo::ENTRY_SIZE > self.mmap.len() { return; }
@@ -60,7 +61,7 @@ impl MmapBackedProteins {
         if fa_ptr  < self.mmap.len() { prefetch::prefetch_read(&self.mmap[fa_ptr]  as *const u8); }
     }
 
-    pub fn get(&self, index: usize) -> ProteinRef<'_> {
+    fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;
         let entry_off = self.fixed_table_offset + index * eo::ENTRY_SIZE;
         debug_assert!(entry_off + eo::ENTRY_SIZE <= self.mmap.len(), "protein index {index} out of range");
@@ -136,7 +137,7 @@ mod tests {
     use tempdir::TempDir;
     use text_compression::{ReadBinaryMmap, WriteBinary};
     use super::MmapBackedProteins;
-    use crate::proteins::preloaded::InMemoryProteins;
+    use crate::proteins::{ProteinsBackend as _, preloaded::InMemoryProteins};
 
     fn create_database_file(tmp_dir: &TempDir) -> PathBuf {
         let path = tmp_dir.path().join("database.tsv");

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use rand::Rng;
+use sa_index::ProteinsBackend as _;
 use sa_server::load_proteins_file;
 use text_compression::ProteinTextBackend as _;
 

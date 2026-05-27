@@ -10,7 +10,7 @@ use sa_index::array::dump_compressed_suffix_array;
 use sa_index::array::dump_suffix_array;
 use sa_index::suffix_to_protein_index::{SuffixToProteinMappingStyle, DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein};
 use sa_index::{KmerTable, WriteBinary};
-use sa_mappings::proteins::InMemoryProteins;
+use sa_mappings::proteins::{InMemoryProteins, ProteinsBackend as _};
 use text_compression::ProteinTextBackend as _;
 
 fn main() {
