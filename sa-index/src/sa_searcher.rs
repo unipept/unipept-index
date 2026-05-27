@@ -6,7 +6,11 @@ use text_compression::{ProteinTextBackend, ProteinTextSlice};
 use crate::{
     KmerTable, Nullable, array::SuffixArrayBackend,
     sa_searcher::BoundSearch::{Maximum, Minimum},
-    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein, SuffixToProteinIndex}
+    suffix_to_protein_index::{
+        DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein,
+        SuffixToProteinMappingBackend, SuffixToProteinMapping,
+        preloaded::InMemorySuffixToProteinMapping,
+    },
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -61,54 +65,54 @@ impl PartialEq for SearchAllSuffixesResult {
     }
 }
 
-pub struct SparseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P>);
+pub struct SparseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P, InMemorySuffixToProteinMapping>);
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend> SparseSearcher<SA, P> {
     pub fn new(sa: SA, proteins: P) -> Self {
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::Sparse(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for SparseSearcher<SA, P> {
-    type Target = Searcher<SA, P>;
+    type Target = Searcher<SA, P, InMemorySuffixToProteinMapping>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct BitVecSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P>);
+pub struct BitVecSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P, InMemorySuffixToProteinMapping>);
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend> BitVecSearcher<SA, P> {
     pub fn new(sa: SA, proteins: P) -> Self {
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::BitVec(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for BitVecSearcher<SA, P> {
-    type Target = Searcher<SA, P>;
+    type Target = Searcher<SA, P, InMemorySuffixToProteinMapping>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct DenseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P>);
+pub struct DenseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P, InMemorySuffixToProteinMapping>);
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend> DenseSearcher<SA, P> {
     pub fn new(sa: SA, proteins: P) -> Self {
         let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::Dense(suffix_index_to_protein));
         Self(searcher)
     }
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for DenseSearcher<SA, P> {
-    type Target = Searcher<SA, P>;
+    type Target = Searcher<SA, P, InMemorySuffixToProteinMapping>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -127,10 +131,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for DenseSearcher<SA, P> 
 ///   taxonomic analysis provided by Unipept
 /// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
 ///   the functional analysis provided by Unipept
-pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins> {
+pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM: SuffixToProteinMappingBackend = SuffixToProteinMapping> {
     pub sa: SA,
     pub proteins: P,
-    pub suffix_index_to_protein: Box<dyn SuffixToProteinIndex>,
+    pub suffix_index_to_protein: STPM,
     pub kmer_table: Option<KmerTable>,
     /// Total nanoseconds spent inside `search_bounds()` across all queries (since last drain).
     pub search_bounds_ns: AtomicU64,
@@ -138,7 +142,7 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins> {
     pub match_iter_ns: AtomicU64,
 }
 
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> Searcher<SA, P> {
+impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Creates a new Searcher object
     ///
     /// # Arguments
@@ -155,7 +159,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend> Searcher<SA, P> {
     /// # Returns
     ///
     /// Returns a new Searcher object
-    pub fn new(sa: SA, proteins: P, suffix_index_to_protein: Box<dyn SuffixToProteinIndex>) -> Self {
+    pub fn new(sa: SA, proteins: P, suffix_index_to_protein: STPM) -> Self {
         Self {
             sa,
             proteins,
@@ -705,8 +709,10 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
-        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher}, suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}, SuffixArray,
-        array::{OriginalSA, SuffixArrayBackend},
+        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
+        suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
+        SuffixArray,
+        array::OriginalSA,
     };
 
     #[test]
@@ -763,7 +769,7 @@ mod tests {
         let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
 
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         // search bounds 'A'
         let bounds_res = searcher.search_bounds(b"A");
@@ -784,7 +790,7 @@ mod tests {
         let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(suffix_index_to_protein));
 
         // search suffix 'VAA'
         let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
@@ -801,7 +807,7 @@ mod tests {
         let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
 
         let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Dense(suffix_index_to_protein));
 
         // search suffix 'VAA'
         let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
@@ -818,7 +824,7 @@ mod tests {
         let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
 
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         let bounds_res = searcher.search_bounds(b"I");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
@@ -834,7 +840,7 @@ mod tests {
         let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
 
         let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(suffix_index_to_protein));
 
         // search bounds 'RIZ' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, true, false);
@@ -859,7 +865,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(OriginalSA(vec![0, 2, 4], 2));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(b"IM", usize::MAX, true, false);
@@ -879,7 +885,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 0, 1, 5, 4, 3, 2], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         let found_suffixes = searcher.search_matching_suffixes(b"I", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
@@ -898,7 +904,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 5, 4, 3, 2, 1, 0], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
@@ -917,7 +923,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 4, 2, 0], 2));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
@@ -938,7 +944,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 5, 4, 3, 2, 1, 0], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         // search bounds 'IM' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
@@ -958,7 +964,7 @@ mod tests {
 
         let sparse_sa = SuffixArray::Original(OriginalSA(vec![13, 3, 12, 11, 1, 4, 2, 5, 9, 8, 6, 10, 0, 7], 1));
         let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sparse_sa, proteins, Box::new(suffix_index_to_protein));
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
 
         let found_suffixes_1 = searcher.search_matching_suffixes(b"PAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_1, SearchAllSuffixesResult::SearchResult(vec![0]));

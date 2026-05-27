@@ -9,11 +9,11 @@ use rand::Rng;
 use rayon::prelude::*;
 use sa_index::kmer_table::AMINO_ACID_COUNT;
 use sa_index::{sa_searcher::{SearchAllSuffixesResult, Searcher}, SuffixArray, SuffixArrayBackend};
-use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
 use sa_index::ProteinsBackend as _;
+use sa_index::suffix_to_protein_index::SuffixToProteinMappingBackend as _;
 use text_compression::ProteinTextBackend as _;
 
 /// Schema version — increment when the output JSON format changes
@@ -387,7 +387,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let proteins = load_proteins_file(proteins_path.to_str().unwrap())?;
 
     eprintln!("Loading mapping from {} (type: {})...", mapping_path.display(), mapping_type_str);
-    let SuffixToProteinMapping(mapping) = load_mapping_file(mapping_path.to_str().unwrap())?;
+    let mapping = load_mapping_file(mapping_path.to_str().unwrap())?;
 
     let sa_type = if suffix_array.bits_per_value() == 64 { "original" } else { "compressed" };
     let sample_rate = suffix_array.sample_rate();

@@ -9,7 +9,7 @@ use axum::{
     routing::post
 };
 use clap::Parser;
-use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher::Searcher, suffix_to_protein_index::SuffixToProteinMapping, SuffixArray, SuffixArrayBackend};
+use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher::Searcher, SuffixArray, SuffixArrayBackend};
 use serde::Deserialize;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 
@@ -117,7 +117,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     eprintln!();
     eprintln!("Started loading the suffix-to-protein mapping...");
-    let SuffixToProteinMapping(mapping) = load_mapping_file(&mapping_file)?;
+    let mapping = load_mapping_file(&mapping_file)?;
     eprintln!("Successfully loaded the suffix-to-protein mapping!");
 
     let mut searcher = Searcher::new(suffix_array, proteins, mapping);
