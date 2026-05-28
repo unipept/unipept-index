@@ -1172,7 +1172,6 @@ name = "sa-index"
 version = "0.1.0"
 dependencies = [
  "bitarray",
- "clap",
  "memmap2",
  "prefetch",
  "rayon",

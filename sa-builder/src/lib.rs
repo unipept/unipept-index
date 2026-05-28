@@ -1,7 +1,6 @@
 use std::error::Error;
 
 use clap::{Parser, ValueEnum};
-use sa_index::suffix_to_protein_index::SuffixToProteinMappingStyle;
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
@@ -46,6 +45,14 @@ pub struct Arguments {
 pub enum SAConstructionAlgorithm {
     LibDivSufSort,
     LibSais
+}
+
+/// Enum used to choose which suffix-to-protein mapping style is built
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
+pub enum SuffixToProteinMappingStyle {
+    Dense,
+    Sparse,
+    BitVec
 }
 
 /// Build a sparse suffix array from the given text

@@ -1,5 +1,3 @@
-use clap::ValueEnum;
-
 pub mod preloaded;
 #[cfg(feature = "mmap")]
 pub mod mmap;
@@ -12,14 +10,6 @@ pub use mmap::{MmapDenseSuffixToProtein, MmapSparseSuffixToProtein, MmapBitVecSu
 pub type SuffixToProteinMapping = MmapBackedSuffixToProteinMapping;
 #[cfg(not(feature = "mmap"))]
 pub type SuffixToProteinMapping = InMemorySuffixToProteinMapping;
-
-/// Enum used to define the commandline arguments and choose which index style is used
-#[derive(ValueEnum, Clone, Debug, PartialEq)]
-pub enum SuffixToProteinMappingStyle {
-    Dense,
-    Sparse,
-    BitVec
-}
 
 /// Trait implemented by the SuffixToProtein mappings
 pub trait SuffixToProteinMappingBackend: Send + Sync {
@@ -36,23 +26,4 @@ pub trait SuffixToProteinMappingBackend: Send + Sync {
     /// Default is a no-op; mmap-backed implementations override this.
     #[inline]
     fn touch_all_pages(&self) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use clap::ValueEnum;
-    use crate::suffix_to_protein_index::SuffixToProteinMappingStyle;
-
-    #[test]
-    fn test_suffix_to_protein_mapping_style() {
-        assert_eq!(SuffixToProteinMappingStyle::Dense, SuffixToProteinMappingStyle::from_str("dense", false).unwrap());
-        assert_eq!(
-            SuffixToProteinMappingStyle::Sparse,
-            SuffixToProteinMappingStyle::from_str("sparse", false).unwrap()
-        );
-        assert_eq!(
-            SuffixToProteinMappingStyle::BitVec,
-            SuffixToProteinMappingStyle::from_str("bit-vec", false).unwrap()
-        );
-    }
 }
