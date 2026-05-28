@@ -1,4 +1,4 @@
-use std::{cmp::min, ops::Deref, sync::atomic::{AtomicU64, Ordering}, time::Instant};
+use std::{cmp::min, sync::atomic::{AtomicU64, Ordering}, time::Instant};
 
 use sa_mappings::proteins::{ProteinRef, Proteins, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
@@ -7,9 +7,7 @@ use crate::{
     KmerTable, Nullable, array::SuffixArrayBackend,
     sa_searcher::BoundSearch::{Maximum, Minimum},
     suffix_to_protein_index::{
-        DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein,
         SuffixToProteinMappingBackend, SuffixToProteinMapping,
-        preloaded::InMemorySuffixToProteinMapping,
     },
 };
 
@@ -62,60 +60,6 @@ impl PartialEq for SearchAllSuffixesResult {
             (SearchAllSuffixesResult::NoMatches, SearchAllSuffixesResult::NoMatches) => true,
             _ => false
         }
-    }
-}
-
-pub struct SparseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P, InMemorySuffixToProteinMapping>);
-
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> SparseSearcher<SA, P> {
-    pub fn new(sa: SA, proteins: P) -> Self {
-        let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::Sparse(suffix_index_to_protein));
-        Self(searcher)
-    }
-}
-
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for SparseSearcher<SA, P> {
-    type Target = Searcher<SA, P, InMemorySuffixToProteinMapping>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-pub struct BitVecSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P, InMemorySuffixToProteinMapping>);
-
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> BitVecSearcher<SA, P> {
-    pub fn new(sa: SA, proteins: P) -> Self {
-        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::BitVec(suffix_index_to_protein));
-        Self(searcher)
-    }
-}
-
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for BitVecSearcher<SA, P> {
-    type Target = Searcher<SA, P, InMemorySuffixToProteinMapping>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-pub struct DenseSearcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins>(Searcher<SA, P, InMemorySuffixToProteinMapping>);
-
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> DenseSearcher<SA, P> {
-    pub fn new(sa: SA, proteins: P) -> Self {
-        let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::Dense(suffix_index_to_protein));
-        Self(searcher)
-    }
-}
-
-impl<SA: SuffixArrayBackend, P: ProteinsBackend> Deref for DenseSearcher<SA, P> {
-    type Target = Searcher<SA, P, InMemorySuffixToProteinMapping>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
