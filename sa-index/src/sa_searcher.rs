@@ -151,6 +151,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// L and I are treated as equal during matching because the index was built with L → I.
     fn compare(&self, search_string: &[u8], suffix: i64, skip: usize, bound: BoundSearch) -> (bool, usize) {
         let text = self.proteins.text();
+        let text_len = text.len();
         let mut i_text = (suffix as usize) + skip;
         let mut i_search = skip;
         let mut bound_satisfied = false;
@@ -162,7 +163,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
         // Advance while characters match (treating L == I).
         while i_search < search_string.len()
-            && i_text < text.len()
+            && i_text < text_len
             && Self::normalize_li(search_string[i_search]) == Self::normalize_li(text.get(i_text))
         {
             i_text += 1;
@@ -172,7 +173,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         if !search_string.is_empty() {
             if i_search == search_string.len() {
                 bound_satisfied = true;
-            } else if i_text < text.len() {
+            } else if i_text < text_len {
                 // The index has L replaced by I, so normalize both sides before ordering.
                 bound_satisfied = condition_check(
                     Self::normalize_li(search_string[i_search]),
