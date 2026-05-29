@@ -1,4 +1,4 @@
-//! This module contains the `BitArray` struct and its associated methods.
+//! This module contains the `BitArray` and `DynBitArray` structs and their associated methods.
 
 mod binary;
 
@@ -10,29 +10,17 @@ use std::{
 /// Re-export the `Binary` trait.
 pub use binary::Binary;
 
-/// A fixed-size bit array implementation.
-pub struct BitArray {
-    /// The underlying data storage for the bit array.
+// ── DynBitArray ───────────────────────────────────────────────────────────────
+
+/// A bit array whose bits-per-value is determined at runtime.
+pub struct DynBitArray {
     data: Vec<u64>,
-    /// The mask used to extract the relevant bits from each element in the data vector.
     mask: u64,
-    /// The length of the bit array.
     len: usize,
-    /// The number of bits in a single element of the data vector.
     bits_per_value: usize
 }
 
-impl BitArray {
-    /// Creates a new `BitArray` with the specified capacity.
-    ///
-    /// # Arguments
-    ///
-    /// * `capacity` - The number of bits the `BitArray` can hold.
-    /// * `bits_per_value` - The number of bits in a single value.
-    ///
-    /// # Returns
-    ///
-    /// A new `BitArray` with the specified capacity.
+impl DynBitArray {
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
         let extra = if (capacity * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
         Self {
@@ -43,74 +31,30 @@ impl BitArray {
         }
     }
 
-    /// Retrieves the value at the specified index in the `BitArray`.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The index of the value to retrieve.
-    ///
-    /// # Returns
-    ///
-    /// The value at the specified index.
     #[inline]
     pub fn get(&self, index: usize) -> u64 {
         let start_block = index * self.bits_per_value / 64;
         let start_block_offset = index * self.bits_per_value % 64;
 
-        // If the value is contained within a single block
         if start_block_offset + self.bits_per_value <= 64 {
-            // Shift the value to the right so that the relevant bits are in the least significant
-            // position Then mask out the irrelevant bits
             return (self.data[start_block] >> (64 - start_block_offset - self.bits_per_value)) & self.mask;
         }
 
         let end_block = (index + 1) * self.bits_per_value / 64;
         let end_block_offset = (index + 1) * self.bits_per_value % 64;
 
-        // Extract the relevant bits from the start block and shift them {end_block_offset} bits to
-        // the left
         let a = self.data[start_block] << end_block_offset;
-
-        // Extract the relevant bits from the end block and shift them to the least significant
-        // position
         let b = self.data[end_block] >> (64 - end_block_offset);
 
-        // Paste the two values together and mask out the irrelevant bits
         (a | b) & self.mask
     }
 
-    /// Like `get`, but with `BITS` as a const generic so LLVM folds all arithmetic at compile time.
-    /// Use this when the bits-per-value is known at the call site (e.g. always 5 for protein text).
-    #[inline]
-    pub fn get_const<const BITS: usize>(&self, index: usize) -> u64 {
-        let mask: u64 = u64::MAX >> (64 - BITS);
-        let bit_offset = index * BITS;
-        let start_block = bit_offset / 64;
-        let start_bit = bit_offset % 64;
-        if start_bit + BITS <= 64 {
-            (self.data[start_block] >> (64 - start_bit - BITS)) & mask
-        } else {
-            let end_bit = (index + 1) * BITS % 64;
-            ((self.data[start_block] << end_bit) | (self.data[start_block + 1] >> (64 - end_bit))) & mask
-        }
-    }
-
-    /// Sets the value at the specified index in the `BitArray`.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The index of the value to set.
-    /// * `value` - The value to set at the specified index.
     pub fn set(&mut self, index: usize, value: u64) {
-        let value: u64 = value;
         let start_block = index * self.bits_per_value / 64;
         let start_block_offset = index * self.bits_per_value % 64;
 
-        // If the value is contained within a single block
         if start_block_offset + self.bits_per_value <= 64 {
-            // Clear the relevant bits in the start block
             self.data[start_block] &= !(self.mask << (64 - start_block_offset - self.bits_per_value));
-            // Set the relevant bits in the start block
             self.data[start_block] |= value << (64 - start_block_offset - self.bits_per_value);
             return;
         }
@@ -118,45 +62,25 @@ impl BitArray {
         let end_block = (index + 1) * self.bits_per_value / 64;
         let end_block_offset = (index + 1) * self.bits_per_value % 64;
 
-        // Clear the relevant bits in the start block
         self.data[start_block] &= !(self.mask >> start_block_offset);
-        // Set the relevant bits in the start block
         self.data[start_block] |= value >> end_block_offset;
 
-        // Clear the relevant bits in the end block
         self.data[end_block] &= !(self.mask << (64 - end_block_offset));
-        // Set the relevant bits in the end block
         self.data[end_block] |= value << (64 - end_block_offset);
     }
 
-    /// Returns the number of bits in a single value.
-    ///
-    /// # Returns
-    ///
-    /// The number of bits in a single value.
     pub fn bits_per_value(&self) -> usize {
         self.bits_per_value
     }
 
-    /// Returns the length of the `BitArray`.
-    ///
-    /// # Returns
-    ///
-    /// The length of the `BitArray`.
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Checks if the `BitArray` is empty.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the `BitArray` is empty, `false` otherwise.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Clears the `BitArray`, setting all bits to 0.
     pub fn clear(&mut self) {
         self.data.iter_mut().for_each(|x| *x = 0);
     }
@@ -165,32 +89,25 @@ impl BitArray {
         &self.data[start_slice..end_slice]
     }
 
-    /// Returns a streaming iterator over entries `[start, end)`.
-    ///
-    /// Keeps `current_word` and `next_word` in local variables so a new slice read only occurs
-    /// when crossing a 64-bit block boundary — roughly once per `64 / bits_per_value` entries.
-    pub fn iter_range(&self, start: usize, end: usize) -> BitArrayRangeIter<'_> {
-        BitArrayRangeIter::new(&self.data, self.bits_per_value, self.mask, start, end)
+    pub fn iter_range(&self, start: usize, end: usize) -> DynBitArrayRangeIter<'_> {
+        DynBitArrayRangeIter::new(&self.data, self.bits_per_value, self.mask, start, end)
     }
 }
 
-/// Streaming sequential iterator over a contiguous range of a `BitArray`.
-///
-/// Keeps `current_word` and `next_word` in local variables (register-allocated by the compiler)
-/// so that a new slice read only occurs when crossing a 64-bit block boundary — roughly once per
-/// `64 / bits_per_value` entries, vs one slice read per entry with `BitArray::get`.
-pub struct BitArrayRangeIter<'a> {
+// ── DynBitArrayRangeIter ──────────────────────────────────────────────────────
+
+pub struct DynBitArrayRangeIter<'a> {
     data: &'a [u64],
     bits_per_value: usize,
     mask: u64,
-    current_word: u64, // u64 block containing the next value to yield
-    next_word: u64,    // u64 block after current_word (pre-loaded)
-    block_idx: usize,  // index of current_word within data
-    bit_off: usize,    // bit offset of next value within current_word (0..64)
-    remaining: usize,  // entries left to yield
+    current_word: u64,
+    next_word: u64,
+    block_idx: usize,
+    bit_off: usize,
+    remaining: usize,
 }
 
-impl<'a> BitArrayRangeIter<'a> {
+impl<'a> DynBitArrayRangeIter<'a> {
     fn new(data: &'a [u64], bits_per_value: usize, mask: u64, start: usize, end: usize) -> Self {
         let remaining = end.saturating_sub(start);
         if remaining == 0 {
@@ -212,7 +129,7 @@ impl<'a> BitArrayRangeIter<'a> {
     }
 }
 
-impl Iterator for BitArrayRangeIter<'_> {
+impl Iterator for DynBitArrayRangeIter<'_> {
     type Item = i64;
 
     #[inline]
@@ -221,15 +138,12 @@ impl Iterator for BitArrayRangeIter<'_> {
         self.remaining -= 1;
 
         let val = if self.bit_off + self.bits_per_value <= 64 {
-            // Value fits entirely within current_word
             (self.current_word >> (64 - self.bit_off - self.bits_per_value)) & self.mask
         } else {
-            // Value spans current_word and next_word
             let end_off = (self.bit_off + self.bits_per_value) % 64;
             ((self.current_word << end_off) | (self.next_word >> (64 - end_off))) & self.mask
         };
 
-        // Advance bit cursor; load next word from data only on block-boundary crossing
         self.bit_off += self.bits_per_value;
         if self.bit_off >= 64 {
             self.bit_off   -= 64;
@@ -251,52 +165,180 @@ impl Iterator for BitArrayRangeIter<'_> {
     }
 }
 
-impl ExactSizeIterator for BitArrayRangeIter<'_> {}
+impl ExactSizeIterator for DynBitArrayRangeIter<'_> {}
 
-/// Writes the data to a writer in a binary format using a bit array. The data is written
-/// in chunks of the specified capacity, so memory usage is minimized.
-///
-/// # Arguments
-///
-/// * `data` - The data to write.
-/// * `bits_per_value` - The number of bits in a single value.
-/// * `max_capacity` - The maximum amount of elements that may be stored in the bit array.
-/// * `writer` - The writer to write the data to.
-///
-/// # Returns
-///
-/// A `Result` indicating whether the write operation was successful or not.
+// ── BitArray<const BITS> ──────────────────────────────────────────────────────
+
+/// A bit array whose bits-per-value is fixed at compile time.
+pub struct BitArray<const BITS: usize> {
+    data: Vec<u64>,
+    len: usize,
+}
+
+impl<const BITS: usize> BitArray<BITS> {
+    pub fn with_capacity(capacity: usize) -> Self {
+        let extra = if (capacity * BITS).is_multiple_of(64) { 0 } else { 1 };
+        Self {
+            data: vec![0; capacity * BITS / 64 + extra],
+            len: capacity,
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, index: usize) -> u64 {
+        let mask: u64 = u64::MAX >> (64 - BITS);
+        let bit_offset = index * BITS;
+        let start_block = bit_offset / 64;
+        let start_bit = bit_offset % 64;
+        if start_bit + BITS <= 64 {
+            (self.data[start_block] >> (64 - start_bit - BITS)) & mask
+        } else {
+            let end_bit = (index + 1) * BITS % 64;
+            ((self.data[start_block] << end_bit) | (self.data[start_block + 1] >> (64 - end_bit))) & mask
+        }
+    }
+
+    pub fn set(&mut self, index: usize, value: u64) {
+        let mask: u64 = u64::MAX >> (64 - BITS);
+        let start_block = index * BITS / 64;
+        let start_block_offset = index * BITS % 64;
+
+        if start_block_offset + BITS <= 64 {
+            self.data[start_block] &= !(mask << (64 - start_block_offset - BITS));
+            self.data[start_block] |= value << (64 - start_block_offset - BITS);
+            return;
+        }
+
+        let end_block = (index + 1) * BITS / 64;
+        let end_block_offset = (index + 1) * BITS % 64;
+
+        self.data[start_block] &= !(mask >> start_block_offset);
+        self.data[start_block] |= value >> end_block_offset;
+
+        self.data[end_block] &= !(mask << (64 - end_block_offset));
+        self.data[end_block] |= value << (64 - end_block_offset);
+    }
+
+    pub fn bits_per_value(&self) -> usize {
+        BITS
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn clear(&mut self) {
+        self.data.iter_mut().for_each(|x| *x = 0);
+    }
+
+    pub fn get_data_slice(&self, start_slice: usize, end_slice: usize) -> &[u64] {
+        &self.data[start_slice..end_slice]
+    }
+
+    pub fn iter_range(&self, start: usize, end: usize) -> BitArrayRangeIter<'_, BITS> {
+        BitArrayRangeIter::new(&self.data, start, end)
+    }
+}
+
+// ── BitArrayRangeIter<const BITS> ─────────────────────────────────────────────
+
+pub struct BitArrayRangeIter<'a, const BITS: usize> {
+    data: &'a [u64],
+    current_word: u64,
+    next_word: u64,
+    block_idx: usize,
+    bit_off: usize,
+    remaining: usize,
+}
+
+impl<'a, const BITS: usize> BitArrayRangeIter<'a, BITS> {
+    fn new(data: &'a [u64], start: usize, end: usize) -> Self {
+        let remaining = end.saturating_sub(start);
+        if remaining == 0 {
+            return Self {
+                data,
+                current_word: 0, next_word: 0,
+                block_idx: 0, bit_off: 0, remaining: 0,
+            };
+        }
+
+        let bit_pos   = start * BITS;
+        let block_idx = bit_pos / 64;
+        let bit_off   = bit_pos % 64;
+
+        let current_word = data[block_idx];
+        let next_word    = if block_idx + 1 < data.len() { data[block_idx + 1] } else { 0 };
+
+        Self { data, current_word, next_word, block_idx, bit_off, remaining }
+    }
+}
+
+impl<const BITS: usize> Iterator for BitArrayRangeIter<'_, BITS> {
+    type Item = i64;
+
+    #[inline]
+    fn next(&mut self) -> Option<i64> {
+        if self.remaining == 0 { return None; }
+        self.remaining -= 1;
+
+        let mask: u64 = u64::MAX >> (64 - BITS);
+        let val = if self.bit_off + BITS <= 64 {
+            (self.current_word >> (64 - self.bit_off - BITS)) & mask
+        } else {
+            let end_off = (self.bit_off + BITS) % 64;
+            ((self.current_word << end_off) | (self.next_word >> (64 - end_off))) & mask
+        };
+
+        self.bit_off += BITS;
+        if self.bit_off >= 64 {
+            self.bit_off   -= 64;
+            self.block_idx += 1;
+            self.current_word = self.next_word;
+            self.next_word = if self.block_idx + 1 < self.data.len() {
+                self.data[self.block_idx + 1]
+            } else {
+                0
+            };
+        }
+
+        Some(val as i64)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<const BITS: usize> ExactSizeIterator for BitArrayRangeIter<'_, BITS> {}
+
+// ── data_to_writer ────────────────────────────────────────────────────────────
+
+/// Writes packed bit data to a writer in chunks, minimising peak memory.
 pub fn data_to_writer(
     data: Vec<i64>,
     bits_per_value: usize,
     max_capacity: usize,
     writer: &mut impl Write
 ) -> Result<()> {
-    // Update the max capacity to be a multiple of the greatest common divisor of the bits per value
-    // and 64. This is done to ensure that the bit array can store the data entirely
     let greates_common_divisor = gcd(bits_per_value, 64);
     let capacity = max(greates_common_divisor, max_capacity / greates_common_divisor * greates_common_divisor);
 
-    // If amount of data is less than the max capacity, write the data to the writer in a single
-    // chunk
     if data.len() <= capacity {
-        let mut bitarray = BitArray::with_capacity(data.len(), bits_per_value);
-
+        let mut bitarray = DynBitArray::with_capacity(data.len(), bits_per_value);
         for (i, &value) in data.iter().enumerate() {
             bitarray.set(i, value as u64);
         }
         bitarray.write_binary(writer)?;
-
         return Ok(());
     }
 
-    // Create a bit array that can store a single chunk of data
-    let mut bitarray = BitArray::with_capacity(capacity, bits_per_value);
-
-    // Write the data to the writer in chunks of the specified capacity
+    let mut bitarray = DynBitArray::with_capacity(capacity, bits_per_value);
     let chunks = data.chunks_exact(capacity);
-
-    // Store the remainder before looping over the chunks
     let remainder = chunks.remainder();
 
     for chunk in chunks {
@@ -307,9 +349,7 @@ pub fn data_to_writer(
         bitarray.clear();
     }
 
-    // Create a new bit array with the remainder capacity
-    bitarray = BitArray::with_capacity(remainder.len(), bits_per_value);
-
+    bitarray = DynBitArray::with_capacity(remainder.len(), bits_per_value);
     for (i, &value) in remainder.iter().enumerate() {
         bitarray.set(i, value as u64);
     }
@@ -318,16 +358,6 @@ pub fn data_to_writer(
     Ok(())
 }
 
-/// Calculates the greatest common divisor of two numbers.
-///
-/// # Arguments
-///
-/// * `a` - The first number.
-/// * `b` - The second number.
-///
-/// # Returns
-///
-/// The greatest common divisor of the two numbers.
 fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
         if b < a {
@@ -342,70 +372,125 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 mod tests {
     use super::*;
 
+    // ── DynBitArray tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dynbitarray_with_capacity() {
+        let ba = DynBitArray::with_capacity(4, 40);
+        assert_eq!(ba.data, vec![0, 0, 0]);
+        assert_eq!(ba.mask, 0xff_ffff_ffff);
+        assert_eq!(ba.len, 4);
+    }
+
+    #[test]
+    fn test_dynbitarray_get() {
+        let mut ba = DynBitArray::with_capacity(4, 40);
+        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
+
+        assert_eq!(ba.get(0), 0b0001110011111010110001000111111100110010);
+        assert_eq!(ba.get(1), 0b1100001001010010011000010100110111001001);
+        assert_eq!(ba.get(2), 0b1111001101001101101101101011101001010001);
+        assert_eq!(ba.get(3), 0b0000100010010001010001001110101110011100);
+    }
+
+    #[test]
+    fn test_dynbitarray_set() {
+        let mut ba = DynBitArray::with_capacity(4, 40);
+
+        ba.set(0, 0b0001110011111010110001000111111100110010_u64);
+        ba.set(1, 0b1100001001010010011000010100110111001001_u64);
+        ba.set(2, 0b1111001101001101101101101011101001010001_u64);
+        ba.set(3, 0b0000100010010001010001001110101110011100_u64);
+
+        assert_eq!(ba.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
+    }
+
+    #[test]
+    fn test_dynbitarray_bits_per_value() {
+        let ba = DynBitArray::with_capacity(4, 40);
+        assert_eq!(ba.bits_per_value(), 40);
+    }
+
+    #[test]
+    fn test_dynbitarray_len() {
+        let ba = DynBitArray::with_capacity(4, 40);
+        assert_eq!(ba.len(), 4);
+    }
+
+    #[test]
+    fn test_dynbitarray_is_empty() {
+        let ba = DynBitArray::with_capacity(0, 40);
+        assert!(ba.is_empty());
+    }
+
+    #[test]
+    fn test_dynbitarray_is_not_empty() {
+        let ba = DynBitArray::with_capacity(4, 40);
+        assert!(!ba.is_empty());
+    }
+
+    #[test]
+    fn test_dynbitarray_clear() {
+        let mut ba = DynBitArray::with_capacity(4, 40);
+        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
+        ba.clear();
+        assert_eq!(ba.data, vec![0, 0, 0]);
+    }
+
+    // ── BitArray<const BITS> tests ────────────────────────────────────────────
+
     #[test]
     fn test_bitarray_with_capacity() {
-        let bitarray = BitArray::with_capacity(4, 40);
-        assert_eq!(bitarray.data, vec![0, 0, 0]);
-        assert_eq!(bitarray.mask, 0xff_ffff_ffff);
-        assert_eq!(bitarray.len, 4);
+        let ba = BitArray::<40>::with_capacity(4);
+        assert_eq!(ba.data, vec![0, 0, 0]);
+        assert_eq!(ba.len, 4);
     }
 
     #[test]
     fn test_bitarray_get() {
-        let mut bitarray = BitArray::with_capacity(4, 40);
-        bitarray.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
+        let mut ba = BitArray::<40>::with_capacity(4);
+        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
 
-        assert_eq!(bitarray.get(0), 0b0001110011111010110001000111111100110010);
-        assert_eq!(bitarray.get(1), 0b1100001001010010011000010100110111001001);
-        assert_eq!(bitarray.get(2), 0b1111001101001101101101101011101001010001);
-        assert_eq!(bitarray.get(3), 0b0000100010010001010001001110101110011100);
+        assert_eq!(ba.get(0), 0b0001110011111010110001000111111100110010);
+        assert_eq!(ba.get(1), 0b1100001001010010011000010100110111001001);
+        assert_eq!(ba.get(2), 0b1111001101001101101101101011101001010001);
+        assert_eq!(ba.get(3), 0b0000100010010001010001001110101110011100);
     }
 
     #[test]
     fn test_bitarray_set() {
-        let mut bitarray = BitArray::with_capacity(4, 40);
+        let mut ba = BitArray::<40>::with_capacity(4);
 
-        bitarray.set(0, 0b0001110011111010110001000111111100110010_u64);
-        bitarray.set(1, 0b1100001001010010011000010100110111001001_u64);
-        bitarray.set(2, 0b1111001101001101101101101011101001010001_u64);
-        bitarray.set(3, 0b0000100010010001010001001110101110011100_u64);
+        ba.set(0, 0b0001110011111010110001000111111100110010_u64);
+        ba.set(1, 0b1100001001010010011000010100110111001001_u64);
+        ba.set(2, 0b1111001101001101101101101011101001010001_u64);
+        ba.set(3, 0b0000100010010001010001001110101110011100_u64);
 
-        assert_eq!(bitarray.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
+        assert_eq!(ba.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
     }
 
     #[test]
     fn test_bitarray_bits_per_value() {
-        let bitarray = BitArray::with_capacity(4, 40);
-        assert_eq!(bitarray.bits_per_value(), 40);
+        let ba = BitArray::<40>::with_capacity(4);
+        assert_eq!(ba.bits_per_value(), 40);
     }
 
     #[test]
-    fn test_bitarray_len() {
-        let bitarray = BitArray::with_capacity(4, 40);
-        assert_eq!(bitarray.len(), 4);
-    }
-
-    #[test]
-    fn test_bitarray_is_empty() {
-        let bitarray = BitArray::with_capacity(0, 40);
-        assert!(bitarray.is_empty());
-    }
-
-    #[test]
-    fn test_bitarray_is_not_empty() {
-        let bitarray = BitArray::with_capacity(4, 40);
-        assert!(!bitarray.is_empty());
+    fn test_bitarray_len_and_empty() {
+        assert_eq!(BitArray::<40>::with_capacity(4).len(), 4);
+        assert!(BitArray::<40>::with_capacity(0).is_empty());
+        assert!(!BitArray::<40>::with_capacity(4).is_empty());
     }
 
     #[test]
     fn test_bitarray_clear() {
-        let mut bitarray = BitArray::with_capacity(4, 40);
-        bitarray.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
-
-        bitarray.clear();
-
-        assert_eq!(bitarray.data, vec![0, 0, 0]);
+        let mut ba = BitArray::<40>::with_capacity(4);
+        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
+        ba.clear();
+        assert_eq!(ba.data, vec![0, 0, 0]);
     }
+
+    // ── data_to_writer tests ──────────────────────────────────────────────────
 
     #[test]
     fn test_data_to_writer_no_chunks_needed() {
@@ -487,77 +572,133 @@ mod tests {
         assert_eq!(gcd(32, 64), 32);
     }
 
-    // --- BitArrayRangeIter unit tests ---
+    // ── DynBitArrayRangeIter tests ────────────────────────────────────────────
 
-    fn collect_range(ba: &BitArray, start: usize, end: usize) -> Vec<i64> {
+    fn collect_range_dyn(ba: &DynBitArray, start: usize, end: usize) -> Vec<i64> {
         ba.iter_range(start, end).collect()
     }
 
-    fn expected_range(ba: &BitArray, start: usize, end: usize) -> Vec<i64> {
+    fn expected_range_dyn(ba: &DynBitArray, start: usize, end: usize) -> Vec<i64> {
+        (start..end).map(|i| ba.get(i) as i64).collect()
+    }
+
+    #[test]
+    fn test_dyn_iter_range_empty() {
+        let ba = DynBitArray::with_capacity(8, 32);
+        assert!(collect_range_dyn(&ba, 3, 3).is_empty());
+        assert!(collect_range_dyn(&ba, 5, 3).is_empty());
+    }
+
+    #[test]
+    fn test_dyn_iter_range_single_entry() {
+        let mut ba = DynBitArray::with_capacity(4, 40);
+        ba.set(2, 0xABCDEF1234_u64);
+        assert_eq!(collect_range_dyn(&ba, 2, 3), vec![0xABCDEF1234_i64]);
+    }
+
+    #[test]
+    fn test_dyn_iter_range_mid_block_start() {
+        let values: Vec<u64> = (0..8).map(|i| i * 111 + 7).collect();
+        let mut ba = DynBitArray::with_capacity(8, 32);
+        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
+        assert_eq!(collect_range_dyn(&ba, 1, 6), expected_range_dyn(&ba, 1, 6));
+    }
+
+    #[test]
+    fn test_dyn_iter_range_crosses_block_boundary() {
+        let values: Vec<u64> = (0..16).map(|i| i as u64 * 0x100000001 + 3).collect();
+        let mut ba = DynBitArray::with_capacity(16, 40);
+        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
+        assert_eq!(collect_range_dyn(&ba, 0, 16), expected_range_dyn(&ba, 0, 16));
+        assert_eq!(collect_range_dyn(&ba, 3, 13), expected_range_dyn(&ba, 3, 13));
+    }
+
+    #[test]
+    fn test_dyn_iter_range_bits_per_value_64() {
+        let values: Vec<u64> = (0..8).map(|i| i as u64 * 0xDEAD_BEEF + 1).collect();
+        let mut ba = DynBitArray::with_capacity(8, 64);
+        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
+        assert_eq!(collect_range_dyn(&ba, 0, 8), expected_range_dyn(&ba, 0, 8));
+        assert_eq!(collect_range_dyn(&ba, 2, 6), expected_range_dyn(&ba, 2, 6));
+    }
+
+    #[test]
+    fn test_dyn_iter_range_bits_per_value_1() {
+        let mut ba = DynBitArray::with_capacity(128, 1);
+        for i in (0..128).step_by(3) { ba.set(i, 1); }
+        assert_eq!(collect_range_dyn(&ba, 0, 128), expected_range_dyn(&ba, 0, 128));
+        assert_eq!(collect_range_dyn(&ba, 60, 70), expected_range_dyn(&ba, 60, 70));
+    }
+
+    #[test]
+    fn test_dyn_iter_range_exact_size_iterator() {
+        let mut ba = DynBitArray::with_capacity(10, 40);
+        for i in 0..10 { ba.set(i, i as u64 * 99); }
+        let iter = ba.iter_range(2, 8);
+        assert_eq!(iter.len(), 6);
+    }
+
+    // ── BitArrayRangeIter<const BITS> tests ───────────────────────────────────
+
+    fn collect_range<const BITS: usize>(ba: &BitArray<BITS>, start: usize, end: usize) -> Vec<i64> {
+        ba.iter_range(start, end).collect()
+    }
+
+    fn expected_range<const BITS: usize>(ba: &BitArray<BITS>, start: usize, end: usize) -> Vec<i64> {
         (start..end).map(|i| ba.get(i) as i64).collect()
     }
 
     #[test]
     fn test_iter_range_empty() {
-        let ba = BitArray::with_capacity(8, 32);
+        let ba = BitArray::<32>::with_capacity(8);
         assert!(collect_range(&ba, 3, 3).is_empty());
-        assert!(collect_range(&ba, 5, 3).is_empty()); // inverted range — must not panic
+        assert!(collect_range(&ba, 5, 3).is_empty());
     }
 
     #[test]
     fn test_iter_range_single_entry() {
-        let mut ba = BitArray::with_capacity(4, 40);
+        let mut ba = BitArray::<40>::with_capacity(4);
         ba.set(2, 0xABCDEF1234_u64);
         assert_eq!(collect_range(&ba, 2, 3), vec![0xABCDEF1234_i64]);
     }
 
     #[test]
     fn test_iter_range_mid_block_start() {
-        // Start at an index whose bit offset is non-zero within the first u64 block.
-        // With bits_per_value=32: block boundary every 2 entries. Start=1 → bit_off=32.
         let values: Vec<u64> = (0..8).map(|i| i * 111 + 7).collect();
-        let mut ba = BitArray::with_capacity(8, 32);
+        let mut ba = BitArray::<32>::with_capacity(8);
         for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-
         assert_eq!(collect_range(&ba, 1, 6), expected_range(&ba, 1, 6));
     }
 
     #[test]
     fn test_iter_range_crosses_block_boundary() {
-        // bits_per_value=40: 64/gcd(40,64)=8 entries per cycle, 5 entries per u64 block approx.
-        // Any range spanning >5 entries will cross a 64-bit boundary.
         let values: Vec<u64> = (0..16).map(|i| i as u64 * 0x100000001 + 3).collect();
-        let mut ba = BitArray::with_capacity(16, 40);
+        let mut ba = BitArray::<40>::with_capacity(16);
         for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-
         assert_eq!(collect_range(&ba, 0, 16), expected_range(&ba, 0, 16));
         assert_eq!(collect_range(&ba, 3, 13), expected_range(&ba, 3, 13));
     }
 
     #[test]
     fn test_iter_range_bits_per_value_64() {
-        // Each entry occupies exactly one u64 block — no boundary crossing needed.
         let values: Vec<u64> = (0..8).map(|i| i as u64 * 0xDEAD_BEEF + 1).collect();
-        let mut ba = BitArray::with_capacity(8, 64);
+        let mut ba = BitArray::<64>::with_capacity(8);
         for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-
         assert_eq!(collect_range(&ba, 0, 8), expected_range(&ba, 0, 8));
         assert_eq!(collect_range(&ba, 2, 6), expected_range(&ba, 2, 6));
     }
 
     #[test]
     fn test_iter_range_bits_per_value_1() {
-        // 64 entries per block; exercises many iterations before a boundary crossing.
-        let mut ba = BitArray::with_capacity(128, 1);
+        let mut ba = BitArray::<1>::with_capacity(128);
         for i in (0..128).step_by(3) { ba.set(i, 1); }
-
         assert_eq!(collect_range(&ba, 0, 128), expected_range(&ba, 0, 128));
-        assert_eq!(collect_range(&ba, 60, 70), expected_range(&ba, 60, 70)); // crosses block boundary at 64
+        assert_eq!(collect_range(&ba, 60, 70), expected_range(&ba, 60, 70));
     }
 
     #[test]
     fn test_iter_range_exact_size_iterator() {
-        let mut ba = BitArray::with_capacity(10, 40);
+        let mut ba = BitArray::<40>::with_capacity(10);
         for i in 0..10 { ba.set(i, i as u64 * 99); }
         let iter = ba.iter_range(2, 8);
         assert_eq!(iter.len(), 6);

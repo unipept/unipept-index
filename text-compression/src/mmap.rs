@@ -101,7 +101,7 @@ mod tests {
         use std::collections::HashMap;
         let char_to_5bit: HashMap<u8, u8> = BIT5_TO_CHAR.iter().enumerate()
             .map(|(i, &c)| (c, i as u8)).collect();
-        let mut ba = BitArray::with_capacity(input.len(), 5);
+        let mut ba = BitArray::<5>::with_capacity(input.len());
         for (i, c) in input.bytes().enumerate() {
             ba.set(i, *char_to_5bit.get(&c).unwrap() as u64);
         }

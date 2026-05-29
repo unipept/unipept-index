@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, Read, Result, Write};
 
-use crate::BitArray;
+use crate::{BitArray, DynBitArray};
 
 /// The `Binary` trait provides methods for reading and writing a struct as binary.
 pub trait Binary {
@@ -29,8 +29,7 @@ pub trait Binary {
     fn read_binary<R: BufRead>(&mut self, reader: R) -> Result<()>;
 }
 
-/// Implementation of the `Binary` trait for the `BitArray` struct.
-impl Binary for BitArray {
+impl Binary for DynBitArray {
     /// Writes the binary representation of the `BitArray` to the given writer.
     ///
     /// # Arguments
@@ -73,6 +72,28 @@ impl Binary for BitArray {
             }
         }
 
+        Ok(())
+    }
+}
+
+impl<const BITS: usize> Binary for BitArray<BITS> {
+    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<()> {
+        for value in self.data.iter() {
+            writer.write_all(&value.to_le_bytes())?;
+        }
+        Ok(())
+    }
+
+    fn read_binary<R: BufRead>(&mut self, mut reader: R) -> Result<()> {
+        self.data.clear();
+        let mut buffer = vec![0; 8 * 1024];
+        loop {
+            let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
+            for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
+                self.data.push(u64::from_le_bytes(buffer_slice.try_into().unwrap()));
+            }
+            if finished { break; }
+        }
         Ok(())
     }
 }
@@ -157,8 +178,8 @@ mod tests {
     }
 
     #[test]
-    fn test_write_binary() {
-        let mut bitarray = BitArray::with_capacity(4, 40);
+    fn test_write_binary_dyn() {
+        let mut bitarray = DynBitArray::with_capacity(4, 40);
         bitarray.set(0, 0x1234567890_u64);
         bitarray.set(1, 0xabcdef0123_u64);
         bitarray.set(2, 0x4567890abc_u64);
@@ -174,11 +195,42 @@ mod tests {
     }
 
     #[test]
-    fn test_read_binary() {
+    fn test_read_binary_dyn() {
         let buffer = [0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
             0x00, 0x00, 0x56, 0x34, 0x12, 0xf0];
 
-        let mut bitarray = BitArray::with_capacity(4, 40);
+        let mut bitarray = DynBitArray::with_capacity(4, 40);
+        bitarray.read_binary(&buffer[..]).unwrap();
+
+        assert_eq!(bitarray.get(0), 0x1234567890);
+        assert_eq!(bitarray.get(1), 0xabcdef0123);
+        assert_eq!(bitarray.get(2), 0x4567890abc);
+        assert_eq!(bitarray.get(3), 0xdef0123456);
+    }
+
+    #[test]
+    fn test_write_binary_const() {
+        let mut bitarray = BitArray::<40>::with_capacity(4);
+        bitarray.set(0, 0x1234567890_u64);
+        bitarray.set(1, 0xabcdef0123_u64);
+        bitarray.set(2, 0x4567890abc_u64);
+        bitarray.set(3, 0xdef0123456_u64);
+
+        let mut buffer = Vec::new();
+        bitarray.write_binary(&mut buffer).unwrap();
+
+        assert_eq!(buffer, vec![
+            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
+        ]);
+    }
+
+    #[test]
+    fn test_read_binary_const() {
+        let buffer = [0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0];
+
+        let mut bitarray = BitArray::<40>::with_capacity(4);
         bitarray.read_binary(&buffer[..]).unwrap();
 
         assert_eq!(bitarray.get(0), 0x1234567890);

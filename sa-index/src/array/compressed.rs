@@ -3,14 +3,14 @@ use std::{
     io::{BufRead, Write}
 };
 
-use bitarray::{Binary, BitArray, data_to_writer};
+use bitarray::{Binary, DynBitArray, data_to_writer};
 use text_compression::WriteBinary;
 
 /// Owned, in-memory compressed suffix array backend.
-pub struct CompressedSA(pub BitArray, pub u8);
+pub struct CompressedSA(pub DynBitArray, pub u8);
 
 impl super::SuffixArrayBackend for CompressedSA {
-    type RangeIter<'a> = bitarray::BitArrayRangeIter<'a>;
+    type RangeIter<'a> = bitarray::DynBitArrayRangeIter<'a>;
 
     fn len(&self) -> usize { self.0.len() }
     fn bits_per_value(&self) -> usize { self.0.bits_per_value() }
@@ -18,7 +18,7 @@ impl super::SuffixArrayBackend for CompressedSA {
     #[inline]
     fn get(&self, index: usize) -> i64 { self.0.get(index) as i64 }
 
-    fn iter_range(&self, start: usize, end: usize) -> bitarray::BitArrayRangeIter<'_> {
+    fn iter_range(&self, start: usize, end: usize) -> bitarray::DynBitArrayRangeIter<'_> {
         self.0.iter_range(start, end)
     }
 
@@ -86,8 +86,8 @@ pub(super) fn load_compressed(
     reader: &mut impl BufRead,
     bits_per_value: usize,
     size: usize
-) -> Result<BitArray, Box<dyn Error>> {
-    let mut compressed_suffix_array = BitArray::with_capacity(size, bits_per_value);
+) -> Result<DynBitArray, Box<dyn Error>> {
+    let mut compressed_suffix_array = DynBitArray::with_capacity(size, bits_per_value);
     compressed_suffix_array.read_binary(reader).map_err(|_| "Could not read the compressed suffix array from the binary file")?;
     Ok(compressed_suffix_array)
 }

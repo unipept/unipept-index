@@ -11,7 +11,7 @@ use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
 // ── InMemoryProteinText ───────────────────────────────────────────────────────
 
 pub struct InMemoryProteinText {
-    pub(crate) bit_array: BitArray,
+    pub(crate) bit_array: BitArray<5>,
     pub(crate) char_to_5bit: HashMap<u8, u8>,
 }
 
@@ -22,7 +22,7 @@ impl InMemoryProteinText {
 
     pub fn from_string(input_string: &str) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
-        let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
+        let mut bit_array = BitArray::<5>::with_capacity(input_string.len());
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 = *char_to_5bit.get(&(c as u8))
                 .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
@@ -33,7 +33,7 @@ impl InMemoryProteinText {
 
     pub fn from_vec(input_vec: &[u8]) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
-        let mut bit_array = BitArray::with_capacity(input_vec.len(), 5);
+        let mut bit_array = BitArray::<5>::with_capacity(input_vec.len());
         for (i, e) in input_vec.iter().enumerate() {
             let char_5bit: u8 = *char_to_5bit.get(e)
                 .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
@@ -42,12 +42,12 @@ impl InMemoryProteinText {
         Self { bit_array, char_to_5bit }
     }
 
-    pub fn new(bit_array: BitArray) -> Self {
+    pub fn new(bit_array: BitArray<5>) -> Self {
         Self { bit_array, char_to_5bit: Self::create_char_to_5bit_hashmap() }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        Self::new(BitArray::with_capacity(capacity, 5))
+        Self::new(BitArray::<5>::with_capacity(capacity))
     }
 
     pub fn set(&mut self, index: usize, value: u8) {
@@ -62,7 +62,7 @@ impl InMemoryProteinText {
 impl ProteinTextBackend for InMemoryProteinText {
     #[inline]
     fn get(&self, index: usize) -> u8 {
-        BIT5_TO_CHAR[self.bit_array.get_const::<5>(index) as usize]
+        BIT5_TO_CHAR[self.bit_array.get(index) as usize]
     }
 
     #[inline]
@@ -94,7 +94,7 @@ impl ReadBinary for InMemoryProteinText {
         let text_length = u64::from_le_bytes(buf8) as usize;
 
         let n_bytes = bit_array_byte_size(text_length);
-        let mut bit_array = BitArray::with_capacity(text_length, 5);
+        let mut bit_array = BitArray::<5>::with_capacity(text_length);
         let mut limited = <&mut R as Read>::take(reader, n_bytes as u64);
         bit_array
             .read_binary(&mut limited)
@@ -117,11 +117,10 @@ pub fn dump_compressed_text(text: Vec<u8>, writer: &mut impl Write) -> Result<()
 }
 
 pub fn load_compressed_text(reader: &mut impl BufRead) -> Result<InMemoryProteinText, Box<dyn Error>> {
-    let bits_per_value: usize = 5;
     let mut size_buffer = [0_u8; 8];
     reader.read_exact(&mut size_buffer).map_err(|_| "Could not read the size of the text from the binary file")?;
     let size = u64::from_le_bytes(size_buffer) as usize;
-    let mut compressed_text = BitArray::with_capacity(size, bits_per_value);
+    let mut compressed_text = BitArray::<5>::with_capacity(size);
     compressed_text.read_binary(reader).map_err(|_| "Could not read the compressed text from the binary file")?;
     Ok(InMemoryProteinText::new(compressed_text))
 }
@@ -185,7 +184,7 @@ mod tests {
     fn test_build_from_bitarray() {
         let input_string = "ACACA-CAC$";
         let char_to_5bit = InMemoryProteinText::create_char_to_5bit_hashmap();
-        let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
+        let mut bit_array = BitArray::<5>::with_capacity(input_string.len());
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 = *char_to_5bit.get(&(c as u8)).unwrap();
             bit_array.set(i, char_5bit as u64);

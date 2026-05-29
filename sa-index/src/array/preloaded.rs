@@ -1,7 +1,7 @@
 // Non-mmap builds only — handles the runtime Original-vs-Compressed decision.
 use std::{error::Error, io::BufRead};
 
-use bitarray::BitArrayRangeIter;
+use bitarray::DynBitArrayRangeIter;
 use text_compression::{ReadBinary, WriteBinary};
 
 use super::{SuffixArrayBackend, OriginalSA, OriginalRangeIter, CompressedSA};
@@ -31,7 +31,7 @@ pub enum InMemorySA {
 
 pub enum InMemoryRangeIter<'a> {
     Original(OriginalRangeIter<'a>),
-    Compressed(BitArrayRangeIter<'a>),
+    Compressed(DynBitArrayRangeIter<'a>),
 }
 
 impl Iterator for InMemoryRangeIter<'_> {
