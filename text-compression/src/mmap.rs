@@ -3,10 +3,10 @@ use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
+use binary_traits::{WriteBinary, ReadBinaryMmap};
 
 use memmap2::Mmap;
 
-use crate::traits::{WriteBinary, ReadBinaryMmap};
 use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
 
 // ── MmapBackedProteinText ─────────────────────────────────────────────────────
