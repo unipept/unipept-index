@@ -62,6 +62,7 @@ impl ProteinsBackend for MmapBackedProteins {
         if fa_ptr  < self.mmap.len() { prefetch::prefetch_read(&self.mmap[fa_ptr]  as *const u8); }
     }
 
+    #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;
         let entry_off = self.fixed_table_offset + index * eo::ENTRY_SIZE;

@@ -47,6 +47,7 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         MmapSaRangeIter::new(&self.mmap, self.data_offset, self.bits_per_value, start, end)
     }
 
+    #[inline]
     fn prefetch_sa_index(&self, index: usize) {
         let byte_offset = self.data_offset + (index * self.bits_per_value) / 8;
         if byte_offset < self.mmap.len() {
@@ -69,6 +70,7 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         let _ = self.mmap.advise(memmap2::Advice::Random);
     }
 
+    #[inline]
     fn prefetch_sa_range(&self, lo: usize, hi_exclusive: usize) {
         #[cfg(unix)]
         {

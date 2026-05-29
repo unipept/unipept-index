@@ -15,6 +15,7 @@ pub struct SparseSuffixToProtein {
 }
 
 impl SuffixToProteinMappingBackend for SparseSuffixToProtein {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let protein_index = self.mapping.binary_search(&suffix).unwrap_or_else(|index| index - 1);
         // if the next value in the mapping is 1 larger than the current suffix, that means that the

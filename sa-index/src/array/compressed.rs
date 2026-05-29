@@ -22,6 +22,7 @@ impl super::SuffixArrayBackend for CompressedSA {
         self.0.iter_range(start, end)
     }
 
+    #[inline]
     fn prefetch_sa_index(&self, index: usize) {
         if index < self.0.len() {
             let word_idx = (index * self.0.bits_per_value()) / 64;

@@ -58,6 +58,7 @@ impl MmapBitVecSuffixToProtein {
 }
 
 impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let pos = suffix as u64;
         if pos >= self.bit_len {

@@ -26,12 +26,14 @@ impl super::SuffixArrayBackend for OriginalSA {
     fn len(&self) -> usize { self.0.len() }
     fn bits_per_value(&self) -> usize { 64 }
     fn sample_rate(&self) -> u8 { self.1 }
+    #[inline]
     fn get(&self, index: usize) -> i64 { self.0[index] }
 
     fn iter_range(&self, start: usize, end: usize) -> OriginalRangeIter<'_> {
         OriginalRangeIter(self.0.get(start..end).unwrap_or(&[]).iter())
     }
 
+    #[inline]
     fn prefetch_sa_index(&self, index: usize) {
         if index < self.0.len() {
             let ptr: *const i64 = &self.0[index];

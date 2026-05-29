@@ -59,8 +59,6 @@ impl SuffixArrayBackend for InMemorySA {
     fn sample_rate(&self) -> u8       { dispatch!(self, sample_rate()) }
     #[inline]
     fn get(&self, index: usize) -> i64 { dispatch!(self, get(index)) }
-    fn prefetch_sa_index(&self, index: usize) { dispatch!(self, prefetch_sa_index(index)) }
-
     // iter_range needs a manual match: each arm wraps its backend's native iterator
     // type into the appropriate InMemoryRangeIter variant.
     fn iter_range(&self, start: usize, end: usize) -> InMemoryRangeIter<'_> {
@@ -69,6 +67,9 @@ impl SuffixArrayBackend for InMemorySA {
             Self::Compressed(b) => InMemoryRangeIter::Compressed(b.iter_range(start, end)),
         }
     }
+
+    #[inline]
+    fn prefetch_sa_index(&self, index: usize) { dispatch!(self, prefetch_sa_index(index)) }
 }
 
 // ── ReadBinary / WriteBinary ──────────────────────────────────────────────────

@@ -149,7 +149,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// - `matched_len` is how many characters of `search_string` matched the suffix.
     ///
     /// L and I are treated as equal during matching because the index was built with L → I.
-    #[inline]
     fn compare(&self, search_string: &[u8], suffix: i64, skip: usize, bound: BoundSearch) -> (bool, usize) {
         let text = self.proteins.text();
         let text_len = text.len();
@@ -195,7 +194,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ///
     /// Returns `(found, bound_index)` where `found` is true if any suffix matched the full
     /// search string, and `bound_index` is the min (inclusive) or max (inclusive) SA index.
-    #[inline]
     fn binary_search_bound_in_range(
         &self,
         bound: BoundSearch,
@@ -471,6 +469,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// # Returns
     ///
     /// Returns true if `search_string` and `index_string` are considered the same, otherwise false
+    #[inline]
     fn check_suffix(
         skip: usize,
         il_locations: &[usize],

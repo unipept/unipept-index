@@ -78,6 +78,7 @@ impl ProteinsBackend for InMemoryProteins {
     fn text(&self) -> &InMemoryProteinText { &self.text }
     fn len(&self) -> usize { self.proteins.len() }
 
+    #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         let p = &self.proteins[index];
         ProteinRef { uniprot_id: &p.uniprot_id, taxon_id: p.taxon_id, functional_annotations: &p.functional_annotations }

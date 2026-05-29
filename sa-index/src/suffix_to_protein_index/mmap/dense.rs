@@ -12,6 +12,7 @@ pub struct MmapDenseSuffixToProtein {
 }
 
 impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let off = self.data_offset + suffix as usize * 4;
         u32::from_le_bytes(self.mmap[off..off + 4].try_into().unwrap())

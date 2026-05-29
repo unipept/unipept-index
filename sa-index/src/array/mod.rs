@@ -35,6 +35,7 @@ pub trait SuffixArrayBackend: Send + Sync {
     /// Touch every mapped page. Default: no-op (non-mmap backends).
     fn touch_all_pages(&self) {}
     /// Issue `MADV_WILLNEED` for the SA pages covering `lo..hi_exclusive`. Default: no-op.
+    #[inline]
     fn prefetch_sa_range(&self, _lo: usize, _hi_exclusive: usize) {}
 
     fn is_empty(&self) -> bool { self.len() == 0 }

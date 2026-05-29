@@ -16,6 +16,7 @@ pub struct BitVecSuffixToProtein {
 }
 
 impl SuffixToProteinMappingBackend for BitVecSuffixToProtein {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let suffix: u64 = suffix.try_into().unwrap();
         if self.rank.get_bit(suffix) {

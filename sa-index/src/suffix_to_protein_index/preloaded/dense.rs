@@ -16,6 +16,7 @@ pub struct DenseSuffixToProtein {
 }
 
 impl SuffixToProteinMappingBackend for DenseSuffixToProtein {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         self.mapping[suffix as usize]
     }

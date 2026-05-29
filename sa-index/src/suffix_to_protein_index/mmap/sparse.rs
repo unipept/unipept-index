@@ -14,6 +14,7 @@ pub struct MmapSparseSuffixToProtein {
 }
 
 impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         let read_val = |i: usize| -> i64 {
             let off = self.data_offset + i * 8;
