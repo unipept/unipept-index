@@ -62,7 +62,7 @@ impl InMemoryProteinText {
 impl ProteinTextBackend for InMemoryProteinText {
     #[inline]
     fn get(&self, index: usize) -> u8 {
-        BIT5_TO_CHAR[self.bit_array.get(index) as usize]
+        BIT5_TO_CHAR[self.bit_array.get_const::<5>(index) as usize]
     }
 
     fn len(&self) -> usize { self.bit_array.len() }

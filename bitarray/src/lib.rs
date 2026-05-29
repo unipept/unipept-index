@@ -79,6 +79,22 @@ impl BitArray {
         (a | b) & self.mask
     }
 
+    /// Like `get`, but with `BITS` as a const generic so LLVM folds all arithmetic at compile time.
+    /// Use this when the bits-per-value is known at the call site (e.g. always 5 for protein text).
+    #[inline]
+    pub fn get_const<const BITS: usize>(&self, index: usize) -> u64 {
+        let mask: u64 = u64::MAX >> (64 - BITS);
+        let bit_offset = index * BITS;
+        let start_block = bit_offset / 64;
+        let start_bit = bit_offset % 64;
+        if start_bit + BITS <= 64 {
+            (self.data[start_block] >> (64 - start_bit - BITS)) & mask
+        } else {
+            let end_bit = (index + 1) * BITS % 64;
+            ((self.data[start_block] << end_bit) | (self.data[start_block + 1] >> (64 - end_bit))) & mask
+        }
+    }
+
     /// Sets the value at the specified index in the `BitArray`.
     ///
     /// # Arguments
