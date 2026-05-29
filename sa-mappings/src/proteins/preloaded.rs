@@ -74,6 +74,7 @@ impl InMemoryProteins {
 impl ProteinsBackend for InMemoryProteins {
     type Text = InMemoryProteinText;
 
+    #[inline]
     fn text(&self) -> &InMemoryProteinText { &self.text }
     fn len(&self) -> usize { self.proteins.len() }
 

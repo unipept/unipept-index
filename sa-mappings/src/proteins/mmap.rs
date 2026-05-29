@@ -29,6 +29,7 @@ mod entry_offsets {
 impl ProteinsBackend for MmapBackedProteins {
     type Text = ProteinText;
 
+    #[inline]
     fn text(&self) -> &ProteinText { &self.text }
     fn len(&self) -> usize { self.protein_count }
 
