@@ -52,6 +52,7 @@ impl BitArray {
     /// # Returns
     ///
     /// The value at the specified index.
+    #[inline]
     pub fn get(&self, index: usize) -> u64 {
         let start_block = index * self.bits_per_value / 64;
         let start_block_offset = index * self.bits_per_value % 64;
