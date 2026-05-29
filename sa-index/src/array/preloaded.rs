@@ -57,6 +57,7 @@ impl SuffixArrayBackend for InMemorySA {
     fn len(&self) -> usize            { dispatch!(self, len()) }
     fn bits_per_value(&self) -> usize { dispatch!(self, bits_per_value()) }
     fn sample_rate(&self) -> u8       { dispatch!(self, sample_rate()) }
+    #[inline]
     fn get(&self, index: usize) -> i64 { dispatch!(self, get(index)) }
     fn prefetch_sa_index(&self, index: usize) { dispatch!(self, prefetch_sa_index(index)) }
 

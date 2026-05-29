@@ -65,6 +65,7 @@ impl ProteinTextBackend for InMemoryProteinText {
         BIT5_TO_CHAR[self.bit_array.get_const::<5>(index) as usize]
     }
 
+    #[inline]
     fn len(&self) -> usize { self.bit_array.len() }
 
     #[inline]

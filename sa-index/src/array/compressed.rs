@@ -15,6 +15,7 @@ impl super::SuffixArrayBackend for CompressedSA {
     fn len(&self) -> usize { self.0.len() }
     fn bits_per_value(&self) -> usize { self.0.bits_per_value() }
     fn sample_rate(&self) -> u8 { self.1 }
+    #[inline]
     fn get(&self, index: usize) -> i64 { self.0.get(index) as i64 }
 
     fn iter_range(&self, start: usize, end: usize) -> bitarray::BitArrayRangeIter<'_> {

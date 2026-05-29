@@ -21,6 +21,7 @@ pub enum MmapBackedSuffixToProteinMapping {
 }
 
 impl SuffixToProteinMappingBackend for MmapBackedSuffixToProteinMapping {
+    #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
         match self {
             Self::Dense(m) => m.suffix_to_protein(suffix),
@@ -29,6 +30,7 @@ impl SuffixToProteinMappingBackend for MmapBackedSuffixToProteinMapping {
         }
     }
 
+    #[inline]
     fn prefetch_for_suffix(&self, suffix: i64) {
         match self {
             Self::Dense(m) => m.prefetch_for_suffix(suffix),
