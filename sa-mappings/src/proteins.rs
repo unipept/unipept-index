@@ -81,6 +81,10 @@ pub enum Proteins {
 }
 
 impl Proteins {
+    /// Byte size of each fixed-width protein entry in the `MmapBacked` binary format.
+    /// Layout: taxon_id u32 (4) + uid_offset u32 (4) + uid_len u16 (2) + fa_offset u32 (4) + fa_len u16 (2) = 16 bytes.
+    const ENTRY_SIZE: usize = 16;
+
     /// Creates a new in-memory `Proteins` collection.
     pub fn new(text: ProteinText, proteins: Vec<Protein>) -> Self {
         Proteins::InMemory { text, proteins }
@@ -107,6 +111,19 @@ impl Proteins {
         self.len() == 0
     }
 
+    /// Returns just the taxon ID of the protein at `index`, without constructing a full
+    /// `ProteinRef`. This avoids the UTF-8 validation of the UniProt ID and the functional
+    /// annotation slice setup that `get` performs.
+    pub fn get_taxon_id(&self, index: usize) -> u32 {
+        match self {
+            Proteins::InMemory { proteins, .. } => proteins[index].taxon_id,
+            Proteins::MmapBacked { mmap, fixed_table_offset, .. } => {
+                let entry_off = fixed_table_offset + index * Self::ENTRY_SIZE;
+                u32::from_le_bytes(mmap[entry_off..entry_off + 4].try_into().unwrap())
+            }
+        }
+    }
+
     /// Returns a zero-copy view of the protein at `index`.
     pub fn get(&self, index: usize) -> ProteinRef<'_> {
         match self {
@@ -119,8 +136,8 @@ impl Proteins {
                 }
             }
             Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } => {
-                let entry_off = fixed_table_offset + index * 16;
-                let entry = &mmap[entry_off..entry_off + 16];
+                let entry_off = fixed_table_offset + index * Self::ENTRY_SIZE;
+                let entry = &mmap[entry_off..entry_off + Self::ENTRY_SIZE];
 
                 let taxon_id = u32::from_le_bytes(entry[0..4].try_into().unwrap());
                 let uid_offset = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as usize;

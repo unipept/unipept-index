@@ -506,6 +506,27 @@ impl Searcher {
         }
         res
     }
+
+    /// Returns the taxon IDs of all proteins that correspond with the provided suffixes, without
+    /// constructing intermediate `ProteinRef`s or decoding any string data.
+    ///
+    /// # Arguments
+    /// * `suffixes` - List of suffix indices
+    ///
+    /// # Returns
+    ///
+    /// Returns the taxon ID of each protein that a suffix belongs to
+    #[inline]
+    pub fn retrieve_taxa(&self, suffixes: &[i64]) -> Vec<u32> {
+        let mut res = Vec::with_capacity(suffixes.len());
+        for &suffix in suffixes {
+            let protein_index = self.suffix_index_to_protein.suffix_to_protein(suffix);
+            if !protein_index.is_null() {
+                res.push(self.proteins.get_taxon_id(protein_index as usize));
+            }
+        }
+        res
+    }
 }
 
 #[cfg(test)]

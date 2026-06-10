@@ -11,6 +11,16 @@ pub struct SearchResult {
     pub cutoff_used: bool
 }
 
+/// A lightweight search result that contains only the (deduplicated) taxon IDs matching a peptide.
+/// Intended for consumers such as `pept2taxa` and `pept2lca` that do not need protein accessions
+/// or functional annotations.
+#[derive(Debug, Serialize)]
+pub struct TaxaSearchResult {
+    pub sequence: String,
+    pub taxa: Vec<u32>,
+    pub cutoff_used: bool
+}
+
 /// Struct that represents all information known about a certain protein in our database
 #[derive(Debug, Serialize)]
 pub struct ProteinInfo {
@@ -26,6 +36,38 @@ impl From<ProteinRef<'_>> for ProteinInfo {
             uniprot_accession: protein.uniprot_id.to_string(),
             functional_annotations: protein.get_functional_annotations()
         }
+    }
+}
+
+/// Shared suffix-search step: normalises the peptide, checks the minimum length, runs the suffix
+/// array lookup, and returns the matched suffixes together with a flag indicating whether the
+/// cutoff was reached.
+///
+/// Both `search_proteins_for_peptide` and `search_taxa_for_peptide` delegate to this helper so
+/// the common logic lives in one place.
+///
+/// # Returns
+///
+/// Returns `Some((cutoff_used, suffixes))` if matches were found, or `None` if the peptide is
+/// shorter than the sparseness factor k or produced no matches.
+fn search_suffixes_for_peptide(
+    searcher: &Searcher,
+    peptide: &str,
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool
+) -> Option<(bool, Vec<i64>)> {
+    let peptide = peptide.trim_end().to_uppercase();
+
+    // words that are shorter than the sample rate are not searchable
+    if peptide.len() < searcher.sa.sample_rate() as usize {
+        return None;
+    }
+
+    match searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il, tryptic) {
+        SearchAllSuffixesResult::MaxMatches(s) => Some((true, s)),
+        SearchAllSuffixesResult::SearchResult(s) => Some((false, s)),
+        SearchAllSuffixesResult::NoMatches => None
     }
 }
 
@@ -54,22 +96,9 @@ pub fn search_proteins_for_peptide<'a>(
     equate_il: bool,
     tryptic: bool
 ) -> Option<(bool, Vec<ProteinRef<'a>>)> {
-    let peptide = peptide.trim_end().to_uppercase();
-
-    // words that are shorter than the sample rate are not searchable
-    if peptide.len() < searcher.sa.sample_rate() as usize {
-        return None;
-    }
-
-    let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il, tryptic);
-    let (suffixes, cutoff_used) = match suffix_search {
-        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
-        SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
-        SearchAllSuffixesResult::NoMatches => None
-    }?;
-
+    let (cutoff_used, suffixes) =
+        search_suffixes_for_peptide(searcher, peptide, cutoff, equate_il, tryptic)?;
     let proteins = searcher.retrieve_proteins(&suffixes);
-
     Some((cutoff_used, proteins))
 }
 
@@ -106,7 +135,7 @@ pub fn search_peptide(
 /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
 pub fn search_all_peptides(
     searcher: &Searcher,
-    peptides: &Vec<String>,
+    peptides: &[String],
     cutoff: usize,
     equate_il: bool,
     tryptic: bool
@@ -114,6 +143,67 @@ pub fn search_all_peptides(
     peptides
         .par_iter()
         .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il, tryptic))
+        .collect()
+}
+
+/// Lightweight variant of `search_peptide` that returns only the deduplicated taxon IDs matching
+/// `peptide`. No protein accessions or functional annotations are constructed, making this
+/// significantly cheaper for consumers such as `pept2taxa` and `pept2lca`.
+///
+/// # Arguments
+/// * `searcher` - The Searcher which contains the protein database
+/// * `peptide` - The peptide that is being searched in the index
+/// * `cutoff` - The maximum amount of matches we want to process from the index
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
+/// * `tryptic` - Boolean indicating if we only want tryptic matches.
+///
+/// # Returns
+///
+/// Returns `Some(TaxaSearchResult)` with sorted, deduplicated taxon IDs if any matches were
+/// found. Returns `None` if the peptide produced no matches or is shorter than the sparseness
+/// factor k used in the index.
+pub fn search_taxa_for_peptide(
+    searcher: &Searcher,
+    peptide: &str,
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool
+) -> Option<TaxaSearchResult> {
+    let (cutoff_used, suffixes) =
+        search_suffixes_for_peptide(searcher, peptide, cutoff, equate_il, tryptic)?;
+
+    let mut taxa = searcher.retrieve_taxa(&suffixes);
+    taxa.sort_unstable();
+    taxa.dedup();
+
+    Some(TaxaSearchResult { sequence: peptide.to_string(), taxa, cutoff_used })
+}
+
+/// Searches the list of `peptides` in the index and returns, for each peptide, the deduplicated
+/// taxon IDs of all matching proteins. No protein accessions or functional annotations are
+/// constructed; this is the preferred entry point for `pept2taxa` / `pept2lca` consumers.
+///
+/// # Arguments
+/// * `searcher` - The Searcher which contains the protein database
+/// * `peptides` - List of peptides we want to search in the index
+/// * `cutoff` - The maximum amount of matches we want to process from the index
+/// * `equate_il` - Boolean indicating if we want to equate I and L during search
+/// * `tryptic` - Boolean indicating if we only want tryptic matches.
+///
+/// # Returns
+///
+/// Returns a `Vec<TaxaSearchResult>`, one entry per peptide that produced at least one match.
+/// Peptides with no matches are omitted (same behaviour as `search_all_peptides`).
+pub fn search_all_taxa(
+    searcher: &Searcher,
+    peptides: &[String],
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool
+) -> Vec<TaxaSearchResult> {
+    peptides
+        .par_iter()
+        .filter_map(|peptide| search_taxa_for_peptide(searcher, peptide, cutoff, equate_il, tryptic))
         .collect()
 }
 
@@ -153,6 +243,21 @@ mod tests {
 
         let generated_json = serde_json::to_string(&search_result).unwrap();
         let expected_json = "{\"sequence\":\"MSKIAALLPSV\",\"proteins\":[],\"cutoff_used\":true}";
+
+        assert_json_eq(&generated_json, expected_json);
+    }
+
+    #[test]
+    fn test_serialize_taxa_search_result() {
+        let taxa_search_result = TaxaSearchResult {
+            sequence: "MSKIAALLPSV".to_string(),
+            taxa: vec![1, 9606],
+            cutoff_used: false
+        };
+
+        let generated_json = serde_json::to_string(&taxa_search_result).unwrap();
+        let expected_json =
+            "{\"sequence\":\"MSKIAALLPSV\",\"taxa\":[1,9606],\"cutoff_used\":false}";
 
         assert_json_eq(&generated_json, expected_json);
     }
