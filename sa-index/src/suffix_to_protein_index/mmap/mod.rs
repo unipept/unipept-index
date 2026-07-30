@@ -52,6 +52,13 @@ impl ReadBinaryMmap for MmapBackedSuffixToProteinMapping {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = std::fs::File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
+
+        // Experiment: env-gated transparent huge pages (see sa-index/array/mmap.rs).
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("SA_MADV_HUGEPAGE").is_some() {
+            let _ = mmap.advise(memmap2::Advice::HugePage);
+        }
+
         if mmap.is_empty() {
             return Err("Mapping file is empty".into());
         }

@@ -96,6 +96,12 @@ impl ReadBinaryMmap for MmapBackedProteins {
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
 
+        // Experiment: env-gated transparent huge pages (see sa-index/array/mmap.rs).
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("SA_MADV_HUGEPAGE").is_some() {
+            let _ = mmap.advise(memmap2::Advice::HugePage);
+        }
+
         let mmap_len = mmap.len();
         if mmap_len < 8 { return Err("proteins file too short to contain text header".into()); }
 
