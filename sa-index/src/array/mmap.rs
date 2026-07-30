@@ -92,14 +92,6 @@ impl ReadBinaryMmap for MmapBackedSA {
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random)?;
 
-        // Experiment: request transparent huge pages (2 MB) to cut TLB pressure on the
-        // large random-access mapping. Env-gated so baseline is unchanged; error ignored
-        // so a kernel without THP support degrades to normal pages instead of failing.
-        #[cfg(target_os = "linux")]
-        if std::env::var_os("SA_MADV_HUGEPAGE").is_some() {
-            let _ = mmap.advise(memmap2::Advice::HugePage);
-        }
-
         if mmap.len() < 10 {
             return Err("The binary file is too small to contain the SA header".into());
         }
