@@ -269,19 +269,42 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, args: &Args, peptides: &[Stri
     // Reset per-run timing accumulators before the search phase.
     searcher.drain_timing_ns();
 
-    // Phase 1: suffix array search (parallel)
+    // Phase 1: suffix array search (parallel).
+    // SA_MLP_BATCH=B (>1) interleaves B peptides per rayon task for memory-level
+    // parallelism; unset/1 uses the scalar one-peptide-at-a-time path.
+    let mlp_batch: usize = std::env::var("SA_MLP_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&b| b > 1)
+        .unwrap_or(1);
+
     let search_start = Instant::now();
-    let suffix_results: Vec<SearchAllSuffixesResult> = peptides
-        .par_iter()
-        .map(|p| {
-            searcher.search_matching_suffixes(
-                p.as_bytes(),
-                args.max_matches,
-                args.equate_il,
-                args.tryptic,
-            )
-        })
-        .collect();
+    let suffix_results: Vec<SearchAllSuffixesResult> = if mlp_batch > 1 {
+        peptides
+            .par_chunks(mlp_batch)
+            .flat_map(|chunk| {
+                let refs: Vec<&[u8]> = chunk.iter().map(|p| p.as_bytes()).collect();
+                searcher.search_matching_suffixes_batched(
+                    &refs,
+                    args.max_matches,
+                    args.equate_il,
+                    args.tryptic,
+                )
+            })
+            .collect()
+    } else {
+        peptides
+            .par_iter()
+            .map(|p| {
+                searcher.search_matching_suffixes(
+                    p.as_bytes(),
+                    args.max_matches,
+                    args.equate_il,
+                    args.tryptic,
+                )
+            })
+            .collect()
+    };
     let search_duration_ns = search_start.elapsed().as_nanos() as u64;
 
     // Read internal timing breakdown (bounds lookup vs match iteration).
