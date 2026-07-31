@@ -13,9 +13,10 @@
 #   MLP_AMT    = peptides per run (default 10000)
 #   MLP_BATCHES= space-separated B values (default "1 4 8 16 32 64 128")
 #   MLP_WORK   = scratch/results dir (default /tmp/mlp-sweep)
-#   MLP_KMER   = k for an in-memory k-mer bounds table (empty = off). Big win: fewer
-#                random probes -> fewer page walks. Try 5. (In production, prefer a
-#                pre-built table via sa-builder --output-kmer-table + sa-server.)
+#   MLP_KMER_FILE = path to a pre-built k-mer table file (matches production; loaded once,
+#                no per-run build). PREFER THIS if you already have the file.
+#   MLP_KMER   = k to BUILD an in-memory k-mer table instead (rebuilt every run; only for
+#                quick A/B when you don't have a file). Ignored if MLP_KMER_FILE is set.
 #   MLP_HUGEPAGE = 1 to set SA_MADV_HUGEPAGE (preloaded only; huge pages for its Vecs).
 set -euo pipefail
 
@@ -28,17 +29,26 @@ AMT="${MLP_AMT:-10000}"
 read -r -a BATCHES <<< "${MLP_BATCHES:-1 4 8 16 32 64 128}"
 WORK="${MLP_WORK:-/tmp/mlp-sweep}"
 KMER="${MLP_KMER:-}"
-KMER_ARG=(); [ -n "$KMER" ] && KMER_ARG=(--build-kmer-table "$KMER")
+KMER_FILE="${MLP_KMER_FILE:-}"
+KMER_ARG=()
+if [ -n "$KMER_FILE" ]; then
+  [ -f "$KMER_FILE" ] || { echo "ERROR: MLP_KMER_FILE not found: $KMER_FILE"; exit 1; }
+  KMER_ARG=(--kmer-table-file "$KMER_FILE")
+elif [ -n "$KMER" ]; then
+  KMER_ARG=(--build-kmer-table "$KMER")
+fi
 
 [ -f "$IDX/sa.bin" ] || { echo "ERROR: no sa.bin in $IDX (set MLP_INDEX)"; exit 1; }
 [ -f "$PEP" ]        || { echo "ERROR: peptide file not found: $PEP (set MLP_PEP)"; exit 1; }
 
 # Tag the results dir by config so k-mer/huge-page variants don't collide with the
 # per-B result cache (files are labeled b_<B>).
-TAG="$BACKEND"; [ -n "$KMER" ] && TAG="$TAG-k$KMER"; [ "${MLP_HUGEPAGE:-}" = 1 ] && TAG="$TAG-hp"
+TAG="$BACKEND"
+if [ -n "$KMER_FILE" ]; then TAG="$TAG-kfile"; KDESC="file:$KMER_FILE"; elif [ -n "$KMER" ]; then TAG="$TAG-k$KMER"; KDESC="build:k=$KMER"; else KDESC="off"; fi
+[ "${MLP_HUGEPAGE:-}" = 1 ] && TAG="$TAG-hp"
 OUT="$WORK/$TAG"; mkdir -p "$OUT"
 if [ "$BACKEND" = mmap ]; then FEAT="--features mmap"; WARMUP="all:$((AMT*10))"; else FEAT=""; WARMUP="$((AMT*10))"; fi
-echo "== Config: backend=$BACKEND kmer=${KMER:-off} hugepage=${MLP_HUGEPAGE:-off} -> $OUT =="
+echo "== Config: backend=$BACKEND kmer=$KDESC hugepage=${MLP_HUGEPAGE:-off} -> $OUT =="
 
 echo "== Build $BACKEND =="
 (cd "$REPO" && cargo build --release -q -p sa-benchmarks --no-default-features $FEAT)
