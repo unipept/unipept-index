@@ -74,11 +74,11 @@ struct Args {
     label: String,
 
     /// Equate I and L during search
-    #[arg(long, default_value_t = true)]
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
     equate_il: bool,
 
     /// Only return tryptic matches
-    #[arg(long, default_value_t = false)]
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
     tryptic: bool,
 
     /// Maximum number of suffix matches per peptide before the cutoff is applied
