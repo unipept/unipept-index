@@ -403,7 +403,27 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
+    use std::sync::atomic::Ordering;
+
+    use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
+    use text_compression::ProteinText;
+
     use super::SearchAllSuffixesResult;
+    use crate::{
+        array::OriginalSA,
+        sa_searcher::{test_helpers::get_example_proteins, Searcher},
+        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
+        SuffixArray,
+    };
+
+    // A full suffix array over the example proteins (positions never L/I-normalized here).
+    fn example_searcher() -> Searcher<SuffixArray> {
+        let proteins = get_example_proteins();
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+        Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
+    }
 
     #[test]
     fn test_partial_eq_search_all_suffixes_result() {
@@ -423,5 +443,61 @@ mod tests {
         assert_eq!(search_all_suffixes_result_7, search_all_suffixes_result_8);
         assert_ne!(search_all_suffixes_result_1, search_all_suffixes_result_7);
         assert_ne!(search_all_suffixes_result_4, search_all_suffixes_result_7);
+    }
+
+    // Direct test of the protein-boundary checks used by tryptic filtering.
+    // Text "AI-CLACVAA-AC-KCRLY$": separators at 2/10/13, termination at 19.
+    #[test]
+    fn test_check_protein_boundaries() {
+        let searcher = example_searcher();
+
+        // start of a protein: index 0, or immediately after a separator
+        for i in [0usize, 3, 11, 14] {
+            assert!(searcher.check_start_of_protein(i), "expected protein start at {i}");
+        }
+        for i in [1usize, 5, 12] {
+            assert!(!searcher.check_start_of_protein(i), "unexpected protein start at {i}");
+        }
+
+        // end of a protein: the position itself holds a separator or termination char
+        for i in [2usize, 10, 13, 19] {
+            assert!(searcher.check_end_of_protein(i), "expected protein end at {i}");
+        }
+        for i in [0usize, 1, 5] {
+            assert!(!searcher.check_end_of_protein(i), "unexpected protein end at {i}");
+        }
+    }
+
+    // A tryptic cut is valid iff preceded by K or R and NOT followed by proline (P).
+    #[test]
+    fn test_check_tryptic_cut() {
+        // K(0) A(1) R(2) C(3) K(4) P(5) D(6) $(7)
+        let text = ProteinText::from_string("KARCKPD$");
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        // check_tryptic_cut only reads the text, so the SA content is irrelevant here.
+        let sa = SuffixArray::Original(OriginalSA(vec![0, 1, 2, 3, 4, 5, 6, 7], 1));
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        assert!(searcher.check_tryptic_cut(1)); // after K, C follows
+        assert!(searcher.check_tryptic_cut(3)); // after R, C follows
+        assert!(!searcher.check_tryptic_cut(5)); // after K but P follows (proline blocks)
+        assert!(!searcher.check_tryptic_cut(2)); // preceded by A, not K/R
+    }
+
+    // drain_timing_ns returns the accumulated counters and resets them to zero.
+    #[test]
+    fn test_drain_timing_ns() {
+        let searcher = example_searcher();
+        assert_eq!(searcher.drain_timing_ns(), (0, 0));
+
+        searcher.search_bounds_ns.store(123, Ordering::Relaxed);
+        searcher.match_iter_ns.store(456, Ordering::Relaxed);
+        assert_eq!(searcher.drain_timing_ns(), (123, 456));
+        assert_eq!(searcher.drain_timing_ns(), (0, 0)); // reset after draining
     }
 }

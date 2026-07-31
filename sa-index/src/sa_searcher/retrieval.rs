@@ -52,7 +52,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use sa_mappings::proteins::ProteinsBackend as _;
+    use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
+    use text_compression::ProteinText;
 
     use crate::{
         array::OriginalSA,
@@ -96,5 +97,47 @@ mod tests {
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
 
         assert!(searcher.retrieve_proteins(&[]).is_empty());
+    }
+
+    // > PREFETCH_DISTANCE (32) suffixes to exercise the two-pass prefetch-ahead loop.
+    #[test]
+    fn test_retrieve_proteins_many() {
+        let n = 70usize;
+        let mut input = "A".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 5,
+            functional_annotations: vec![],
+        }]);
+        // SA of A^n$ is [n, n-1, …, 0].
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        let suffixes = match searcher.search_matching_suffixes(b"A", usize::MAX, false, false) {
+            SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
+            SearchAllSuffixesResult::NoMatches => vec![],
+        };
+        assert_eq!(suffixes.len(), n);
+        let found = searcher.retrieve_proteins(&suffixes);
+        assert_eq!(found.len(), n);
+        assert!(found.iter().all(|p| p.taxon_id == 5));
+    }
+
+    // A separator position maps to u32::NULL and must be skipped (not returned).
+    #[test]
+    fn test_retrieve_proteins_skips_separators() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // position 0 = protein 0 ('A', taxon 10); position 2 = separator ('-', null).
+        let found = searcher.retrieve_proteins(&[0, 2]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].taxon_id, 10);
     }
 }

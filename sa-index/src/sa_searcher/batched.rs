@@ -348,4 +348,42 @@ mod tests {
             vec![b"CLA", b"ACVAA", b"KCRLY", b"VAA", b"LACVAA", b"CVAA", b"CLACVAA", b"ZZZ"];
         check_batched!(&searcher, &peptides);
     }
+
+    #[test]
+    fn test_batched_empty() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        assert!(searcher.search_matching_suffixes_batched(&[], usize::MAX, false, false).is_empty());
+    }
+
+    // The batched search must give the same result with a k-mer table as the plain scalar
+    // search (covers search_bounds_batched's k-mer branch). L/I-free prefixes only, since the
+    // raw test SA is not L->I normalized (see the scalar k-mer test for the reason).
+    #[test]
+    fn test_batched_with_kmer_table() {
+        let make = || {
+            let proteins = get_example_proteins();
+            let stp = BitVecSuffixToProtein::new(proteins.text());
+            let sa = SuffixArray::Original(OriginalSA(
+                vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+            Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
+        };
+        let reference = make();
+        let mut kmered = make();
+        kmered.build_kmer_table(3);
+
+        let peptides: Vec<&[u8]> = vec![b"VAA", b"CVAA", b"KCR", b"KCRLY", b"AC", b"ZZZ"];
+        let batched = kmered.search_matching_suffixes_batched(&peptides, usize::MAX, false, false);
+        for (i, p) in peptides.iter().enumerate() {
+            assert_eq!(
+                batched[i],
+                reference.search_matching_suffixes(p, usize::MAX, false, false),
+                "batched+kmer vs plain scalar mismatch for {:?}", std::str::from_utf8(p).unwrap()
+            );
+        }
+    }
 }
