@@ -86,4 +86,15 @@ mod tests {
         taxa.sort();
         assert_eq!(taxa, vec![10, 20, 20, 20, 30]);
     }
+
+    #[test]
+    fn test_retrieve_proteins_empty() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        assert!(searcher.retrieve_proteins(&[]).is_empty());
+    }
 }

@@ -456,4 +456,74 @@ mod tests {
         let found_suffixes_2 = searcher.search_matching_suffixes(b"APAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_2, SearchAllSuffixesResult::SearchResult(vec![9]));
     }
+
+    // Attaching a k-mer bounds table must not change results, only narrow the search.
+    //
+    // The table's k-mer prefixes must be L/I-free here: these test fixtures use a raw
+    // (non-L→I-normalized) SA, and the k-mer table only groups suffixes contiguously on a
+    // normalized SA (which production builds). Chars beyond the prefix may contain L — those
+    // are resolved by `compare` in the within-range search, so `KCRLY` is fine (prefix `KCR`).
+    #[test]
+    fn test_search_with_kmer_table() {
+        let example_searcher = || {
+            let proteins = get_example_proteins();
+            let stp = BitVecSuffixToProtein::new(proteins.text());
+            let sa = SuffixArray::Original(OriginalSA(
+                vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+            Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
+        };
+        // mix: uses the table (len >= k), bypasses it (len < k), and misses entirely
+        let peptides: Vec<&[u8]> = vec![b"VAA", b"CVAA", b"KCR", b"KCRLY", b"AC", b"A", b"ZZZ"];
+
+        let plain = example_searcher();
+        let mut kmered = example_searcher();
+        kmered.build_kmer_table(3);
+
+        for p in &peptides {
+            assert_eq!(
+                kmered.search_matching_suffixes(p, usize::MAX, false, false),
+                plain.search_matching_suffixes(p, usize::MAX, false, false),
+                "k-mer vs plain mismatch for {:?}", std::str::from_utf8(p).unwrap()
+            );
+        }
+    }
+
+    // `max_matches` cutoff returns MaxMatches with exactly that many entries.
+    #[test]
+    fn test_max_matches_cutoff() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // "A" has 5 matches; cap at 2.
+        match searcher.search_matching_suffixes(b"A", 2, true, false) {
+            SearchAllSuffixesResult::MaxMatches(v) => assert_eq!(v.len(), 2),
+            other => panic!("expected MaxMatches, got {:?}", other),
+        }
+    }
+
+    // Exercises iterate_sa_range's two-pass prefetch batching (range >= 32) and the batch
+    // refill (> BATCH_SIZE=64), using equate_il=false to force the generic (non-fast) path.
+    #[test]
+    fn test_iterate_sa_range_two_pass() {
+        let n = 70usize;
+        let mut input = "A".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        // SA of A^n$ is [n, n-1, …, 0] ("$" < "A$" < "AA$" < …).
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        let found = searcher.search_matching_suffixes(b"A", usize::MAX, false, false);
+        let expected: Vec<i64> = (0..n as i64).collect();
+        assert_eq!(found, SearchAllSuffixesResult::SearchResult(expected));
+    }
 }
