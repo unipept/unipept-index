@@ -21,7 +21,7 @@
 #   MATRIX_BACKENDS   default "preloaded mmap"
 #   MATRIX_RUNS       timed runs per config (default 20)
 #   MATRIX_AMT        peptides per run (default 10000)
-#   MATRIX_BATCH      batch size for the batched searcher (default 16)
+#   MATRIX_BATCHES    comma-separated MLP batch sizes to sweep, 1=scalar (default "1,16")
 #   MATRIX_KMER5_FILE / MATRIX_KMER6_FILE   pre-built table files; if absent they are built
 #                     in-process (once each)
 #   MATRIX_WORK       scratch + results dir (default /tmp/matrix-bench)
@@ -34,7 +34,8 @@ read -r -a FILES    <<< "${MATRIX_FILES:-small medium large}"
 read -r -a BACKENDS <<< "${MATRIX_BACKENDS:-preloaded mmap}"
 RUNS="${MATRIX_RUNS:-20}"
 AMT="${MATRIX_AMT:-10000}"
-BATCH="${MATRIX_BATCH:-16}"
+BATCHES="${MATRIX_BATCHES:-1,16}"
+IFS=',' read -r -a _BATCH_ARR <<< "$BATCHES"; NBATCH=${#_BATCH_ARR[@]}
 KMER5_FILE="${MATRIX_KMER5_FILE:-$IDX/kmer-tables/5mer_table.bin}"
 KMER6_FILE="${MATRIX_KMER6_FILE:-$IDX/kmer-tables/6mer_table.bin}"
 WORK="${MATRIX_WORK:-/tmp/matrix-bench}"
@@ -57,7 +58,7 @@ KARGS=()
 [ -f "$KMER5_FILE" ] && KARGS+=(--kmer5-file "$KMER5_FILE")
 [ -f "$KMER6_FILE" ] && KARGS+=(--kmer6-file "$KMER6_FILE")
 
-expected=$(( ${#FILES[@]} * 24 * RUNS ))   # records per backend
+expected=$(( ${#FILES[@]} * 4 * NBATCH * 3 * RUNS ))   # files x (eq*tr) x batches x kmer x runs
 for be in "${BACKENDS[@]}"; do
   feat=""; [ "$be" = mmap ] && feat="--features mmap"
   echo "== build $be =="
@@ -68,9 +69,9 @@ for be in "${BACKENDS[@]}"; do
   if [ -f "$OUT/$be.jsonl" ] && [ "$(wc -l < "$OUT/$be.jsonl")" -ge "$expected" ]; then
     echo "== $be already complete, skipping =="; continue
   fi
-  echo "== run $be matrix ($((${#FILES[@]} * 24)) configs x $RUNS runs) =="
+  echo "== run $be matrix ($((${#FILES[@]} * 4 * NBATCH * 3)) configs x $RUNS runs) =="
   "$BIN_DIR/$be" --matrix --index-dir "$IDX" --matrix-files "$csv" "${KARGS[@]}" \
-    --matrix-batch "$BATCH" --amount-of-peptides "$AMT" --runs "$RUNS" --max-matches 10000 \
+    --matrix-batches "$BATCHES" --amount-of-peptides "$AMT" --runs "$RUNS" --max-matches 10000 \
     --output "$OUT" --label "$be"
 done
 
@@ -87,20 +88,20 @@ for p in glob.glob(os.path.join(OUT, "*.jsonl")):
         if not line.strip():
             continue
         r = json.loads(line); c = r["config"]
-        key = (c["peptide_source"], c["equate_il"], c["tryptic"],
-               "batched" if c["batch_size"] > 1 else "scalar",
+        key = (c["peptide_source"], c["equate_il"], c["tryptic"], c["batch_size"],
                {0: "none", 5: "5-mer", 6: "6-mer"}.get(c["kmer_k"], str(c["kmer_k"])))
         data.setdefault(key, {}).setdefault(backend, []).append(r["result"]["throughput_qps"])
 def med(d, b):
     return st.median(d[b]) if b in d and d[b] else None
 for file in sorted({k[0] for k in data}):
     print(f"\n### {file}")
-    print(f"{'equate_il':<9} {'tryptic':<7} {'searcher':<8} {'kmer':<6} {'preloaded':>12} {'mmap':>12} {'mmap/pre':>9}")
+    print(f"{'equate_il':<9} {'tryptic':<7} {'batch':<7} {'kmer':<6} {'preloaded':>12} {'mmap':>12} {'mmap/pre':>9}")
     for k in sorted((k for k in data if k[0] == file), key=lambda k: (k[1], k[2], k[3], k[4])):
         d = data[k]; pre = med(d, "preloaded"); mm = med(d, "mmap")
         ratio = f"{mm/pre:.2f}x" if (pre and mm) else ""
         ps = f"{pre:,.0f}" if pre else "-"; ms = f"{mm:,.0f}" if mm else "-"
-        print(f"{str(k[1]):<9} {str(k[2]):<7} {k[3]:<8} {k[4]:<6} {ps:>12} {ms:>12} {ratio:>9}")
+        batch = "scalar" if k[3] == 1 else str(k[3])
+        print(f"{str(k[1]):<9} {str(k[2]):<7} {batch:<7} {k[4]:<6} {ps:>12} {ms:>12} {ratio:>9}")
 print(f"\n(raw jsonl in {OUT})")
 PY
 echo "== DONE =="

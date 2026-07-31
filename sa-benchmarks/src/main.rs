@@ -147,9 +147,9 @@ struct Args {
     #[arg(long)]
     kmer6_file: Option<PathBuf>,
 
-    /// Matrix mode: batch size for the batched searcher (scalar always uses 1).
-    #[arg(long, default_value_t = 16)]
-    matrix_batch: usize,
+    /// Matrix mode: MLP batch sizes to sweep, comma-separated (1 = scalar). e.g. 1,8,16,32.
+    #[arg(long, value_delimiter = ',', default_values_t = vec![1usize, 16])]
+    matrix_batches: Vec<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -442,9 +442,8 @@ fn run_matrix(
 
             for equate_il in [true, false] {
                 for tryptic in [true, false] {
-                    for batch in [1usize, args.matrix_batch] {
-                        eprintln!("  {} il={} tr={} {} kmer={}", source, equate_il, tryptic,
-                            if batch > 1 { "batched" } else { "scalar" }, kmer_k);
+                    for &batch in &args.matrix_batches {
+                        eprintln!("  {} il={} tr={} batch={} kmer={}", source, equate_il, tryptic, batch, kmer_k);
                         for _ in 0..args.runs {
                             let result = run_benchmark(&searcher, &peptides, args.max_matches, equate_il, tryptic, batch, theoretical_max, baseline_memory);
                             let record = BenchmarkRecord {
