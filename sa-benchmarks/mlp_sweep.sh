@@ -43,7 +43,7 @@ fi
 
 # Tag the results dir by config so k-mer/huge-page variants don't collide with the
 # per-B result cache (files are labeled b_<B>).
-TAG="$BACKEND"
+TAG="$BACKEND-$(basename "$PEP" .txt)"
 if [ -n "$KMER_FILE" ]; then TAG="$TAG-kfile"; KDESC="file:$KMER_FILE"; elif [ -n "$KMER" ]; then TAG="$TAG-k$KMER"; KDESC="build:k=$KMER"; else KDESC="off"; fi
 [ "${MLP_HUGEPAGE:-}" = 1 ] && TAG="$TAG-hp"
 OUT="$WORK/$TAG"; mkdir -p "$OUT"
@@ -70,16 +70,26 @@ echo "== Results ($BACKEND) =="
 python3 - "$OUT" "${BATCHES[@]}" <<'PY'
 import json, os, sys, statistics as st
 OUT=sys.argv[1]; batches=[int(x) for x in sys.argv[2:]]
-def med(b):
+def rows(b):
     p=os.path.join(OUT,f"b_{b}.jsonl")
-    return st.median(json.loads(l)["result"]["throughput_qps"] for l in open(p) if l.strip()) if os.path.exists(p) else None
-base=med(1)
-print(f"\n{'B':>5s} {'median qps':>13s} {'vs B=1':>9s}")
+    return [json.loads(l)["result"] for l in open(p) if l.strip()] if os.path.exists(p) else []
+def med(b,key="throughput_qps"):
+    r=rows(b); return st.median(x[key] for x in r) if r else None
+b0=batches[0]; base=med(b0)
+print(f"\n{'B':>5s} {'median qps':>13s} {'vs B='+str(b0):>9s}")
 for b in batches:
     m=med(b)
     if m is None: continue
-    d=f"{(m-base)/base*100:+.0f}%" if (base and b!=1) else ""
+    d=f"{(m-base)/base*100:+.0f}%" if (base and b!=b0) else ""
     print(f"{b:>5d} {m:>13,.0f} {d:>9s}")
+# Phase breakdown for the baseline B — shows which regime this dataset is in.
+r=rows(b0)
+if r:
+    mm=lambda k: st.median(x[k] for x in r)/1e6
+    tot,se,re,bo,it = mm('total_duration_ns'),mm('search_duration_ns'),mm('retrieval_duration_ns'),mm('search_bounds_ns'),mm('match_iter_ns')
+    mpq=st.median(x['suffix_hit_count'] for x in r)/r[0]['amount_of_queries']
+    print(f"\nbreakdown @ B={b0}:  total={tot:.1f}ms   search={se:.1f} ({se/tot*100:.0f}%)   retrieval={re:.1f} ({re/tot*100:.0f}%)")
+    print(f"  within search: bounds(sum)={bo:.0f}ms  iter(sum)={it:.0f}ms   |   {mpq:,.0f} matches/query")
 print(f"\n(raw jsonl in {OUT})")
 PY
 echo "== DONE =="
