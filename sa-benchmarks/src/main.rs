@@ -122,6 +122,12 @@ struct Args {
     /// When provided, binary search is accelerated by narrowing the initial search window.
     #[arg(long)]
     kmer_table_file: Option<PathBuf>,
+
+    /// Build an in-memory k-mer bounds table of size k from the loaded index instead of
+    /// loading one from a file. Handy for A/B testing the k-mer acceleration.
+    /// Ignored when --kmer-table-file is also given.
+    #[arg(long)]
+    build_kmer_table: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +429,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let table = load_kmer_table_file(path.to_str().unwrap())?;
         eprintln!("  k={}", table.k);
         searcher = searcher.with_kmer_table(table);
+    } else if let Some(k) = args.build_kmer_table {
+        eprintln!("Building in-memory k-mer table (k={})...", k);
+        searcher.build_kmer_table(k);
+        eprintln!("  done.");
     }
 
     let theoretical_max = theoretical_memory(&searcher, mapping_type_str, cfg!(feature = "mmap"));
