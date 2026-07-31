@@ -288,3 +288,64 @@ impl<'a> BsStream<'a> {
         }
     }
 }
+
+#[cfg(all(test, not(feature = "mmap")))]
+mod tests {
+    use sa_mappings::proteins::ProteinsBackend as _;
+
+    use crate::{
+        array::OriginalSA,
+        sa_searcher::{test_helpers::get_example_proteins, Searcher},
+        suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
+        SuffixArray,
+    };
+
+    #[test]
+    fn test_batched_matches_scalar() {
+        // Assert the batched search returns per-peptide results identical to the scalar
+        // search across equate_il and max_matches settings. (macro avoids naming the
+        // `ProteinsBackend as _` trait bound in a generic helper.)
+        macro_rules! check_batched {
+            ($searcher:expr, $peptides:expr) => {{
+                for &eq in &[false, true] {
+                    for &mm in &[usize::MAX, 1usize, 2usize] {
+                        let scalar: Vec<_> = $peptides
+                            .iter()
+                            .map(|p| $searcher.search_matching_suffixes(p, mm, eq, false))
+                            .collect();
+                        let batched =
+                            $searcher.search_matching_suffixes_batched($peptides, mm, eq, false);
+                        for i in 0..$peptides.len() {
+                            assert_eq!(
+                                batched[i], scalar[i],
+                                "mismatch: peptide={:?} equate_il={} max_matches={}",
+                                std::str::from_utf8($peptides[i]).unwrap(), eq, mm
+                            );
+                        }
+                    }
+                }
+            }};
+        }
+
+        // Dense/original SA (sample_rate 1)
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1,
+        ));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+        let peptides: Vec<&[u8]> =
+            vec![b"A", b"AC", b"AI", b"CLA", b"KCRLY", b"VAA", b"CVAA", b"LACVAA", b"C", b"ZZ", b"$"];
+        check_batched!(&searcher, &peptides);
+
+        // Sparse SA (sample_rate 3) — exercises skip = 0, 1, 2
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
+        let stp = SparseSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(stp));
+        let peptides: Vec<&[u8]> =
+            vec![b"CLA", b"ACVAA", b"KCRLY", b"VAA", b"LACVAA", b"CVAA", b"CLACVAA", b"ZZZ"];
+        check_batched!(&searcher, &peptides);
+    }
+}

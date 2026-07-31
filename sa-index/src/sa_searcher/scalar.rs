@@ -234,3 +234,226 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         self.sa.prefetch_sa_index((center + hi) / 2);
     }
 }
+
+#[cfg(all(test, not(feature = "mmap")))]
+mod tests {
+    use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
+    use text_compression::ProteinText;
+
+    use crate::{
+        array::OriginalSA,
+        sa_searcher::{test_helpers::get_example_proteins, BoundSearchResult, SearchAllSuffixesResult, Searcher},
+        suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
+        SuffixArray,
+    };
+
+    #[test]
+    fn test_search_simple() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        // search bounds 'A'
+        let bounds_res = searcher.search_bounds(b"A");
+        assert_eq!(bounds_res, BoundSearchResult::SearchResult((4, 9)));
+
+        // search bounds '$'
+        let bounds_res = searcher.search_bounds(b"$");
+        assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
+
+        // search bounds 'AC'
+        let bounds_res = searcher.search_bounds(b"AC");
+        assert_eq!(bounds_res, BoundSearchResult::SearchResult((6, 8)));
+    }
+
+    #[test]
+    fn test_search_sparse() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
+
+        let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(suffix_index_to_protein));
+
+        // search suffix 'VAA'
+        let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
+
+        // search suffix 'AC'
+        let found_suffixes = searcher.search_matching_suffixes(b"AC", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![5, 11]));
+    }
+
+    #[test]
+    fn test_search_dense() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
+
+        let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Dense(suffix_index_to_protein));
+
+        // search suffix 'VAA'
+        let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
+
+        // search suffix 'AC'
+        let found_suffixes = searcher.search_matching_suffixes(b"AC", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![5, 11]));
+    }
+
+    #[test]
+    fn test_il_equality() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        let bounds_res = searcher.search_bounds(b"I");
+        assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
+
+        // search bounds 'RIZ' with equal I and L
+        let bounds_res = searcher.search_bounds(b"RIY");
+        assert_eq!(bounds_res, BoundSearchResult::SearchResult((17, 18)));
+    }
+
+    #[test]
+    fn test_il_equality_sparse() {
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
+
+        let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(suffix_index_to_protein));
+
+        // search bounds 'RIZ' with equal I and L
+        let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, true, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
+
+        // search bounds 'RIZ' without equal I and L
+        let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
+    }
+
+    // test edge case where an I or L is the first index in the sparse SA.
+    #[test]
+    fn test_l_first_index_in_sa() {
+        let input_string = "LMPYY$";
+        let text = ProteinText::from_string(input_string);
+
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
+
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![0, 2, 4], 2));
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        // search bounds 'IM' with equal I and L
+        let found_suffixes = searcher.search_matching_suffixes(b"IM", usize::MAX, true, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0]));
+    }
+
+    #[test]
+    fn test_il_missing_matches() {
+        let input_string = "AAILLL$";
+        let text = ProteinText::from_string(input_string);
+
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
+
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 0, 1, 5, 4, 3, 2], 1));
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        let found_suffixes = searcher.search_matching_suffixes(b"I", usize::MAX, true, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
+    }
+
+    #[test]
+    fn test_il_duplication() {
+        let input_string = "IIIILL$";
+        let text = ProteinText::from_string(input_string);
+
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
+
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 5, 4, 3, 2, 1, 0], 1));
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_il_suffix_check() {
+        let input_string = "IIIILL$";
+        let text = ProteinText::from_string(input_string);
+
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
+
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 4, 2, 0], 2));
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        // search all places where II is in the string IIIILL, but with a sparse SA
+        // this way we check if filtering the suffixes works as expected
+        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, false, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn test_il_duplication2() {
+        let input_string = "IILLLL$";
+        let text = ProteinText::from_string(input_string);
+
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
+
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![6, 5, 4, 3, 2, 1, 0], 1));
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        // search bounds 'IM' with equal I and L
+        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
+        assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_tryptic_search() {
+        let input_string = "PAA-AAKPKAPAA$";
+        let text = ProteinText::from_string(input_string);
+
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![]
+        }]);
+
+        let sparse_sa = SuffixArray::Original(OriginalSA(vec![13, 3, 12, 11, 1, 4, 2, 5, 9, 8, 6, 10, 0, 7], 1));
+        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sparse_sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+
+        let found_suffixes_1 = searcher.search_matching_suffixes(b"PAA", usize::MAX, false, true);
+        assert_eq!(found_suffixes_1, SearchAllSuffixesResult::SearchResult(vec![0]));
+
+        let found_suffixes_2 = searcher.search_matching_suffixes(b"APAA", usize::MAX, false, true);
+        assert_eq!(found_suffixes_2, SearchAllSuffixesResult::SearchResult(vec![9]));
+    }
+}

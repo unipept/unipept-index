@@ -49,3 +49,41 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         res
     }
 }
+
+#[cfg(all(test, not(feature = "mmap")))]
+mod tests {
+    use sa_mappings::proteins::ProteinsBackend as _;
+
+    use crate::{
+        array::OriginalSA,
+        sa_searcher::{test_helpers::get_example_proteins, SearchAllSuffixesResult, Searcher},
+        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
+        SuffixArray,
+    };
+
+    #[test]
+    fn test_retrieve_proteins() {
+        // Proteins (distinct taxa): AI=10, CLACVAA=20, AC=30, KCRLY=40.
+        let proteins = get_example_proteins();
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1,
+        ));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // "A" matches 5 suffixes: once in protein 0 (taxon 10), three times in protein 1
+        // (taxon 20), once in protein 2 (taxon 30); never in protein 3 (KCRLY).
+        let suffixes = match searcher.search_matching_suffixes(b"A", usize::MAX, false, false) {
+            SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
+            SearchAllSuffixesResult::NoMatches => vec![],
+        };
+
+        let found = searcher.retrieve_proteins(&suffixes);
+        assert_eq!(found.len(), suffixes.len(), "one protein per matched suffix");
+
+        let mut taxa: Vec<u32> = found.iter().map(|p| p.taxon_id).collect();
+        taxa.sort();
+        assert_eq!(taxa, vec![10, 20, 20, 20, 30]);
+    }
+}
