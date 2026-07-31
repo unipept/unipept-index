@@ -8,6 +8,37 @@ pub use binary::Binary;
 pub use constant::{BitArray, BitArrayRangeIter};
 pub use dynamic::{DynBitArray, DynBitArrayRangeIter};
 
+/// Best-effort request for transparent huge pages (2 MB) over a large anonymous data
+/// buffer, gated by the `SA_MADV_HUGEPAGE` env var. Cuts TLB/page-walk cost on the big
+/// random-access preloaded structures (suffix array + protein text). No-op off Linux or
+/// when the env var is unset; errors are ignored (the kernel may lack THP). Unlike a
+/// file-backed mmap, this anonymous memory is THP-eligible.
+#[cfg(target_os = "linux")]
+pub fn advise_hugepages(data: &[u64]) {
+    if std::env::var_os("SA_MADV_HUGEPAGE").is_none() {
+        return;
+    }
+    const PAGE: usize = 4096;
+    let start = data.as_ptr() as usize;
+    let end = start + std::mem::size_of_val(data);
+    let aligned_start = (start + PAGE - 1) & !(PAGE - 1);
+    let aligned_end = end & !(PAGE - 1);
+    if aligned_end > aligned_start {
+        // SAFETY: advises a sub-range of a live, page-aligned allocation; MADV_HUGEPAGE
+        // is a hint that never reads, frees, or moves the memory.
+        unsafe {
+            libc::madvise(
+                aligned_start as *mut libc::c_void,
+                aligned_end - aligned_start,
+                libc::MADV_HUGEPAGE,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn advise_hugepages(_data: &[u64]) {}
+
 // ── data_to_writer ────────────────────────────────────────────────────────────
 
 /// Writes packed bit data to a writer in chunks, minimising peak memory.

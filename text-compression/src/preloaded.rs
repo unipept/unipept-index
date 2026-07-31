@@ -99,6 +99,8 @@ impl ReadBinary for InMemoryProteinText {
         bit_array
             .read_binary(&mut limited)
             .map_err(|_| "Could not parse BitArray data from binary file")?;
+        // Preloaded text lives in anonymous RAM — request huge pages to cut page-walk cost.
+        bit_array.advise_hugepages();
 
         Ok(Self::new(bit_array))
     }

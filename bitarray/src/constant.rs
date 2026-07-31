@@ -21,6 +21,13 @@ impl<const BITS: usize> BitArray<BITS> {
         }
     }
 
+    /// Best-effort request for transparent huge pages over the backing data (see
+    /// `crate::advise_hugepages`). Env-gated; no-op off Linux or when unset.
+    #[inline]
+    pub fn advise_hugepages(&self) {
+        crate::advise_hugepages(&self.data);
+    }
+
     #[inline]
     pub fn get(&self, index: usize) -> u64 {
         let bit_offset = index * BITS;

@@ -89,6 +89,8 @@ pub(super) fn load_compressed(
 ) -> Result<DynBitArray, Box<dyn Error>> {
     let mut compressed_suffix_array = DynBitArray::with_capacity(size, bits_per_value);
     compressed_suffix_array.read_binary(reader).map_err(|_| "Could not read the compressed suffix array from the binary file")?;
+    // Preloaded SA lives in anonymous RAM — request huge pages to cut page-walk cost.
+    compressed_suffix_array.advise_hugepages();
     Ok(compressed_suffix_array)
 }
 
