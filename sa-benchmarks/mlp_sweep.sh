@@ -17,7 +17,7 @@
 #                no per-run build). PREFER THIS if you already have the file.
 #   MLP_KMER   = k to BUILD an in-memory k-mer table instead (rebuilt every run; only for
 #                quick A/B when you don't have a file). Ignored if MLP_KMER_FILE is set.
-#   MLP_HUGEPAGE = 1 to set SA_MADV_HUGEPAGE (preloaded only; huge pages for its Vecs).
+# (Huge pages for the preloaded Vecs are now always-on in the loader — no knob here.)
 set -euo pipefail
 
 BACKEND="${1:-mmap}"
@@ -45,10 +45,9 @@ fi
 # per-B result cache (files are labeled b_<B>).
 TAG="$BACKEND-$(basename "$PEP" .txt)"
 if [ -n "$KMER_FILE" ]; then TAG="$TAG-kfile"; KDESC="file:$KMER_FILE"; elif [ -n "$KMER" ]; then TAG="$TAG-k$KMER"; KDESC="build:k=$KMER"; else KDESC="off"; fi
-[ "${MLP_HUGEPAGE:-}" = 1 ] && TAG="$TAG-hp"
 OUT="$WORK/$TAG"; mkdir -p "$OUT"
 if [ "$BACKEND" = mmap ]; then FEAT="--features mmap"; WARMUP="all:$((AMT*10))"; else FEAT=""; WARMUP="$((AMT*10))"; fi
-echo "== Config: backend=$BACKEND kmer=$KDESC hugepage=${MLP_HUGEPAGE:-off} -> $OUT =="
+echo "== Config: backend=$BACKEND kmer=$KDESC -> $OUT =="
 
 echo "== Build $BACKEND =="
 (cd "$REPO" && cargo build --release -q -p sa-benchmarks --no-default-features $FEAT)
@@ -59,11 +58,10 @@ for b in "${BATCHES[@]}"; do
   [ -s "$OUT/$lbl.jsonl" ] && { echo "  skip B=$b (exists in $OUT)"; continue; }
   echo "[$(date +%H:%M:%S)] B=$b"
   if [ "$b" = 1 ]; then unset SA_MLP_BATCH; else export SA_MLP_BATCH="$b"; fi
-  if [ "${MLP_HUGEPAGE:-}" = 1 ]; then export SA_MADV_HUGEPAGE=1; else unset SA_MADV_HUGEPAGE; fi
   "$BIN" --index-dir "$IDX" --output "$OUT" --label "$lbl" \
     --peptide-file "$PEP" --amount-of-peptides "$AMT" --runs "$RUNS" --warmup "$WARMUP" \
     "${KMER_ARG[@]}" >/dev/null 2>&1
-  unset SA_MLP_BATCH SA_MADV_HUGEPAGE
+  unset SA_MLP_BATCH
 done
 
 echo "== Results ($BACKEND) =="
