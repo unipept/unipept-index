@@ -27,6 +27,56 @@ enum BoundSearch {
     Maximum
 }
 
+/// The query-invariant half of the tryptic-cut predicate, resolved once per peptide instead of
+/// once per candidate match.
+///
+/// A candidate that reaches the tryptic check has already been confirmed to equal the search
+/// string over `[match_start, match_end)` — either by the suffix array range itself or by the
+/// `check_prefix` / `check_suffix` conjuncts that run before it. So the two text positions the
+/// naive predicate reads *inside* the match are redundant: the peptide already knows them.
+///
+/// * `text[match_start]` is `search_string[0]`
+/// * `text[match_end - 1]` is `search_string.last()`
+///
+/// The substitution holds under both `equate_il` settings: K, R and P are untouched by the
+/// L → I normalization the index is built with, so a text position can only hold P/K/R when the
+/// corresponding peptide character does.
+#[derive(Clone, Copy)]
+enum TrypticQuery {
+    /// Not filtering for tryptic matches — every candidate passes the boundary check.
+    Off,
+    /// Filtering, with both query-invariant terms already resolved.
+    On {
+        /// `search_string[0] != b'P'`, standing in for `text[match_start] != b'P'`.
+        /// Proline directly after a K/R blocks the trypsin cut at the N-terminus.
+        first_not_proline: bool,
+        /// `search_string.last()` is K or R, standing in for `text[match_end - 1]` being a
+        /// trypsin cut site.
+        last_is_kr: bool
+    },
+    /// Degenerate zero-length query: `match_start == match_end`, so neither substitution above
+    /// exists and we fall back to the original four-read formulation. Unreachable in production
+    /// (`search_proteins_for_peptide` drops peptides shorter than the sparseness factor), but
+    /// `search_matching_suffixes` is public, so stay bit-exact for it anyway.
+    ZeroLength
+}
+
+impl TrypticQuery {
+    #[inline]
+    fn new(tryptic: bool, search_string: &[u8]) -> Self {
+        if !tryptic {
+            return Self::Off;
+        }
+        match (search_string.first(), search_string.last()) {
+            (Some(&first), Some(&last)) => Self::On {
+                first_not_proline: first != b'P',
+                last_is_kr: last == b'K' || last == b'R'
+            },
+            _ => Self::ZeroLength
+        }
+    }
+}
+
 /// Enum representing the minimum and maximum bound of the found matches in the suffix array
 #[derive(PartialEq, Debug)]
 pub enum BoundSearchResult {
@@ -235,6 +285,56 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             && self.proteins.text().get(cut_index) != b'P'
     }
 
+    /// Tryptic-boundary check for a candidate match spanning `[match_start, match_end)`.
+    ///
+    /// Equivalent to
+    /// `(check_start_of_protein(ms) || check_tryptic_cut(ms)) && (check_end_of_protein(me) || check_tryptic_cut(me))`
+    /// but reads **two** text positions instead of four: only `ms - 1` and `me`. The other two
+    /// (`ms` and `me - 1`) sit inside the match, where the text equals the peptide, so `query`
+    /// supplies them without touching memory (see `TrypticQuery`).
+    ///
+    /// This is the hottest loop in the index: `tryptic` disables the fast path in `scalar.rs`,
+    /// so the candidate scan has to run until `max_matches` *accepted* matches accumulate —
+    /// work that scales as `max_matches / acceptance_rate`. Halving the reads also halves the
+    /// prefetch hints `prefetch_match_positions` has to keep in flight, which matters more than
+    /// the ALU saving (see the comment there).
+    #[inline]
+    fn check_tryptic_boundaries(
+        &self,
+        text: &P::Text,
+        match_start: usize,
+        match_end: usize,
+        query: TrypticQuery
+    ) -> bool {
+        match query {
+            TrypticQuery::Off => true,
+            TrypticQuery::On { first_not_proline, last_is_kr } => {
+                // N-terminus. The `match_start == 0` guard has to come first: without it the
+                // `match_start - 1` read underflows. (The original formulation was only safe
+                // because `check_start_of_protein` short-circuits the `||` on that same test.)
+                let n_term_ok = match_start == 0 || {
+                    let before = text.get(match_start - 1);
+                    before == SEPARATION_CHARACTER
+                        || ((before == b'K' || before == b'R') && first_not_proline)
+                };
+
+                // C-terminus. `text[match_end]` answers protein-end and proline-block at once.
+                n_term_ok && {
+                    let after = text.get(match_end);
+                    after == TERMINATION_CHARACTER
+                        || after == SEPARATION_CHARACTER
+                        || (last_is_kr && after != b'P')
+                }
+            }
+            // Zero-length query: `match_end == match_start`, so the peptide has no character to
+            // stand in for either read and the original formulation is the only correct one.
+            TrypticQuery::ZeroLength => {
+                (self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
+                    && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))
+            }
+        }
+    }
+
     /// Returns true of the prefixes are the same
     /// if `equate_il` is set to true, L and I are considered the same
     ///
@@ -280,14 +380,24 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         if equate_il { true } else { text_slice.check_il_locations(skip, il_locations, search_string) }
     }
 
-    /// Issues hardware prefetch hints for all text positions that will be accessed
-    /// during validation of a candidate match at [ms, me). Called in Pass 1 of the
-    /// two-pass batching loop to give DRAM latency hiding time before Pass 2 reads.
+    /// Issues hardware prefetch hints for the text positions that will be accessed during
+    /// validation of a candidate match at [ms, me). Called in Pass 1 of the two-pass batching
+    /// loop to give DRAM latency hiding time before Pass 2 reads.
+    ///
+    /// Two hints, not four. The tryptic boundary check now only reads `ms - 1` and `me`
+    /// (`check_tryptic_boundaries`), and those two hints also cover what `check_prefix` and
+    /// `check_suffix` read inside `[ms, me)`: the text is 5-bit packed, so one 64-byte cache
+    /// line holds ~102 characters, and the hints for `ms - 1` and `me` pull in the lines at
+    /// both ends of the span. Any peptide short enough to span at most two lines (~100 aa —
+    /// every realistic query) is therefore fully covered.
+    ///
+    /// The count matters more than the arithmetic it saves: `iterate_sa_range` uses
+    /// `BATCH_SIZE = 64`, so four hints per candidate meant 256 outstanding prefetches against
+    /// the ~10-12 line-fill buffers a core has, ~20x oversubscribed — most hints were evicted
+    /// before Pass 2 could use them. Two per candidate doubles the effective prefetch depth.
     #[inline]
     fn prefetch_match_positions(text: &P::Text, ms: usize, me: usize) {
         text.prefetch_at(ms.saturating_sub(1));
-        text.prefetch_at(ms);
-        text.prefetch_at(me.saturating_sub(1));
         text.prefetch_at(me);
     }
 
@@ -317,18 +427,18 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         suffix_str: &[u8],
         il_locations: &[usize],
         equate_il: bool,
-        tryptic: bool,
+        tryptic: TrypticQuery,
     ) -> Option<i64> {
         let suffix = raw as usize;
         if suffix < skip { return None; }
         let match_start = suffix - skip;
         let match_end = suffix + search_string.len() - skip;
+        // Order matters: the tryptic check stays last because it assumes the span
+        // [match_start, match_end) has already been confirmed equal to `search_string`.
         let valid = (skip == 0
             || Self::check_prefix(prefix, ProteinTextSlice::new(text, match_start, suffix), equate_il))
             && Self::check_suffix(skip, il_locations, suffix_str, ProteinTextSlice::new(text, suffix, match_end), equate_il)
-            && (!tryptic
-                || ((self.check_start_of_protein(match_start) || self.check_tryptic_cut(match_start))
-                    && (self.check_end_of_protein(match_end) || self.check_tryptic_cut(match_end))));
+            && self.check_tryptic_boundaries(text, match_start, match_end, tryptic);
         if valid { Some(match_start as i64) } else { None }
     }
 
@@ -360,6 +470,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // Minimum range for prefetch to resolve before use.
         // Below this threshold the two-pass overhead exceeds the latency-hiding benefit.
         const PREFETCH_THRESHOLD: usize = 32;
+
+        // Resolve the query-invariant half of the tryptic predicate once per peptide rather
+        // than once per candidate — this loop runs `max_matches / acceptance_rate` times.
+        let tryptic = TrypticQuery::new(tryptic, search_string);
 
         if range_size < PREFETCH_THRESHOLD {
             for raw in sa_iter {
@@ -409,9 +523,9 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
-    use text_compression::ProteinText;
+    use text_compression::{ProteinText, ProteinTextBackend as _};
 
-    use super::SearchAllSuffixesResult;
+    use super::{SearchAllSuffixesResult, TrypticQuery};
     use crate::{
         array::OriginalSA,
         sa_searcher::{test_helpers::get_example_proteins, Searcher},
@@ -490,6 +604,179 @@ mod tests {
         assert!(searcher.check_tryptic_cut(3)); // after R, C follows
         assert!(!searcher.check_tryptic_cut(5)); // after K but P follows (proline blocks)
         assert!(!searcher.check_tryptic_cut(2)); // preceded by A, not K/R
+    }
+
+    // Builds a searcher over an arbitrary protein text. The tryptic boundary checks only read
+    // the text, so the SA content is irrelevant — an identity permutation keeps it well-formed.
+    fn searcher_over(text: &str) -> Searcher<SuffixArray> {
+        let protein_text = ProteinText::from_string(text);
+        let proteins = Proteins::new(protein_text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let sa = SuffixArray::Original(OriginalSA((0..text.len() as i64).collect(), 1));
+        Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
+    }
+
+    // The original four-text-read formulation, kept verbatim as the oracle for the equivalence
+    // test below. `check_start_of_protein` MUST stay on the left of the `||`: it is the only
+    // thing that stops `check_tryptic_cut(0)` from reading `text[-1]`.
+    fn old_tryptic_predicate(searcher: &Searcher<SuffixArray>, match_start: usize, match_end: usize) -> bool {
+        (searcher.check_start_of_protein(match_start) || searcher.check_tryptic_cut(match_start))
+            && (searcher.check_end_of_protein(match_end) || searcher.check_tryptic_cut(match_end))
+    }
+
+    // A text exercising every boundary case the tryptic filter can hit:
+    //
+    //   index 0..: K  P  A  R  C  K  A  -  R  P  K  R  A  -  P  K  -  A  I  L  K  $
+    //
+    // - match_start == 0 (the underflow guard)
+    // - protein starts right after the separators at 7, 13 and 16
+    // - protein ends at the separators 7/13/16 and at the terminator 21
+    // - K/R-preceded cuts (positions 1, 4, 6, 11, 12, 16, 21)
+    // - P-blocked cuts ("KP" at 0-1, "RP" at 8-9, "KP"-like "K-" vs "AP" at 13-14)
+    // - a single-residue protein ("K" between the separators at 13 and 16 is "PK")
+    // - I and L adjacent at 18/19, so peptides can differ from the text at L/I positions
+    const BOUNDARY_TEXT: &str = "KPARCKA-RPKRA-PK-AILK$";
+
+    // Every candidate the filter can ever see: for each span of the text, the peptide IS the
+    // text over that span, which is exactly the invariant the two dropped reads rely on.
+    // The new two-read predicate must agree with the old four-read one on every single one.
+    #[test]
+    fn test_tryptic_boundaries_equivalent_to_original() {
+        let searcher = searcher_over(BOUNDARY_TEXT);
+        let text = searcher.proteins.text();
+        let text_len = BOUNDARY_TEXT.len();
+
+        let mut checked = 0usize;
+        let mut accepted = 0usize;
+        for match_start in 0..text_len {
+            // `match_end == text_len` would read one past the end in BOTH formulations, and
+            // cannot occur for a real match: the text always ends in the terminator, which no
+            // peptide contains.
+            for match_end in (match_start + 1)..text_len {
+                let peptide: Vec<u8> = (match_start..match_end).map(|i| text.get(i)).collect();
+                let query = TrypticQuery::new(true, &peptide);
+
+                let expected = old_tryptic_predicate(&searcher, match_start, match_end);
+                let actual = searcher.check_tryptic_boundaries(text, match_start, match_end, query);
+                assert_eq!(
+                    actual, expected,
+                    "mismatch at [{match_start}, {match_end}) for peptide {:?}",
+                    String::from_utf8_lossy(&peptide)
+                );
+
+                // L/I equating: the index stores L as I, so a peptide may carry an L where the
+                // text holds an I. K, R and P survive that normalization untouched, so swapping
+                // I <-> L in the peptide must not move the predicate either way.
+                let swapped: Vec<u8> = peptide
+                    .iter()
+                    .map(|&c| match c {
+                        b'I' => b'L',
+                        b'L' => b'I',
+                        other => other,
+                    })
+                    .collect();
+                let swapped_actual = searcher.check_tryptic_boundaries(
+                    text, match_start, match_end, TrypticQuery::new(true, &swapped),
+                );
+                assert_eq!(
+                    swapped_actual, expected,
+                    "I/L swap changed the verdict at [{match_start}, {match_end})"
+                );
+
+                checked += 1;
+                accepted += expected as usize;
+            }
+        }
+
+        // Guard against the test silently degenerating: the text must produce a meaningful mix
+        // of accepted and rejected candidates, otherwise the equivalence proves nothing.
+        assert_eq!(checked, text_len * (text_len - 1) / 2);
+        assert!(accepted > 0 && accepted < checked, "degenerate fixture: {accepted}/{checked} accepted");
+    }
+
+    // The zero-length fallback keeps reading the text, so it must also match the oracle.
+    //
+    // `cut == 0` is skipped because it panics identically in both formulations: with
+    // `match_start == match_end == 0`, `check_end_of_protein(0)` is false for a text that does
+    // not start with a separator, and the `check_tryptic_cut(0)` that follows it underflows on
+    // `text[-1]`. That is pre-existing behaviour of the degenerate zero-length path (only the
+    // N-terminal `||` has a `match_start == 0` guard, the C-terminal one does not), and it is
+    // unreachable in production, where empty peptides are dropped before the search.
+    #[test]
+    fn test_tryptic_boundaries_zero_length_matches_original() {
+        let searcher = searcher_over(BOUNDARY_TEXT);
+        let text = searcher.proteins.text();
+
+        for cut in 1..BOUNDARY_TEXT.len() {
+            assert_eq!(
+                searcher.check_tryptic_boundaries(text, cut, cut, TrypticQuery::new(true, b"")),
+                old_tryptic_predicate(&searcher, cut, cut),
+                "zero-length mismatch at {cut}"
+            );
+        }
+    }
+
+    // `tryptic = false` short-circuits the whole check, without touching the text.
+    #[test]
+    fn test_tryptic_boundaries_off_accepts_everything() {
+        let searcher = searcher_over(BOUNDARY_TEXT);
+        let text = searcher.proteins.text();
+
+        for match_start in 0..BOUNDARY_TEXT.len() {
+            for match_end in match_start..BOUNDARY_TEXT.len() {
+                let query = TrypticQuery::new(false, b"PAAP");
+                assert!(searcher.check_tryptic_boundaries(text, match_start, match_end, query));
+            }
+        }
+    }
+
+    // The two query-invariant terms are read off the peptide itself, so they must be right for
+    // every combination of first/last residue that changes a verdict.
+    #[test]
+    fn test_tryptic_query_hoisting() {
+        assert!(matches!(TrypticQuery::new(false, b"PAAK"), TrypticQuery::Off));
+        assert!(matches!(TrypticQuery::new(true, b""), TrypticQuery::ZeroLength));
+
+        let flags = |peptide: &[u8]| match TrypticQuery::new(true, peptide) {
+            TrypticQuery::On { first_not_proline, last_is_kr } => (first_not_proline, last_is_kr),
+            _ => panic!("expected TrypticQuery::On for {:?}", String::from_utf8_lossy(peptide)),
+        };
+
+        // (first_not_proline, last_is_kr)
+        assert_eq!(flags(b"PAAC"), (false, false)); // starts with P
+        assert_eq!(flags(b"PAAK"), (false, true)); // starts with P, ends with K
+        assert_eq!(flags(b"AAAP"), (true, false)); // ends with P
+        assert_eq!(flags(b"AAAK"), (true, true)); // ends with K
+        assert_eq!(flags(b"AAAR"), (true, true)); // ends with R
+        assert_eq!(flags(b"AAAC"), (true, false)); // neither
+        assert_eq!(flags(b"P"), (false, false)); // single residue: first == last
+        assert_eq!(flags(b"K"), (true, true));
+        assert_eq!(flags(b"R"), (true, true));
+        // K/R are never L/I-normalized, so a lowercase-free peptide of I/L cannot be a cut site.
+        assert_eq!(flags(b"ILI"), (true, false));
+
+        // And the flags actually drive the verdict. Text "KPAAK-": the K at 0 precedes the
+        // match, so the N-terminal cut hinges entirely on the peptide's own first residue.
+        let searcher = searcher_over("KPAAK-AAAA$");
+        let text = searcher.proteins.text();
+        // [1, 5) is "PAAK": preceded by K, but the peptide starts with P -> N-term blocked.
+        assert!(!searcher.check_tryptic_boundaries(text, 1, 5, TrypticQuery::new(true, b"PAAK")));
+        // [2, 5) is "AAK": preceded by P, which is neither K/R nor a separator -> N-term fails.
+        assert!(!searcher.check_tryptic_boundaries(text, 2, 5, TrypticQuery::new(true, b"AAK")));
+        // [0, 5) is "KPAAK": match_start == 0 is a protein start, and the match ends on the
+        // separator at 5 -> both ends valid.
+        assert!(searcher.check_tryptic_boundaries(text, 0, 5, TrypticQuery::new(true, b"KPAAK")));
+        // [0, 1) is "K": protein start, but text[1] is P, so the K cut is proline-blocked.
+        assert!(!searcher.check_tryptic_boundaries(text, 0, 1, TrypticQuery::new(true, b"K")));
+        // [6, 10) is "AAAA": protein start (separator at 5) but the peptide does not end in
+        // K/R and text[10] is the terminator -> C-term valid via end-of-protein.
+        assert!(searcher.check_tryptic_boundaries(text, 6, 10, TrypticQuery::new(true, b"AAAA")));
+        // [6, 9) is "AAA": neither end-of-protein nor a K/R terminus -> rejected.
+        assert!(!searcher.check_tryptic_boundaries(text, 6, 9, TrypticQuery::new(true, b"AAA")));
     }
 
     // drain_timing_ns returns the accumulated counters and resets them to zero.
