@@ -6,7 +6,7 @@ use sa_mappings::proteins::ProteinsBackend;
 
 use crate::{
     array::SuffixArrayBackend,
-    sa_searcher::{SearchAllSuffixesResult, Searcher},
+    sa_searcher::{DEFAULT_MLP_BATCH, SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::SuffixToProteinMappingBackend,
 };
 
@@ -117,15 +117,94 @@ pub fn search_all_peptides<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: Suf
     equate_il: bool,
     tryptic: bool
 ) -> Vec<SearchResult> {
-    peptides
+    let sample_rate = searcher.sa.sample_rate() as usize;
+
+    // Normalise once and keep only searchable peptides (anything shorter than the sample rate
+    // cannot be searched), remembering each peptide's original index so the returned `sequence`
+    // stays verbatim — matching the previous per-peptide behaviour.
+    let prepared: Vec<(usize, String)> = peptides
+        .iter()
+        .enumerate()
+        .map(|(index, peptide)| (index, peptide.trim_end().to_uppercase()))
+        .filter(|(_, normalised)| normalised.len() >= sample_rate)
+        .collect();
+
+    let byte_peptides: Vec<&[u8]> = prepared.iter().map(|(_, peptide)| peptide.as_bytes()).collect();
+
+    // One batched (MLP) search over the whole list — the same code path the benchmark measures
+    // and the only place the batch size is chosen.
+    let suffix_results =
+        searcher.search_all_matching_suffixes(&byte_peptides, cutoff, equate_il, tryptic, DEFAULT_MLP_BATCH);
+
+    // Retrieve the proteins for each hit and build the result, dropping peptides with no matches
+    // (preserves the previous filter_map semantics and result ordering).
+    prepared
         .par_iter()
-        .filter_map(|peptide| search_peptide(searcher, peptide, cutoff, equate_il, tryptic))
+        .zip(suffix_results.par_iter())
+        .filter_map(|((original_index, _), suffix_result)| {
+            let (suffixes, cutoff_used) = match suffix_result {
+                SearchAllSuffixesResult::MaxMatches(matched) => (matched, true),
+                SearchAllSuffixesResult::SearchResult(matched) => (matched, false),
+                SearchAllSuffixesResult::NoMatches => return None,
+            };
+
+            let proteins = searcher.retrieve_proteins(suffixes);
+
+            Some(SearchResult {
+                sequence: peptides[*original_index].to_string(),
+                proteins: proteins.into_iter().map(|protein| protein.into()).collect(),
+                cutoff_used,
+            })
+        })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(feature = "mmap"))]
+    #[test]
+    fn test_search_all_peptides_matches_scalar_reference() {
+        use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
+        use text_compression::ProteinText;
+
+        use crate::{
+            array::OriginalSA,
+            suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
+            SuffixArray,
+        };
+
+        // Example DB "AI-CLACVAA-AC-KCRLY$", sample rate 1 (so single characters are searchable).
+        let text = ProteinText::from_string("AI-CLACVAA-AC-KCRLY$");
+        let proteins = Proteins::new(text, vec![
+            Protein { uniprot_id: "P0".to_string(), taxon_id: 10, functional_annotations: vec![] },
+            Protein { uniprot_id: "P1".to_string(), taxon_id: 20, functional_annotations: vec![] },
+            Protein { uniprot_id: "P2".to_string(), taxon_id: 30, functional_annotations: vec![] },
+            Protein { uniprot_id: "P3".to_string(), taxon_id: 40, functional_annotations: vec![] },
+        ]);
+        let sa = SuffixArray::Original(OriginalSA(
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // Mixed case (normalisation), whitespace + empty (trim/length filter), a no-match ("ZZZ").
+        let peptides: Vec<String> =
+            ["A", "ai", "CLA", "kcrly", "VAA", "ZZZ", "", "  ", "AC"].iter().map(|s| s.to_string()).collect();
+
+        let as_json = |v: &[SearchResult]| serde_json::to_string(v).unwrap();
+        for equate_il in [true, false] {
+            for tryptic in [true, false] {
+                // Batched production path vs the scalar per-peptide reference (the old behaviour).
+                let got = search_all_peptides(&searcher, &peptides, 1000, equate_il, tryptic);
+                let reference: Vec<SearchResult> = peptides
+                    .iter()
+                    .filter_map(|p| search_peptide(&searcher, p, 1000, equate_il, tryptic))
+                    .collect();
+                assert_eq!(as_json(&got), as_json(&reference), "il={} tryptic={}", equate_il, tryptic);
+            }
+        }
+    }
 
     fn assert_json_eq(generated_json: &str, expected_json: &str) {
         assert_eq!(

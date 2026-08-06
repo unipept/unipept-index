@@ -138,10 +138,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         out
     }
 
-    /// Batched `search_matching_suffixes` over many peptides. Returns one result per
-    /// input, in order — identical to calling the scalar version on each peptide, but
-    /// with the binary-search phase interleaved for memory-level parallelism.
-    pub fn search_matching_suffixes_batched(
+    /// Batched `search_matching_suffixes` over one chunk of peptides. Returns one result per
+    /// input, in order — identical to calling the scalar version on each peptide, but with the
+    /// binary-search phase interleaved for memory-level parallelism. Single-threaded and
+    /// rayon-free: the MLP kernel. Cross-thread parallelism and chunking live in the
+    /// orchestrator (`search_all_matching_suffixes`), which is the entry point callers use.
+    pub(crate) fn search_matching_suffixes_batched(
         &self,
         strings: &[&[u8]],
         max_matches: usize,

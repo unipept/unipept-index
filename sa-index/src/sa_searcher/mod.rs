@@ -1,8 +1,11 @@
 mod batched;
+mod orchestrate;
 mod retrieval;
 mod scalar;
 #[cfg(test)]
 mod test_helpers;
+
+pub use orchestrate::DEFAULT_MLP_BATCH;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
