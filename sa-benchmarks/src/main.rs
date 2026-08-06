@@ -6,6 +6,8 @@ use std::time::Instant;
 
 use clap::Parser;
 use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use rayon::prelude::*;
 use sa_index::kmer_table::AMINO_ACID_COUNT;
 use sa_index::{sa_searcher::{SearchAllSuffixesResult, Searcher}, KmerTable, SuffixArray, SuffixArrayBackend};
@@ -16,8 +18,9 @@ use sa_index::ProteinsBackend as _;
 use sa_index::suffix_to_protein_index::SuffixToProteinMappingBackend as _;
 use text_compression::ProteinTextBackend as _;
 
-/// Schema version — increment when the output JSON format changes
-const SCHEMA_VERSION: u32 = 1;
+/// Schema version — increment when the output JSON format changes.
+/// v2: matrix records aggregate `runs` reps into one line and carry a `stats` spread.
+const SCHEMA_VERSION: u32 = 2;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -110,6 +113,12 @@ struct Args {
     #[arg(long, default_value_t = 100)]
     runs: u32,
 
+    /// Seed for random peptide generation (random mode only — no effect with --peptide-file
+    /// or --matrix, which read a fixed query stream from disk). Fixes the generated stream so
+    /// runs and separate invocations are reproducible. Omit for a fresh nondeterministic stream.
+    #[arg(long)]
+    seed: Option<u64>,
+
     /// Warm up the index before timing.
     /// "all": touch every page of every mmap-backed region (populates page cache only).
     /// "all:N": touch every page then push N peptides from warmup.txt through the pipeline
@@ -195,6 +204,19 @@ struct BenchmarkResult {
     match_iter_ns: u64,
 }
 
+/// Spread of throughput across the `runs` timed reps of a single config. Emitted in matrix
+/// mode so a ±band is visible and cell-to-cell noise isn't read as signal. `result` above still
+/// carries the detailed timing of the representative (median-qps) rep.
+#[derive(Serialize)]
+struct RunStats {
+    runs: u32,
+    qps_min: f64,
+    qps_p10: f64,
+    qps_p50: f64,
+    qps_p90: f64,
+    qps_max: f64,
+}
+
 #[derive(Serialize)]
 struct BenchmarkRecord {
     version: u32,
@@ -202,6 +224,23 @@ struct BenchmarkRecord {
     commit: String,
     config: BenchmarkConfig,
     result: BenchmarkResult,
+    /// Per-config throughput spread over all reps (matrix mode only; omitted otherwise).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<RunStats>,
+}
+
+/// Linear-interpolated percentile of an already-sorted (ascending) slice. `p` in [0, 1].
+fn percentile(sorted: &[f64], p: f64) -> f64 {
+    match sorted.len() {
+        0 => 0.0,
+        1 => sorted[0],
+        n => {
+            let rank = p * (n - 1) as f64;
+            let lo = rank.floor() as usize;
+            let frac = rank - lo as f64;
+            sorted[lo] + (sorted[(lo + 1).min(n - 1)] - sorted[lo]) * frac
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,9 +255,9 @@ fn first_byte_of(path: &Path) -> Result<u8, Box<dyn Error>> {
     Ok(buf[0])
 }
 
-/// Generates `count` random peptides whose length is in `[min_len, max_len]`.
-fn generate_peptides(count: usize, min_len: usize, max_len: usize) -> Vec<String> {
-    let mut rng = rand::thread_rng();
+/// Generates `count` random peptides whose length is in `[min_len, max_len]`, drawing from
+/// `rng` so the caller controls determinism (seeded → reproducible stream).
+fn generate_peptides(rng: &mut impl Rng, count: usize, min_len: usize, max_len: usize) -> Vec<String> {
     (0..count)
         .map(|_| {
             let len = rng.gen_range(min_len..=max_len);
@@ -388,7 +427,8 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
 
 /// Matrix mode: load the index once, then sweep the full config grid for each peptide
 /// file. The k-mer table is swapped in/out (moved, not cloned) so the big 6-mer table is
-/// built/loaded only once. Writes one record per (config × run) to <output>/<label>.jsonl.
+/// built/loaded only once. Each config runs `runs` reps but writes a single aggregated record
+/// (median-qps rep as `result`, plus a `stats` spread) to <output>/<label>.jsonl.
 #[allow(clippy::too_many_arguments)]
 fn run_matrix(
     mut searcher: Searcher<SuffixArray>,
@@ -443,33 +483,56 @@ fn run_matrix(
             for equate_il in [true, false] {
                 for tryptic in [true, false] {
                     for &batch in &args.matrix_batches {
-                        eprintln!("  {} il={} tr={} batch={} kmer={}", source, equate_il, tryptic, batch, kmer_k);
-                        for _ in 0..args.runs {
-                            let result = run_benchmark(&searcher, &peptides, args.max_matches, equate_il, tryptic, batch, theoretical_max, baseline_memory);
-                            let record = BenchmarkRecord {
-                                version: SCHEMA_VERSION,
-                                label: args.label.clone(),
-                                commit: commit.clone(),
-                                config: BenchmarkConfig {
-                                    sa_type: sa_type.to_string(),
-                                    mapping_type: mapping_type.to_string(),
-                                    use_mmap,
-                                    sample_rate,
-                                    bits_per_value,
-                                    equate_il,
-                                    tryptic,
-                                    max_matches: args.max_matches,
-                                    batch_size: batch,
-                                    kmer_k,
-                                    amount_of_peptides: peptides.len(),
-                                    peptide_length_min: p_min,
-                                    peptide_length_max: p_max,
-                                    peptide_source: source.clone(),
-                                },
-                                result,
-                            };
-                            writeln!(output_file, "{}", serde_json::to_string(&record)?)?;
-                        }
+                        // Run every rep, then summarise: one record per config with a spread,
+                        // and the median-qps rep kept as the representative detailed `result`.
+                        let mut results: Vec<BenchmarkResult> = (0..args.runs)
+                            .map(|_| run_benchmark(&searcher, &peptides, args.max_matches, equate_il, tryptic, batch, theoretical_max, baseline_memory))
+                            .collect();
+
+                        let mut qps: Vec<f64> = results.iter().map(|r| r.throughput_qps).collect();
+                        qps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                        let stats = RunStats {
+                            runs: args.runs,
+                            qps_min: qps[0],
+                            qps_p10: percentile(&qps, 0.10),
+                            qps_p50: percentile(&qps, 0.50),
+                            qps_p90: percentile(&qps, 0.90),
+                            qps_max: *qps.last().unwrap(),
+                        };
+                        let band = if stats.qps_p50 > 0.0 {
+                            (stats.qps_p90 - stats.qps_p10) / 2.0 / stats.qps_p50 * 100.0
+                        } else { 0.0 };
+                        eprintln!("  {} il={} tr={} batch={} kmer={}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0})",
+                            source, equate_il, tryptic, batch, kmer_k, stats.qps_p50, band, stats.qps_p10, stats.qps_p90);
+
+                        // Representative rep = the one nearest the median throughput.
+                        results.sort_by(|a, b| a.throughput_qps.partial_cmp(&b.throughput_qps).unwrap());
+                        let representative = results.remove(results.len() / 2);
+
+                        let record = BenchmarkRecord {
+                            version: SCHEMA_VERSION,
+                            label: args.label.clone(),
+                            commit: commit.clone(),
+                            config: BenchmarkConfig {
+                                sa_type: sa_type.to_string(),
+                                mapping_type: mapping_type.to_string(),
+                                use_mmap,
+                                sample_rate,
+                                bits_per_value,
+                                equate_il,
+                                tryptic,
+                                max_matches: args.max_matches,
+                                batch_size: batch,
+                                kmer_k,
+                                amount_of_peptides: peptides.len(),
+                                peptide_length_min: p_min,
+                                peptide_length_max: p_max,
+                                peptide_source: source.clone(),
+                            },
+                            result: representative,
+                            stats: Some(stats),
+                        };
+                        writeln!(output_file, "{}", serde_json::to_string(&record)?)?;
                     }
                 }
             }
@@ -673,6 +736,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mlp_batch: usize = std::env::var("SA_MLP_BATCH")
         .ok().and_then(|v| v.parse().ok()).filter(|&b| b > 1).unwrap_or(1);
 
+    // RNG for random mode. Seeded → reproducible stream across runs and invocations; otherwise
+    // seeded from OS entropy. Unused in file mode (peptides come from disk).
+    let mut rng = match args.seed {
+        Some(s) => { eprintln!("Random peptide seed: {}", s); StdRng::seed_from_u64(s) }
+        None => StdRng::from_entropy(),
+    };
+
     for run in 1..=args.runs {
         // In file mode: consume the next chunk sequentially.
         // In random mode: generate a fresh set of random peptides.
@@ -682,6 +752,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 all[start..start + args.amount_of_peptides].to_vec()
             }
             None => generate_peptides(
+                &mut rng,
                 args.amount_of_peptides,
                 args.peptide_length_min,
                 args.peptide_length_max,
@@ -718,6 +789,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             commit: env!("GIT_COMMIT_HASH").to_string(),
             config,
             result,
+            stats: None,
         };
 
         let line = serde_json::to_string(&record)?;
