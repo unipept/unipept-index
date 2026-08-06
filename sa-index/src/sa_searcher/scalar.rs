@@ -167,7 +167,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
                 // Fast-path: when equate_il=true, !tryptic, and skip=0, every entry in the SA
                 // range is a valid match — no per-entry filtering needed.
-                if equate_il && !tryptic && skip == 0 {
+                //
+                // The same holds when equate_il=false but the peptide contains no I or L:
+                // `compare` (used to narrow the SA range above) always normalizes L->I on both
+                // sides, because the index itself is built with every L replaced by I. So an
+                // in-range suffix can only fail to be an exact match if the text has an I where
+                // the peptide has an L (or vice versa) — impossible when the peptide has
+                // neither character. In that case equate_il is moot and the fast path is sound.
+                if (equate_il || il_locations.is_empty()) && !tryptic && skip == 0 {
                     let range_size = max_bound - min_bound;
                     if range_size >= max_matches {
                         // The range is larger than the cutoff: collect the first max_matches
@@ -525,5 +532,77 @@ mod tests {
         let found = searcher.search_matching_suffixes(b"A", usize::MAX, false, false);
         let expected: Vec<i64> = (0..n as i64).collect();
         assert_eq!(found, SearchAllSuffixesResult::SearchResult(expected));
+    }
+
+    // I/L-free peptides must produce identical results for equate_il=true and equate_il=false:
+    // `compare` (used to narrow the SA range) always normalizes L->I on both sides, because the
+    // index is built with every L replaced by I. So an in-range suffix can only fail to be an
+    // exact match if the text has an I where the peptide has an L (or vice versa) — impossible
+    // when the peptide has neither character. equate_il is therefore moot for such peptides, and
+    // the fast path should trigger identically for both. Exercises both fast-path branches:
+    // range_size (70) >= max_matches (10), and range_size < max_matches (usize::MAX).
+    #[test]
+    fn test_il_free_fast_path_matches_equate_il_true() {
+        let n = 70usize;
+        let mut input = "A".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // range_size (70) < max_matches: both collect the full range via the fast path.
+        assert_eq!(
+            searcher.search_matching_suffixes(b"A", usize::MAX, false, false),
+            searcher.search_matching_suffixes(b"A", usize::MAX, true, false)
+        );
+        // range_size (70) >= max_matches (10): both hit the MaxMatches cutoff identically.
+        assert_eq!(
+            searcher.search_matching_suffixes(b"A", 10, false, false),
+            searcher.search_matching_suffixes(b"A", 10, true, false)
+        );
+    }
+
+    // Negative counterpart to the above: a peptide that DOES contain I/L must keep taking the
+    // slow (validating) path when equate_il=false, even over a large SA range, and must still
+    // discriminate I from L correctly. Text is all 'L'; `compare` treats L==I during the bound
+    // search (narrowing the range), so searching "I" matches every position there — but none of
+    // them is an actual 'I' in the text, so equate_il=false must reject all of them while
+    // equate_il=true (which does take the fast path) accepts them.
+    #[test]
+    fn test_il_present_large_range_still_slow_path() {
+        let n = 70usize;
+        let mut input = "L".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // equate_il=true takes the fast path and happily returns 10 raw (unvalidated) matches...
+        match searcher.search_matching_suffixes(b"I", 10, true, false) {
+            SearchAllSuffixesResult::MaxMatches(v) => assert_eq!(v.len(), 10),
+            other => panic!("expected MaxMatches, got {:?}", other),
+        }
+        // ...but equate_il=false must still validate and reject them all: no position actually
+        // holds 'I'. Covers both the range_size >= max_matches and < max_matches branches.
+        assert_eq!(
+            searcher.search_matching_suffixes(b"I", 10, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(
+            searcher.search_matching_suffixes(b"I", usize::MAX, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
     }
 }

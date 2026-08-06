@@ -189,7 +189,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     BoundSearchResult::NoMatches => continue,
                 };
                 let search_string = strings[i];
-                if equate_il && !tryptic && skip == 0 {
+                // See scalar.rs's search_matching_suffixes for the soundness argument: `compare`
+                // always normalizes L->I on both sides (the index is built with L replaced by
+                // I), so an I/L-free peptide cannot mismatch an in-range suffix regardless of
+                // equate_il — the fast path applies whenever equate_il is true, or the peptide
+                // has no I/L to begin with.
+                if (equate_il || il_locs[i].is_empty()) && !tryptic && skip == 0 {
                     let range_size = max_bound - min_bound;
                     if range_size >= max_matches {
                         let result: Vec<i64> =
@@ -293,7 +298,8 @@ impl<'a> BsStream<'a> {
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use sa_mappings::proteins::ProteinsBackend as _;
+    use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
+    use text_compression::ProteinText;
 
     use crate::{
         array::OriginalSA,
@@ -386,6 +392,39 @@ mod tests {
                 reference.search_matching_suffixes(p, usize::MAX, false, false),
                 "batched+kmer vs plain scalar mismatch for {:?}", std::str::from_utf8(p).unwrap()
             );
+        }
+    }
+
+    // Regression guard for the I/L-free fast-path extension on the batched path (mirrors
+    // scalar.rs's `test_il_free_fast_path_matches_equate_il_true`). With peptides that contain
+    // neither I nor L, equate_il=false must behave identically to equate_il=true, and the
+    // batched kernel must agree with the scalar one — at a scale that exercises both the
+    // range_size >= max_matches and range_size < max_matches fast-path branches.
+    #[test]
+    fn test_batched_il_free_fast_path_at_scale() {
+        let n = 70usize;
+        let mut input = "A".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        let peptides: Vec<&[u8]> = vec![b"A", b"A", b"A"];
+        for &mm in &[usize::MAX, 10usize] {
+            let scalar: Vec<_> = peptides
+                .iter()
+                .map(|p| searcher.search_matching_suffixes(p, mm, false, false))
+                .collect();
+            let batched_false = searcher.search_matching_suffixes_batched(&peptides, mm, false, false);
+            let batched_true = searcher.search_matching_suffixes_batched(&peptides, mm, true, false);
+            assert_eq!(batched_false, scalar, "batched(equate_il=false) vs scalar mismatch at max_matches={mm}");
+            assert_eq!(batched_false, batched_true, "batched equate_il=false vs true mismatch at max_matches={mm}");
         }
     }
 }
