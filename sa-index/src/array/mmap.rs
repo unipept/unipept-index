@@ -70,18 +70,15 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         let _ = self.mmap.advise(memmap2::Advice::Random);
     }
 
-    #[inline]
-    fn prefetch_sa_range(&self, lo: usize, hi_exclusive: usize) {
-        #[cfg(unix)]
-        {
-            let byte_lo = self.data_offset + (lo * self.bits_per_value) / 8;
-            let byte_hi = self.data_offset + (hi_exclusive * self.bits_per_value).div_ceil(8);
-            let len = byte_hi.saturating_sub(byte_lo);
-            if len > 0 && byte_hi <= self.mmap.len() {
-                let _ = self.mmap.advise_range(memmap2::Advice::WillNeed, byte_lo, len);
-            }
-        }
-    }
+    // `prefetch_sa_range` is intentionally not overridden here: the default no-op in
+    // `SuffixArrayBackend` (array/mod.rs) applies. A per-query `MADV_WILLNEED` over the
+    // k-mer SA range was measured to *regress* the mmap backend by -16.8% qps (5-mer,
+    // 26-50aa, batch=16) even though pages are already resident. Average range size for a
+    // 5-mer is ~54 KB vs ~2.7 KB for a 6-mer (37.2e9 SA entries / 20^5 vs 20^6), and every
+    // rayon thread contends on the same VMA's mmap_lock to issue the advice — the penalty
+    // scales with range size, matching the observed 5-mer-hurts / 6-mer-roughly-even split.
+    // On an index whose pages are already touched (see `touch_all_pages`), the syscall buys
+    // nothing and the lock contention is pure cost.
 }
 
 impl ReadBinaryMmap for MmapBackedSA {
