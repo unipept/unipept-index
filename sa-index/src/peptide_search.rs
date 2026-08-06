@@ -136,25 +136,33 @@ pub fn search_all_peptides<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: Suf
     let suffix_results =
         searcher.search_all_matching_suffixes(&byte_peptides, cutoff, equate_il, tryptic, DEFAULT_MLP_BATCH);
 
-    // Retrieve the proteins for each hit and build the result, dropping peptides with no matches
-    // (preserves the previous filter_map semantics and result ordering).
-    prepared
-        .par_iter()
-        .zip(suffix_results.par_iter())
-        .filter_map(|((original_index, _), suffix_result)| {
-            let (suffixes, cutoff_used) = match suffix_result {
-                SearchAllSuffixesResult::MaxMatches(matched) => (matched, true),
-                SearchAllSuffixesResult::SearchResult(matched) => (matched, false),
-                SearchAllSuffixesResult::NoMatches => return None,
-            };
+    // Drop the peptides without matches (preserves the previous filter_map semantics and result
+    // ordering) and keep the matched suffix lists as borrowed slices.
+    let matched: Vec<(usize, bool, &[i64])> = prepared
+        .iter()
+        .zip(suffix_results.iter())
+        .filter_map(|((original_index, _), suffix_result)| match suffix_result {
+            SearchAllSuffixesResult::MaxMatches(suffixes) => Some((*original_index, true, suffixes.as_slice())),
+            SearchAllSuffixesResult::SearchResult(suffixes) => Some((*original_index, false, suffixes.as_slice())),
+            SearchAllSuffixesResult::NoMatches => None,
+        })
+        .collect();
 
-            let proteins = searcher.retrieve_proteins(suffixes);
+    let suffix_lists: Vec<&[i64]> = matched.iter().map(|(_, _, suffixes)| *suffixes).collect();
 
-            Some(SearchResult {
-                sequence: peptides[*original_index].to_string(),
-                proteins: proteins.into_iter().map(|protein| protein.into()).collect(),
-                cutoff_used,
-            })
+    // One batched (MLP) retrieval over the whole list — retrieving per peptide would serialise
+    // the random reads inside each (usually tiny) result list, leaving the prefetch look-ahead
+    // idle. Same rationale as the batched search above, and the same code path the benchmark
+    // measures.
+    let retrieved = searcher.retrieve_all_proteins(&suffix_lists);
+
+    matched
+        .into_par_iter()
+        .zip(retrieved.into_par_iter())
+        .map(|((original_index, cutoff_used, _), proteins)| SearchResult {
+            sequence: peptides[original_index].to_string(),
+            proteins: proteins.into_iter().map(|protein| protein.into()).collect(),
+            cutoff_used,
         })
         .collect()
 }
