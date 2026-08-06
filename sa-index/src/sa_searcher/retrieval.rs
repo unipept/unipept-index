@@ -11,34 +11,39 @@ use crate::Nullable;
 
 use super::Searcher;
 
-/// D=32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the protein read in
-/// proteins.get(), giving the prefetch hint time to complete for most DRAM configs.
-const PREFETCH_DISTANCE: usize = 32;
-
 /// Default number of queries whose retrieval is interleaved by `retrieve_proteins_batched`.
 /// 16 queries × the observed average of a few matched suffixes each lands at or above the
-/// PREFETCH_DISTANCE of 32, which is exactly the point at which the look-ahead starts firing
-/// for the peptide lengths that never reached it before (26–50 aa peptides match only a
-/// handful of suffixes, so single-query retrieval prefetched nothing at all). Larger groups
-/// only add scratch-buffer pressure — the pipeline is already full at that depth.
+/// default `retrieval_prefetch_distance` of 32, which is exactly the point at which the
+/// look-ahead starts firing for the peptide lengths that never reached it before (26–50 aa
+/// peptides match only a handful of suffixes, so single-query retrieval prefetched nothing at
+/// all). Larger groups only add scratch-buffer pressure — the pipeline is already full at that
+/// depth.
+///
+/// Mirrored by `SearchTuning::retrieval_batch`, which is what `retrieve_all_proteins` actually
+/// reads; this constant is the default that field is initialised to.
 pub const DEFAULT_RETRIEVAL_BATCH: usize = 16;
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Returns all the proteins that correspond with the provided suffixes.
     ///
-    /// Two-pass prefetch pipeline (PREFETCH_DISTANCE = 32):
+    /// Two-pass prefetch pipeline, look-ahead D = `tuning.retrieval_prefetch_distance`:
     /// Pass 1 — prefetch suffix_to_protein mapping entries D iterations ahead, collect protein_indices.
     /// Pass 2 — prefetch protein entries D iterations ahead, build ProteinRef result.
+    ///
+    /// D defaults to 32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the protein read in
+    /// `proteins.get()`, giving the prefetch hint time to complete for most DRAM configs.
     ///
     /// Note: prefetch_strings is intentionally omitted — it reads the fixed-table entry to obtain
     /// string offsets, which causes a stall when the entry has not yet landed from the earlier
     /// prefetch hint (D/2 iterations × ~5 ns < ~80–100 ns DRAM latency).
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
+        let distance = self.tuning.retrieval_prefetch_distance;
+
         // Pass 1: prefetch suffix_to_protein mapping, collect protein_indices
         let mut protein_indices = Vec::with_capacity(suffixes.len());
         for (i, &suffix) in suffixes.iter().enumerate() {
-            if let Some(&fs) = suffixes.get(i + PREFETCH_DISTANCE) {
+            if let Some(&fs) = suffixes.get(i + distance) {
                 self.suffix_index_to_protein.prefetch_for_suffix(fs);
             }
             protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
@@ -47,7 +52,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // Pass 2: prefetch proteins (D ahead), build ProteinRefs
         let mut res = Vec::with_capacity(suffixes.len());
         for (i, &protein_index) in protein_indices.iter().enumerate() {
-            if let Some(&fpi) = protein_indices.get(i + PREFETCH_DISTANCE) {
+            if let Some(&fpi) = protein_indices.get(i + distance) {
                 if !fpi.is_null() { self.proteins.prefetch(fpi as usize); }
             }
             if !protein_index.is_null() {
@@ -63,8 +68,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// identical to calling `retrieve_proteins` on each input separately.
     ///
     /// Why this exists: `retrieve_proteins` guards its look-ahead on `suffixes.get(i + D)`,
-    /// so a query matching fewer than D=32 suffixes issues *no* prefetch at all. That is the
-    /// common case for long peptides (26–50 aa match a handful of suffixes each) and exactly
+    /// so a query matching fewer than D (32 by default) suffixes issues *no* prefetch at all.
+    /// That is the common case for long peptides (26–50 aa match a handful of suffixes each)
+    /// and exactly
     /// the case where the two random reads per suffix — the suffix→protein mapping entry and
     /// the protein entry — are pure ~80–100 ns DRAM latency with nothing to overlap them
     /// with. Flattening `batch` queries into one index makes the look-ahead cross query
@@ -81,6 +87,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // batch == 0 would make `chunks` panic; a group of one degrades to the single-query
         // behaviour (look-ahead only fires for lists longer than D), which is still correct.
         let batch = batch.max(1);
+        let distance = self.tuning.retrieval_prefetch_distance;
 
         let mut results: Vec<Vec<ProteinRef<'_>>> = Vec::with_capacity(suffix_lists.len());
 
@@ -110,7 +117,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             protein_indices.clear();
             protein_indices.reserve(flat_suffixes.len());
             for (i, &suffix) in flat_suffixes.iter().enumerate() {
-                if let Some(&fs) = flat_suffixes.get(i + PREFETCH_DISTANCE) {
+                if let Some(&fs) = flat_suffixes.get(i + distance) {
                     self.suffix_index_to_protein.prefetch_for_suffix(fs);
                 }
                 protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
@@ -122,7 +129,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 let (start, end) = (offsets[query], offsets[query + 1]);
                 let mut res = Vec::with_capacity(end - start);
                 for i in start..end {
-                    if let Some(&fpi) = protein_indices.get(i + PREFETCH_DISTANCE) {
+                    if let Some(&fpi) = protein_indices.get(i + distance) {
                         if !fpi.is_null() { self.proteins.prefetch(fpi as usize); }
                     }
                     let protein_index = protein_indices[i];
@@ -187,7 +194,7 @@ mod tests {
         assert!(searcher.retrieve_proteins(&[]).is_empty());
     }
 
-    // > PREFETCH_DISTANCE (32) suffixes to exercise the two-pass prefetch-ahead loop.
+    // > the default retrieval_prefetch_distance (32) suffixes to exercise the two-pass prefetch-ahead loop.
     #[test]
     fn test_retrieve_proteins_many() {
         let n = 70usize;
@@ -257,7 +264,7 @@ mod tests {
         assert_eq!(got, expected, "batched retrieval differs from per-query retrieval at batch {}", batch);
     }
 
-    // Result lists of wildly varying length — empty, length 1, well below PREFETCH_DISTANCE (32)
+    // Result lists of wildly varying length — empty, length 1, well below the default retrieval_prefetch_distance (32)
     // and well above it — must give exactly the per-query result, independent of the batch size.
     #[test]
     fn test_retrieve_batched_matches_single() {
@@ -274,8 +281,8 @@ mod tests {
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
 
-        let long: Vec<i64> = (0..n as i64).collect(); // 70 > PREFETCH_DISTANCE
-        let medium: Vec<i64> = (0..20).collect(); // < PREFETCH_DISTANCE
+        let long: Vec<i64> = (0..n as i64).collect(); // 70 > default distance
+        let medium: Vec<i64> = (0..20).collect(); // < default distance
         let short = vec![3i64];
         let empty: Vec<i64> = vec![];
 

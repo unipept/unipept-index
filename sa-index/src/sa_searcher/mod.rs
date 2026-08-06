@@ -1,4 +1,5 @@
 mod batched;
+pub(crate) mod metrics;
 mod orchestrate;
 mod retrieval;
 mod scalar;
@@ -6,8 +7,9 @@ mod scalar;
 mod test_helpers;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
+pub use retrieval::DEFAULT_RETRIEVAL_BATCH;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::sa_searcher::metrics::Counter;
 
 use sa_mappings::proteins::{Proteins, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
@@ -122,6 +124,50 @@ impl PartialEq for SearchAllSuffixesResult {
     }
 }
 
+/// Upper bound on `validate_batch` — sizes the on-stack candidate buffer in
+/// `iterate_sa_range`, so it must stay a compile-time constant.
+pub const MAX_VALIDATE_BATCH: usize = 256;
+
+/// Runtime-tunable batch and prefetch-lookahead sizes for the search and retrieval hot
+/// paths. Every field is a pure performance knob: results are identical for any setting
+/// (asserted by `test_tuning_does_not_change_results`).
+#[derive(Clone, Copy, Debug)]
+pub struct SearchTuning {
+    /// Candidates per two-pass validation batch in `iterate_sa_range`.
+    /// Clamped to `1..=MAX_VALIDATE_BATCH`.
+    pub validate_batch: usize,
+    /// Minimum SA range size before `iterate_sa_range` uses two-pass validation
+    /// instead of a straight loop.
+    pub validate_prefetch_threshold: usize,
+    /// Prefetch look-ahead distance (in suffixes) inside protein retrieval.
+    pub retrieval_prefetch_distance: usize,
+    /// Queries whose retrieval is interleaved in one cross-query group.
+    pub retrieval_batch: usize,
+    /// Whether the scalar search path issues `prefetch_kmer_range` before each skip's
+    /// `search_bounds`.
+    ///
+    /// Unlike the batched path — where the call fans N independent lookups into a 127 MB
+    /// (5-mer) or 3 GB (6-mer) table out *before* any search runs, genuine memory-level
+    /// parallelism — the scalar call sits immediately before the `search_bounds` that repeats
+    /// the identical lookup, with no intervening work to hide the latency behind. Since the
+    /// mmap `madvise` was removed it does nothing but a redundant table probe. That is a perf
+    /// claim, so it is a knob to be measured rather than a deletion: `true` is today's
+    /// behaviour.
+    pub scalar_kmer_prefetch: bool,
+}
+
+impl Default for SearchTuning {
+    fn default() -> Self {
+        Self {
+            validate_batch: 64,              // was BATCH_SIZE in iterate_sa_range
+            validate_prefetch_threshold: 32, // was PREFETCH_THRESHOLD
+            retrieval_prefetch_distance: 32, // was PREFETCH_DISTANCE in retrieval.rs
+            retrieval_batch: 16,             // was DEFAULT_RETRIEVAL_BATCH
+            scalar_kmer_prefetch: true,      // today's behaviour
+        }
+    }
+}
+
 /// Struct that contains all the elements needed to search a peptide in the suffix array
 /// This struct also contains all the functions used for search
 ///
@@ -139,10 +185,27 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM:
     pub proteins: P,
     pub suffix_index_to_protein: STPM,
     pub kmer_table: Option<KmerTable>,
+    /// Batch and prefetch-lookahead sizes for the hot paths. Public so callers (the benchmark)
+    /// can mutate it between configurations, exactly as they already do with `kmer_table`.
+    pub tuning: SearchTuning,
     /// Total nanoseconds spent inside `search_bounds()` across all queries (since last drain).
-    pub search_bounds_ns: AtomicU64,
+    /// Only accumulated with the `metrics` feature enabled; a no-op ZST otherwise.
+    pub search_bounds_ns: Counter,
     /// Total nanoseconds spent iterating matches in `search_matching_suffixes()` (since last drain).
-    pub match_iter_ns: AtomicU64,
+    /// Only accumulated with the `metrics` feature enabled; a no-op ZST otherwise.
+    pub match_iter_ns: Counter,
+    /// Candidate suffixes inspected by `iterate_sa_range` (since last drain), i.e. every entry
+    /// the SA-range scan looked at, accepted or not. `metrics` only.
+    pub candidates_examined: Counter,
+    /// Candidate suffixes `iterate_sa_range` accepted as real matches (since last drain).
+    /// `metrics` only.
+    ///
+    /// Together with `candidates_examined` this settles why tryptic search is ~12.5x slower
+    /// than non-tryptic on 5–10 aa peptides: a low accepted/examined ratio means the scan is
+    /// simply sifting ~1/ratio times more candidates to reach `max_matches` (make each check
+    /// cheaper), whereas a ratio near 1 with the cutoff rarely reached means whole SA ranges
+    /// are being scanned to exhaustion (a `max_candidates` scan cap is the fix).
+    pub candidates_accepted: Counter,
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -168,22 +231,43 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             proteins,
             suffix_index_to_protein,
             kmer_table: None,
-            search_bounds_ns: AtomicU64::new(0),
-            match_iter_ns: AtomicU64::new(0),
+            tuning: SearchTuning::default(),
+            search_bounds_ns: Counter::new(),
+            match_iter_ns: Counter::new(),
+            candidates_examined: Counter::new(),
+            candidates_accepted: Counter::new(),
         }
     }
 
     /// Returns `(search_bounds_ns, match_iter_ns)` accumulated since the last call and resets both
     /// counters to zero.  Safe to call concurrently with ongoing searches (relaxed ordering).
+    ///
+    /// Present in both feature configurations so callers need no `cfg`; without the `metrics`
+    /// feature it always returns `(0, 0)`.
     pub fn drain_timing_ns(&self) -> (u64, u64) {
-        let bounds = self.search_bounds_ns.swap(0, Ordering::Relaxed);
-        let iter = self.match_iter_ns.swap(0, Ordering::Relaxed);
-        (bounds, iter)
+        (self.search_bounds_ns.drain(), self.match_iter_ns.drain())
+    }
+
+    /// Returns `(candidates_examined, candidates_accepted)` accumulated by `iterate_sa_range`
+    /// since the last call and resets both counters to zero. Same contract as
+    /// `drain_timing_ns`: always present, always `(0, 0)` without the `metrics` feature.
+    ///
+    /// The ratio is the SA-range scan's acceptance rate; the tryptic paths are the interesting
+    /// ones, since a non-tryptic I/L-free query never enters `iterate_sa_range` at all.
+    pub fn drain_candidate_counts(&self) -> (u64, u64) {
+        (self.candidates_examined.drain(), self.candidates_accepted.drain())
     }
 
     /// Attaches a pre-built k-mer bounds table to this searcher.
     pub fn with_kmer_table(mut self, table: KmerTable) -> Self {
         self.kmer_table = Some(table);
+        self
+    }
+
+    /// Overrides the hot-path batch and prefetch sizes. Pure performance knobs — results are
+    /// unaffected.
+    pub fn with_tuning(mut self, tuning: SearchTuning) -> Self {
+        self.tuning = tuning;
         self
     }
 
@@ -391,8 +475,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// both ends of the span. Any peptide short enough to span at most two lines (~100 aa —
     /// every realistic query) is therefore fully covered.
     ///
-    /// The count matters more than the arithmetic it saves: `iterate_sa_range` uses
-    /// `BATCH_SIZE = 64`, so four hints per candidate meant 256 outstanding prefetches against
+    /// The count matters more than the arithmetic it saves: `iterate_sa_range` batches 64
+    /// candidates by default, so four hints per candidate meant 256 outstanding prefetches against
     /// the ~10-12 line-fill buffers a core has, ~20x oversubscribed — most hints were evicted
     /// before Pass 2 could use them. Two per candidate doubles the effective prefetch depth.
     #[inline]
@@ -463,72 +547,90 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         matching_suffixes: &mut Vec<i64>,
         max_matches: usize,
     ) -> bool {
-        // Tuned on x86_64 Zen4/Intel Sapphire Rapids: DRAM latency ~80–100 ns, one SA entry
-        // read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably above
-        // the latency floor. Re-benchmark on ARM or NVMe-backed mmap.
-        const BATCH_SIZE: usize = 64;
-        // Minimum range for prefetch to resolve before use.
-        // Below this threshold the two-pass overhead exceeds the latency-hiding benefit.
-        const PREFETCH_THRESHOLD: usize = 32;
+        // Default 64, tuned on x86_64 Zen4/Intel Sapphire Rapids: DRAM latency ~80–100 ns, one
+        // SA entry read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably
+        // above the latency floor. Runtime-settable because that reasoning does not transfer to
+        // ARM or NVMe-backed mmap; the buffer stays on the stack (a heap Vec here would cost
+        // more than the batching saves), so the fill length is clamped to the array's size.
+        let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
+        // Default 32: the minimum range for a prefetch to resolve before use. Below this the
+        // two-pass overhead exceeds the latency-hiding benefit.
+        let prefetch_threshold = self.tuning.validate_prefetch_threshold;
 
         // Resolve the query-invariant half of the tryptic predicate once per peptide rather
         // than once per candidate — this loop runs `max_matches / acceptance_rate` times.
         let tryptic = TrypticQuery::new(tryptic, search_string);
 
-        if range_size < PREFETCH_THRESHOLD {
-            for raw in sa_iter {
-                if let Some(v) = self.validate_candidate(
-                    text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
-                ) {
-                    matching_suffixes.push(v);
-                    if matching_suffixes.len() >= max_matches { return true; }
+        // Local counters, folded into the shared atomics exactly once below. A per-candidate
+        // RMW on a cache line every rayon worker shares would dominate the loop it measures.
+        let mut examined = 0u64;
+        let mut accepted = 0u64;
+
+        let hit_max = 'scan: {
+            if range_size < prefetch_threshold {
+                for raw in sa_iter {
+                    examined += 1;
+                    if let Some(v) = self.validate_candidate(
+                        text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+                    ) {
+                        accepted += 1;
+                        matching_suffixes.push(v);
+                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                    }
+                }
+                break 'scan false;
+            }
+
+            let mut raw_batch = [0i64; MAX_VALIDATE_BATCH];
+
+            loop {
+                // --- Pass 1: fill batch and prefetch text positions ---
+                let mut batch_len = 0usize;
+                for s in &mut sa_iter {
+                    let su = s as usize;
+                    if su >= skip {
+                        Self::prefetch_match_positions(text, su - skip, su + search_string.len() - skip);
+                    }
+                    raw_batch[batch_len] = s;
+                    batch_len += 1;
+                    if batch_len == batch_size { break; }
+                }
+                if batch_len == 0 { break; }
+
+                // --- Pass 2: validate (prefetches have had time to complete) ---
+                for &raw in &raw_batch[..batch_len] {
+                    examined += 1;
+                    if let Some(v) = self.validate_candidate(
+                        text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+                    ) {
+                        accepted += 1;
+                        matching_suffixes.push(v);
+                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                    }
                 }
             }
-            return false;
-        }
+            false
+        };
 
-        let mut raw_batch = [0i64; BATCH_SIZE];
-
-        loop {
-            // --- Pass 1: fill batch and prefetch text positions ---
-            let mut batch_len = 0usize;
-            for s in &mut sa_iter {
-                let su = s as usize;
-                if su >= skip {
-                    Self::prefetch_match_positions(text, su - skip, su + search_string.len() - skip);
-                }
-                raw_batch[batch_len] = s;
-                batch_len += 1;
-                if batch_len == BATCH_SIZE { break; }
-            }
-            if batch_len == 0 { break; }
-
-            // --- Pass 2: validate (prefetches have had time to complete) ---
-            for &raw in &raw_batch[..batch_len] {
-                if let Some(v) = self.validate_candidate(
-                    text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
-                ) {
-                    matching_suffixes.push(v);
-                    if matching_suffixes.len() >= max_matches { return true; }
-                }
-            }
-        }
-        false
+        self.candidates_examined.add(examined);
+        self.candidates_accepted.add(accepted);
+        hit_max
     }
 
 }
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use std::sync::atomic::Ordering;
-
     use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
     use text_compression::{ProteinText, ProteinTextBackend as _};
 
-    use super::{SearchAllSuffixesResult, TrypticQuery};
+    use super::{SearchAllSuffixesResult, SearchTuning, TrypticQuery, MAX_VALIDATE_BATCH};
     use crate::{
         array::OriginalSA,
-        sa_searcher::{test_helpers::get_example_proteins, Searcher},
+        sa_searcher::{
+            test_helpers::{get_example_proteins, searcher_over_text},
+            BoundSearchResult, Searcher,
+        },
         suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
         SuffixArray,
     };
@@ -780,14 +882,267 @@ mod tests {
     }
 
     // drain_timing_ns returns the accumulated counters and resets them to zero.
+    // Without the `metrics` feature the counters are no-op ZSTs, so the drain is always (0, 0)
+    // — the API stays present either way so callers need no `cfg`.
     #[test]
     fn test_drain_timing_ns() {
         let searcher = example_searcher();
         assert_eq!(searcher.drain_timing_ns(), (0, 0));
 
-        searcher.search_bounds_ns.store(123, Ordering::Relaxed);
-        searcher.match_iter_ns.store(456, Ordering::Relaxed);
-        assert_eq!(searcher.drain_timing_ns(), (123, 456));
+        searcher.search_bounds_ns.store(123);
+        searcher.match_iter_ns.store(456);
+        let expected = if cfg!(feature = "metrics") { (123, 456) } else { (0, 0) };
+        assert_eq!(searcher.drain_timing_ns(), expected);
         assert_eq!(searcher.drain_timing_ns(), (0, 0)); // reset after draining
+    }
+
+    // Same contract for the candidate counters.
+    #[test]
+    fn test_drain_candidate_counts() {
+        let searcher = example_searcher();
+        assert_eq!(searcher.drain_candidate_counts(), (0, 0));
+
+        searcher.candidates_examined.store(70);
+        searcher.candidates_accepted.store(7);
+        let expected = if cfg!(feature = "metrics") { (70, 7) } else { (0, 0) };
+        assert_eq!(searcher.drain_candidate_counts(), expected);
+        assert_eq!(searcher.drain_candidate_counts(), (0, 0)); // reset after draining
+    }
+
+    // With `metrics` on, `iterate_sa_range` must actually count what it scans — and only what
+    // *it* scans: the counters exist to measure the acceptance rate of the validating path, so
+    // the fast path (which accepts a whole SA range without inspecting entries) must not
+    // contribute. A text of all 'L' searched for "I" with equate_il=false enters the validating
+    // path and rejects every candidate: 70 examined, 0 accepted.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_candidate_counts_are_accumulated() {
+        let n = 70usize;
+        let mut input = "L".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // "I" matches all 70 'L' positions during the bound search (L is normalized to I), but
+        // equate_il=false rejects every one of them: acceptance rate 0.
+        searcher.drain_candidate_counts();
+        assert_eq!(
+            searcher.search_matching_suffixes(b"I", usize::MAX, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(searcher.drain_candidate_counts(), (n as u64, 0));
+
+        // Same range with equate_il=true accepts everything it examines — but takes the fast
+        // path, which bypasses iterate_sa_range entirely, so nothing is counted at all.
+        searcher.search_matching_suffixes(b"I", usize::MAX, true, false);
+        assert_eq!(searcher.drain_candidate_counts(), (0, 0));
+    }
+
+    // The two-pass path's stack buffer is sized by the compile-time MAX_VALIDATE_BATCH; a
+    // larger runtime `validate_batch` must clamp to it, not index past the array.
+    #[test]
+    fn test_validate_batch_clamps_to_max() {
+        let n = 300usize; // > MAX_VALIDATE_BATCH, so the batch loop refills at least once
+        let mut input = "L".repeat(n);
+        input.push('$');
+        let text = ProteinText::from_string(&input);
+        let proteins = Proteins::new(text, vec![Protein {
+            uniprot_id: String::new(),
+            taxon_id: 0,
+            functional_annotations: vec![],
+        }]);
+        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
+        let stp = BitVecSuffixToProtein::new(proteins.text());
+        let mut searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+
+        // "L" enters the validating path (equate_il=false, peptide holds an L) and matches
+        // every position, so the scan runs over the whole 300-entry range.
+        let expected = searcher.search_matching_suffixes(b"L", usize::MAX, false, false);
+
+        for validate_batch in [MAX_VALIDATE_BATCH, MAX_VALIDATE_BATCH + 1, usize::MAX, 0] {
+            searcher.tuning = SearchTuning { validate_batch, ..SearchTuning::default() };
+            assert_eq!(
+                searcher.search_matching_suffixes(b"L", usize::MAX, false, false),
+                expected,
+                "validate_batch = {validate_batch} changed the result"
+            );
+        }
+    }
+
+    // ── SearchTuning equivalence ────────────────────────────────────────────────────────
+    //
+    // Every SearchTuning field is a pure performance knob, so the entire grid must produce
+    // byte-identical search *and* retrieval output. This is the guard on that claim: without
+    // it, a sweep that changed results would look like a speed-up.
+
+    /// 500 short proteins built from a rotating set of motifs. The repetition is what makes the
+    /// fixture useful: a 2-mer query lands an SA range well above the default two-pass
+    /// threshold (32) while the longer, rarer peptides stay below it, so one run covers both
+    /// branches of `iterate_sa_range`. K/R/P give the tryptic filter a real mix of accepts and
+    /// rejects, and the I/L pairs exercise both `equate_il` settings.
+    fn tuning_fixture_text() -> String {
+        let motifs = ["AAKR", "AILK", "PAAK", "CVAAR", "KCRLY", "AAIP"];
+        let mut s = String::new();
+        for i in 0..500 {
+            s.push_str(motifs[i % motifs.len()]);
+            s.push_str(motifs[(i * 3 + 1) % motifs.len()]);
+            s.push('-');
+        }
+        // Every motif recurs 20-40 times, so nothing built from them alone yields a *small* SA
+        // range. One unique protein, from residues that appear nowhere else, supplies the
+        // below-threshold ranges that exercise the straight (non-batched) scan.
+        s.push_str(RARE_PROTEIN);
+        s.push('$');
+        s
+    }
+
+    /// The one non-repeated protein in `tuning_fixture_text`. Ends in K so it also has a valid
+    /// tryptic C-terminus, and carries an L so `equate_il` is not moot for it.
+    const RARE_PROTEIN: &str = "MWYFQDNTLHK";
+
+    /// Peptides spanning the interesting shapes: very common 1–3-mers (large SA ranges, so the
+    /// two-pass path and the `max_matches` cutoff), unique ones from `RARE_PROTEIN` (ranges of
+    /// 1–2 entries, so the straight scan), I/L-carrying and I/L-free ones, K/R- and
+    /// P-terminated ones, and a total miss.
+    const TUNING_PEPTIDES: &[&[u8]] = &[
+        b"A", b"AA", b"AAK", b"K", b"KR", b"IL", b"LI", b"AILK", b"CVAAR", b"KCRLY", b"AAKRAAIP",
+        b"PAAK", b"AAIP", b"MWYFQ", b"MWYFQDNTLHK", b"NTLHK", b"NTIHK", b"ZZ",
+    ];
+
+    /// Runs the full pipeline — search then retrieval — over `peptides` on both the scalar
+    /// (MLP batch 1) and batched (16) orchestration paths, and reduces the outcome to a plainly
+    /// comparable value: the result discriminant, the matched suffixes in the order they were
+    /// produced, and each retrieved protein's taxon + accession (`ProteinRef` borrows, so it is
+    /// not `PartialEq` itself).
+    ///
+    /// `max_matches` is deliberately finite and larger than the smallest swept `validate_batch`
+    /// so the cutoff fires mid-batch for the common peptides.
+    fn tuning_run(
+        searcher: &Searcher<SuffixArray>,
+        peptides: &[&[u8]],
+        equate_il: bool,
+        tryptic: bool,
+    ) -> Vec<(usize, &'static str, Vec<i64>, Vec<(u32, String)>)> {
+        let mut out = Vec::new();
+        for mlp_batch in [1usize, 16] {
+            let results =
+                searcher.search_all_matching_suffixes(peptides, 64, equate_il, tryptic, mlp_batch);
+            let tags: Vec<&'static str> = results
+                .iter()
+                .map(|r| match r {
+                    SearchAllSuffixesResult::NoMatches => "none",
+                    SearchAllSuffixesResult::MaxMatches(_) => "max",
+                    SearchAllSuffixesResult::SearchResult(_) => "hit",
+                })
+                .collect();
+            let suffixes: Vec<Vec<i64>> = results
+                .iter()
+                .map(|r| match r {
+                    SearchAllSuffixesResult::NoMatches => vec![],
+                    SearchAllSuffixesResult::MaxMatches(v)
+                    | SearchAllSuffixesResult::SearchResult(v) => v.clone(),
+                })
+                .collect();
+
+            let lists: Vec<&[i64]> = suffixes.iter().map(|v| v.as_slice()).collect();
+            let proteins: Vec<Vec<(u32, String)>> = searcher
+                .retrieve_all_proteins(&lists)
+                .iter()
+                .map(|ps| ps.iter().map(|p| (p.taxon_id, p.uniprot_id.to_string())).collect())
+                .collect();
+
+            for i in 0..peptides.len() {
+                out.push((mlp_batch, tags[i], suffixes[i].clone(), proteins[i].clone()));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_tuning_does_not_change_results() {
+        let text = tuning_fixture_text();
+
+        // Dense SA (skip is always 0), sparse SA (exercises skip = 1, 2 and therefore the
+        // prefix/suffix validation), and a k-mer-narrowed one — which is the only
+        // configuration in which `scalar_kmer_prefetch` has anything to switch off.
+        let mut kmered = searcher_over_text(&text, 1);
+        kmered.build_kmer_table(3);
+        // The third element is the sparseness factor: `search_matching_suffixes` indexes
+        // `search_string[skip..]` for every skip below it, so peptides shorter than that are
+        // out of contract (production drops them before the search) and must be filtered out.
+        let mut fixtures = vec![
+            ("dense", searcher_over_text(&text, 1), 1usize),
+            ("sparse", searcher_over_text(&text, 3), 3usize),
+            ("kmer", kmered, 1usize),
+        ];
+
+        // The fixture must actually reach both scan paths, otherwise sweeping validate_batch
+        // and validate_prefetch_threshold proves nothing. "AA" must exceed the largest swept
+        // threshold (and the largest swept batch, so the batch refills); "MWYFQ" must fall
+        // below the smallest non-zero one.
+        match fixtures[0].1.search_bounds(b"AA") {
+            BoundSearchResult::SearchResult((lo, hi)) => assert!(
+                hi - lo > MAX_VALIDATE_BATCH,
+                "fixture too small: 'AA' range is only {}",
+                hi - lo
+            ),
+            other => panic!("expected 'AA' to match, got {other:?}"),
+        }
+        match fixtures[0].1.search_bounds(b"MWYFQ") {
+            BoundSearchResult::SearchResult((lo, hi)) => {
+                assert!(hi - lo < 8, "'MWYFQ' range {} is not below the threshold", hi - lo)
+            }
+            other => panic!("expected 'MWYFQ' to match, got {other:?}"),
+        }
+
+        for (name, searcher, min_len) in fixtures.iter_mut() {
+            let peptides: Vec<&[u8]> =
+                TUNING_PEPTIDES.iter().copied().filter(|p| p.len() >= *min_len).collect();
+
+            for equate_il in [false, true] {
+                for tryptic in [false, true] {
+                    searcher.tuning = SearchTuning::default();
+                    let expected = tuning_run(searcher, &peptides, equate_il, tryptic);
+
+                    // Every peptide matching nothing would make the comparison vacuous.
+                    assert!(
+                        expected.iter().any(|(_, tag, _, _)| *tag != "none"),
+                        "{name}: fixture matches nothing (il={equate_il} tr={tryptic})"
+                    );
+
+                    for validate_batch in [1usize, 16, 64, MAX_VALIDATE_BATCH] {
+                        for validate_prefetch_threshold in [0usize, 8, 32] {
+                            for retrieval_prefetch_distance in [1usize, 8, 32] {
+                                for retrieval_batch in [1usize, 4, 16] {
+                                    for scalar_kmer_prefetch in [true, false] {
+                                        let tuning = SearchTuning {
+                                            validate_batch,
+                                            validate_prefetch_threshold,
+                                            retrieval_prefetch_distance,
+                                            retrieval_batch,
+                                            scalar_kmer_prefetch,
+                                        };
+                                        searcher.tuning = tuning;
+                                        assert_eq!(
+                                            tuning_run(searcher, &peptides, equate_il, tryptic),
+                                            expected,
+                                            "{name}: results changed (il={equate_il} tr={tryptic}) \
+                                             for {tuning:?}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

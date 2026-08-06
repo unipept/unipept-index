@@ -14,7 +14,6 @@ use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
 use crate::array::SuffixArrayBackend;
 use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 
-use super::retrieval::DEFAULT_RETRIEVAL_BATCH;
 use super::{SearchAllSuffixesResult, Searcher};
 
 /// Default cross-query MLP batch size. Chosen from the full-DB sweep: batching is a win on
@@ -64,12 +63,16 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// only a handful of suffixes. Results are identical to per-query `retrieve_proteins`
     /// (see `test_retrieve_batched_matches_single`), so the grouping is a pure perf knob.
     ///
-    /// The group size is `DEFAULT_RETRIEVAL_BATCH` rather than a parameter; callers that want
-    /// to sweep it call `retrieve_proteins_batched` directly with an explicit `batch`.
+    /// The group size comes from `tuning.retrieval_batch` (default `DEFAULT_RETRIEVAL_BATCH`)
+    /// rather than a parameter; callers that want to sweep it per call rather than per searcher
+    /// call `retrieve_proteins_batched` directly with an explicit `batch`.
     pub fn retrieve_all_proteins(&self, suffix_lists: &[&[i64]]) -> Vec<Vec<ProteinRef<'_>>> {
+        // `par_chunks(0)` panics, and a group of one is still correct (it just degrades to
+        // single-query look-ahead behaviour).
+        let batch = self.tuning.retrieval_batch.max(1);
         suffix_lists
-            .par_chunks(DEFAULT_RETRIEVAL_BATCH)
-            .flat_map(|group| self.retrieve_proteins_batched(group, DEFAULT_RETRIEVAL_BATCH))
+            .par_chunks(batch)
+            .flat_map(|group| self.retrieve_proteins_batched(group, batch))
             .collect()
     }
 }

@@ -7,8 +7,6 @@
 //! block to keep the batched pipeline out of the scalar `Searcher` code.
 
 use std::cmp::min;
-use std::sync::atomic::Ordering;
-use std::time::Instant;
 
 use sa_mappings::proteins::ProteinsBackend;
 use text_compression::ProteinTextBackend;
@@ -16,6 +14,7 @@ use text_compression::ProteinTextBackend;
 use crate::array::SuffixArrayBackend;
 use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 
+use super::metrics::Timer;
 use super::BoundSearch::{Maximum, Minimum};
 use super::{BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher};
 
@@ -177,12 +176,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             }
 
             let sub: Vec<&[u8]> = active.iter().map(|&i| &strings[i][skip..]).collect();
-            let t_bounds = Instant::now();
+            let t_bounds = Timer::start();
             let bounds = self.search_bounds_batched(&sub);
-            self.search_bounds_ns
-                .fetch_add(t_bounds.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.search_bounds_ns.add(t_bounds.elapsed_ns());
 
-            let t_iter = Instant::now();
+            let t_iter = Timer::start();
             for (ai, &i) in active.iter().enumerate() {
                 let (min_bound, max_bound) = match &bounds[ai] {
                     BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
@@ -232,8 +230,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     }
                 }
             }
-            self.match_iter_ns
-                .fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.match_iter_ns.add(t_iter.elapsed_ns());
 
             if skip + 1 < sample {
                 for &i in &active {

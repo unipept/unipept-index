@@ -4,14 +4,13 @@
 //! `prefetch_kmer_range`) that stay in the parent module.
 
 use std::cmp::min;
-use std::sync::atomic::Ordering;
-use std::time::Instant;
 
 use sa_mappings::proteins::ProteinsBackend;
 
 use crate::array::SuffixArrayBackend;
 use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 
+use super::metrics::Timer;
 use super::BoundSearch::{Maximum, Minimum};
 use super::{BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher};
 
@@ -136,7 +135,16 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
-        self.prefetch_kmer_range(search_string);
+        // Gated on `scalar_kmer_prefetch` (default true = today's behaviour). Unlike the
+        // batched path, which fans one lookup per peptide out before any search runs, this
+        // call sits immediately before the `search_bounds` below that repeats the identical
+        // k-mer table lookup — no intervening work, so no latency to hide. Since the mmap
+        // `madvise` was removed it is a pure redundant probe into a 127 MB (5-mer) / 3 GB
+        // (6-mer) table. Whether removing it actually helps is a measurement, not an
+        // assumption, so it is a knob rather than a deletion.
+        if self.tuning.scalar_kmer_prefetch {
+            self.prefetch_kmer_range(search_string);
+        }
 
         // Cap pre-allocation at 4096 entries (32 KB) so callers passing large max_matches
         // don't wastefully over-allocate for peptides that match rarely.
@@ -156,14 +164,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             let il_locations_from_skip = &il_locations[il_locations.partition_point(|&x| x < skip)..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
-            let t_bounds = Instant::now();
+            let t_bounds = Timer::start();
             let search_bound_result = self.search_bounds(&search_string[skip..]);
-            self.search_bounds_ns.fetch_add(t_bounds.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.search_bounds_ns.add(t_bounds.elapsed_ns());
 
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
-                let t_iter = Instant::now();
+                let t_iter = Timer::start();
 
                 // Fast-path: when equate_il=true, !tryptic, and skip=0, every entry in the SA
                 // range is a valid match — no per-entry filtering needed.
@@ -183,7 +191,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         let result: Vec<i64> = self.sa
                             .iter_range(min_bound, min_bound + max_matches)
                             .collect();
-                        self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        self.match_iter_ns.add(t_iter.elapsed_ns());
                         return SearchAllSuffixesResult::MaxMatches(result);
                     }
                     // range_size < max_matches: collect all entries and continue to the next
@@ -191,7 +199,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     for s in self.sa.iter_range(min_bound, max_bound) {
                         matching_suffixes.push(s);
                     }
-                    self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    self.match_iter_ns.add(t_iter.elapsed_ns());
                 } else {
                     // Generic path: tryptic filtering, IL checking, or skip > 0.
                     let text = self.proteins.text();
@@ -209,7 +217,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         &mut matching_suffixes,
                         max_matches,
                     );
-                    self.match_iter_ns.fetch_add(t_iter.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    self.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
                         return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
                     }
@@ -219,8 +227,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             skip += 1;
 
             // Only prefetch skip+1's SA range after confirming we're not returning early.
-            // Issuing madvise when skip+1 will never execute wastes a syscall
-            if skip < self.sa.sample_rate() as usize {
+            // Same `scalar_kmer_prefetch` caveat as the skip=0 call above: the next loop
+            // iteration's `search_bounds` immediately repeats this lookup.
+            if self.tuning.scalar_kmer_prefetch && skip < self.sa.sample_rate() as usize {
                 self.prefetch_kmer_range(&search_string[skip..]);
             }
         }

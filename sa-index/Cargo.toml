@@ -7,6 +7,12 @@ edition = "2021"
 
 [features]
 mmap = ["dep:memmap2", "sa-mappings/mmap", "text-compression/mmap"]
+# Hot-path instrumentation (phase timings + candidate acceptance counters on `Searcher`).
+# Off by default: the clock reads and the atomic RMWs on searcher-wide cache lines perturb
+# the very measurement they exist to produce (~2% at mlp_batch=1). With the feature off the
+# counters are zero-sized and every write compiles away; `drain_timing_ns()` /
+# `drain_candidate_counts()` stay callable and return zeros.
+metrics = []
 
 [dev-dependencies]
 tempdir = "0.3.7"
