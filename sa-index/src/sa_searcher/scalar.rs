@@ -113,7 +113,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// tryptic search through the table would therefore silently drop every protein-start
     /// match — roughly 3 % of all tryptic hits, and every protein's N-terminal peptide.
     ///
-    /// Costs a full-height binary search (~35 random SA reads instead of ~13). Bounded by
+    /// Costs a full-height binary search (~35 random SA reads instead of ~13). Measured on the
+    /// full DB that is affordable: even 26-50aa tryptic queries, where this fixed cost is the
+    /// largest share of a ~4 µs budget, came out 1.40x *faster* overall (run5). Adding `-` to the
+    /// k-mer table's ALPHABET would remove the special case, at +29 MB and a rebuild of every
+    /// table file — not worth it while the bypass is free. Bounded by
     /// `test_extended_protein_start_with_kmer_table`.
     fn search_bounds_full_range(&self, search_string: &[u8]) -> BoundSearchResult {
         self.search_bounds_within(search_string, 0, self.sa.len(), 0)
@@ -196,6 +200,22 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         //
         // Only for s >= 2: at s = 1 every position is sampled, `skip = 0` already covers
         // everything, and there is no truncated pass to replace (extending would drop ms = 0).
+        //
+        // Measured on the full DB (run5 vs run4, 20 reps, results bit-identical — the
+        // `candidates_accepted` counters match exactly):
+        //
+        //   bucket   candidates examined      throughput        tryptic vs non-tryptic
+        //   5-10aa   1.95e9 -> 1.87e8 (10.4x)  741 -> 7,632 qps   12.1x slower -> 1.2x
+        //   11-25aa  3.96e7 -> 1.96e7 ( 2.0x)  29k  ->  60k  qps   6.6x slower -> 3.3x
+        //   26-50aa  4.44e6 -> 2.29e6 ( 1.9x) 247k  -> 346k  qps   1.3x slower -> 0.9x
+        //
+        // The gain concentrates on short peptides because the ~20x-per-character range growth
+        // only holds while the range is dominated by random-match statistics. A 26-50aa peptide
+        // is already near its floor of roughly one occurrence per protein, so dropping a
+        // character barely widens it — which is also why those buckets were never the problem.
+        // Long peptides end up *faster* than their non-tryptic counterparts (0.9x) simply
+        // because a non-tryptic query returns up to `max_matches` hits to retrieve, and a
+        // tryptic one returns a handful.
         let use_extended = tryptic && sample >= 2;
         let skip_end = if use_extended { sample - 1 } else { sample };
 
