@@ -7,7 +7,6 @@ mod scalar;
 mod test_helpers;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
-pub use retrieval::DEFAULT_RETRIEVAL_BATCH;
 
 use crate::sa_searcher::metrics::Counter;
 
@@ -131,39 +130,42 @@ pub const MAX_VALIDATE_BATCH: usize = 256;
 /// Runtime-tunable batch and prefetch-lookahead sizes for the search and retrieval hot
 /// paths. Every field is a pure performance knob: results are identical for any setting
 /// (asserted by `test_tuning_does_not_change_results`).
+///
+/// All three defaults are confirmed by the run3 full-DB sweep (3 peptide-length buckets x
+/// {preloaded, mmap} x {fast-path, validating} baselines, 20 reps, 3.9% noise floor). Two
+/// knobs that the same sweep found dead were removed rather than left to be re-measured:
+/// `retrieval_batch` (cross-query batched retrieval, median +1.7%) and `scalar_kmer_prefetch`
+/// (+0.3%).
 #[derive(Clone, Copy, Debug)]
 pub struct SearchTuning {
     /// Candidates per two-pass validation batch in `iterate_sa_range`.
     /// Clamped to `1..=MAX_VALIDATE_BATCH`.
+    ///
+    /// The one knob measured to matter, and it is a cliff rather than a peak: 16 -> 32 gains
+    /// ~10% in all 6 (bucket, backend) combos, then it plateaus. Against this default of 64,
+    /// 32 wins in 1/6 and 128 wins in 5/6 but never above the noise floor, and 128 regresses
+    /// long peptides on the preloaded backend by 2.7%. Do not lower it below 32.
     pub validate_batch: usize,
     /// Minimum SA range size before `iterate_sa_range` uses two-pass validation
     /// instead of a straight loop.
+    ///
+    /// Swept over {8, 16, 32, 64}: median full-range swing +0.9%, inside the noise floor
+    /// everywhere. Left tunable for re-measurement on other hardware, not because 32 is
+    /// known to be special.
     pub validate_prefetch_threshold: usize,
     /// Prefetch look-ahead distance (in suffixes) inside protein retrieval.
-    pub retrieval_prefetch_distance: usize,
-    /// Queries whose retrieval is interleaved in one cross-query group.
-    pub retrieval_batch: usize,
-    /// Whether the scalar search path issues `prefetch_kmer_range` before each skip's
-    /// `search_bounds`.
     ///
-    /// Unlike the batched path — where the call fans N independent lookups into a 127 MB
-    /// (5-mer) or 3 GB (6-mer) table out *before* any search runs, genuine memory-level
-    /// parallelism — the scalar call sits immediately before the `search_bounds` that repeats
-    /// the identical lookup, with no intervening work to hide the latency behind. Since the
-    /// mmap `madvise` was removed it does nothing but a redundant table probe. That is a perf
-    /// claim, so it is a knob to be measured rather than a deletion: `true` is today's
-    /// behaviour.
-    pub scalar_kmer_prefetch: bool,
+    /// Swept over {8, 16, 32, 64}: median full-range swing +1.2%, inside the noise floor
+    /// everywhere. Same caveat as `validate_prefetch_threshold`.
+    pub retrieval_prefetch_distance: usize,
 }
 
 impl Default for SearchTuning {
     fn default() -> Self {
         Self {
-            validate_batch: 64,              // was BATCH_SIZE in iterate_sa_range
-            validate_prefetch_threshold: 32, // was PREFETCH_THRESHOLD
-            retrieval_prefetch_distance: 32, // was PREFETCH_DISTANCE in retrieval.rs
-            retrieval_batch: 16,             // was DEFAULT_RETRIEVAL_BATCH
-            scalar_kmer_prefetch: true,      // today's behaviour
+            validate_batch: 64,              // confirmed by run3; 16 costs ~10%, 128 gains nothing
+            validate_prefetch_threshold: 32, // measured flat over 8..64
+            retrieval_prefetch_distance: 32, // measured flat over 8..64
         }
     }
 }
@@ -1051,11 +1053,15 @@ mod tests {
                 })
                 .collect();
 
-            let lists: Vec<&[i64]> = suffixes.iter().map(|v| v.as_slice()).collect();
-            let proteins: Vec<Vec<(u32, String)>> = searcher
-                .retrieve_all_proteins(&lists)
+            let proteins: Vec<Vec<(u32, String)>> = suffixes
                 .iter()
-                .map(|ps| ps.iter().map(|p| (p.taxon_id, p.uniprot_id.to_string())).collect())
+                .map(|v| {
+                    searcher
+                        .retrieve_proteins(v)
+                        .iter()
+                        .map(|p| (p.taxon_id, p.uniprot_id.to_string()))
+                        .collect()
+                })
                 .collect();
 
             for i in 0..peptides.len() {
@@ -1120,24 +1126,18 @@ mod tests {
                     for validate_batch in [1usize, 16, 64, MAX_VALIDATE_BATCH] {
                         for validate_prefetch_threshold in [0usize, 8, 32] {
                             for retrieval_prefetch_distance in [1usize, 8, 32] {
-                                for retrieval_batch in [1usize, 4, 16] {
-                                    for scalar_kmer_prefetch in [true, false] {
-                                        let tuning = SearchTuning {
-                                            validate_batch,
-                                            validate_prefetch_threshold,
-                                            retrieval_prefetch_distance,
-                                            retrieval_batch,
-                                            scalar_kmer_prefetch,
-                                        };
-                                        searcher.tuning = tuning;
-                                        assert_eq!(
-                                            tuning_run(searcher, &peptides, equate_il, tryptic),
-                                            expected,
-                                            "{name}: results changed (il={equate_il} tr={tryptic}) \
-                                             for {tuning:?}"
-                                        );
-                                    }
-                                }
+                                let tuning = SearchTuning {
+                                    validate_batch,
+                                    validate_prefetch_threshold,
+                                    retrieval_prefetch_distance,
+                                };
+                                searcher.tuning = tuning;
+                                assert_eq!(
+                                    tuning_run(searcher, &peptides, equate_il, tryptic),
+                                    expected,
+                                    "{name}: results changed (il={equate_il} tr={tryptic}) \
+                                     for {tuning:?}"
+                                );
                             }
                         }
                     }

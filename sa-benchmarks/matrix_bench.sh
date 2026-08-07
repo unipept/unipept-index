@@ -13,10 +13,12 @@
 #             small/medium files (all 30 small/tryptic cells in the last full run landed at
 #             653-684 qps — a flat line, not worth a grid). 34 configs/backend by default
 #             (9 small + 9 medium + 16 large); 50 with MATRIX_KMER6=1.
-#   ofat    - Task 2 one-factor-at-a-time sweep of the 5 SearchTuning knobs (validate_batch,
-#             validate_prefetch_threshold, retrieval_prefetch_distance, retrieval_batch,
-#             scalar_kmer_prefetch) around two fixed baselines instead of the 46,080-config
-#             full cross-product. 26 configs/(file,backend), 78/backend.
+#   ofat    - Task 2 one-factor-at-a-time sweep of the 3 SearchTuning knobs (validate_batch,
+#             validate_prefetch_threshold, retrieval_prefetch_distance) around two fixed
+#             baselines instead of a full cross-product. Two further knobs were swept in run3
+#             and removed after measuring dead across all 12 (bucket, backend, baseline)
+#             combinations: retrieval_batch (+1.7% median) and scalar_kmer_prefetch (+0.3%),
+#             both inside the 3.9% floor.
 #   confirm - Task 3: the MATRIX_CONFIRM_* combo tuning (all 5 knobs at once — the "best of
 #             each OFAT knob" candidate) run across the same grid as "grid", to check whether
 #             the knobs are separable (validate_batch and retrieval_prefetch_distance both
@@ -52,7 +54,6 @@
 #                     (e.g. to settle whether tryptic's slowdown is a low acceptance rate or
 #                     exhaustive scanning) — don't read its qps numbers as the real throughput.
 #   MATRIX_CONFIRM_VALIDATE_BATCH / _VALIDATE_PREFETCH_THRESHOLD / _RETRIEVAL_PREFETCH_DISTANCE
-#   MATRIX_CONFIRM_RETRIEVAL_BATCH / _SCALAR_KMER_PREFETCH
 #                     Only used when MATRIX_PHASES includes "confirm" — the combined tuning to
 #                     test. Unset knobs fall back to SearchTuning::default() (a no-op combo),
 #                     so set the ones you actually want to combine.
@@ -104,8 +105,6 @@ if [[ ",$PHASES," == *",confirm,"* ]]; then
   [ -n "${MATRIX_CONFIRM_VALIDATE_BATCH:-}" ] && CONFIRM_ARGS+=(--validate-batch "$MATRIX_CONFIRM_VALIDATE_BATCH")
   [ -n "${MATRIX_CONFIRM_VALIDATE_PREFETCH_THRESHOLD:-}" ] && CONFIRM_ARGS+=(--validate-prefetch-threshold "$MATRIX_CONFIRM_VALIDATE_PREFETCH_THRESHOLD")
   [ -n "${MATRIX_CONFIRM_RETRIEVAL_PREFETCH_DISTANCE:-}" ] && CONFIRM_ARGS+=(--retrieval-prefetch-distance "$MATRIX_CONFIRM_RETRIEVAL_PREFETCH_DISTANCE")
-  [ -n "${MATRIX_CONFIRM_RETRIEVAL_BATCH:-}" ] && CONFIRM_ARGS+=(--retrieval-batch "$MATRIX_CONFIRM_RETRIEVAL_BATCH")
-  [ -n "${MATRIX_CONFIRM_SCALAR_KMER_PREFETCH:-}" ] && CONFIRM_ARGS+=(--scalar-kmer-prefetch "$MATRIX_CONFIRM_SCALAR_KMER_PREFETCH")
 fi
 
 for be in "${BACKENDS[@]}"; do
@@ -210,8 +209,6 @@ if ofat:
         "validate_batch": "validate_batch",
         "validate_prefetch_threshold": "validate_prefetch_threshold",
         "retrieval_prefetch_distance": "retrieval_prefetch_distance",
-        "retrieval_batch": "retrieval_batch",
-        "scalar_kmer_prefetch": "scalar_kmer_prefetch",
     }
     groups = defaultdict(list)
     for r in ofat:

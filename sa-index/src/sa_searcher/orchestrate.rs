@@ -1,15 +1,23 @@
-//! Multi-peptide search and retrieval orchestration.
+//! Multi-peptide search orchestration.
 //!
-//! The searcher exposes scalar and batched primitives for both phases: search
-//! (`search_matching_suffixes` / `search_matching_suffixes_batched`) and retrieval
-//! (`retrieve_proteins` / `retrieve_proteins_batched`), where the batched variant interleaves
-//! a chunk of queries for memory-level parallelism. This module owns the one piece of glue
-//! every consumer needs: take a whole list, split it into MLP batches, and run them in
-//! parallel across rayon. Both the production path (`peptide_search::search_all_peptides`) and
-//! the benchmark call this, so batching lives in one place and is measured as it ships.
+//! The searcher exposes two search primitives: `search_matching_suffixes` (scalar, one
+//! peptide) and `search_matching_suffixes_batched` (a chunk of peptides, with the
+//! binary-search phase interleaved for memory-level parallelism). This module owns the one
+//! piece of glue every consumer needs: take a whole list of peptides, split it into MLP
+//! batches, and run them in parallel across rayon. Both the production path
+//! (`peptide_search::search_all_peptides`) and the benchmark call this, so batching lives in
+//! one place and is measured as it ships.
+//!
+//! Retrieval deliberately has no counterpart here. A cross-query batched retrieval was built
+//! and measured (run3): the `retrieval_batch` sweep moved throughput by a median of +1.7%,
+//! never clearing the 3.9% noise floor in any of 12 (file, backend, baseline) combinations —
+//! including long peptides, the case it was designed for. It was reverted rather than carried.
+//! `retrieve_proteins`' own two-pass prefetch already covers queries with many matches, and
+//! queries with few matches are dominated by peptides where retrieval is a small share of the
+//! work.
 
 use rayon::prelude::*;
-use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
+use sa_mappings::proteins::ProteinsBackend;
 
 use crate::array::SuffixArrayBackend;
 use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
@@ -51,29 +59,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 .map(|&p| self.search_matching_suffixes(p, max_matches, equate_il, tryptic))
                 .collect()
         }
-    }
-
-    /// Retrieves the proteins for a whole list of search results, returning one Vec per input,
-    /// in order. The retrieval counterpart of `search_all_matching_suffixes`.
-    ///
-    /// Retrieval is 37–47% of end-to-end time in every peptide-length bucket and is entirely
-    /// random reads, so it gets the same treatment as the search phase: split into MLP groups
-    /// and run those across rayon, with `retrieve_proteins_batched` interleaving the reads
-    /// *within* a group so the prefetch look-ahead keeps firing even when each query matches
-    /// only a handful of suffixes. Results are identical to per-query `retrieve_proteins`
-    /// (see `test_retrieve_batched_matches_single`), so the grouping is a pure perf knob.
-    ///
-    /// The group size comes from `tuning.retrieval_batch` (default `DEFAULT_RETRIEVAL_BATCH`)
-    /// rather than a parameter; callers that want to sweep it per call rather than per searcher
-    /// call `retrieve_proteins_batched` directly with an explicit `batch`.
-    pub fn retrieve_all_proteins(&self, suffix_lists: &[&[i64]]) -> Vec<Vec<ProteinRef<'_>>> {
-        // `par_chunks(0)` panics, and a group of one is still correct (it just degrades to
-        // single-query look-ahead behaviour).
-        let batch = self.tuning.retrieval_batch.max(1);
-        suffix_lists
-            .par_chunks(batch)
-            .flat_map(|group| self.retrieve_proteins_batched(group, batch))
-            .collect()
     }
 }
 
@@ -137,35 +122,6 @@ mod tests {
         let none: Vec<&[u8]> = vec![];
         assert!(s.search_all_matching_suffixes(&none, 1000, true, false, 1).is_empty());
         assert!(s.search_all_matching_suffixes(&none, 1000, true, false, 16).is_empty());
-    }
-
-    /// The orchestrated retrieval must return one Vec per input, in order, matching per-query
-    /// `retrieve_proteins` — including across the rayon chunk boundaries (more queries than
-    /// DEFAULT_RETRIEVAL_BATCH, with a ragged last chunk).
-    #[test]
-    fn test_retrieve_all_proteins_matches_single() {
-        let s = example_searcher();
-
-        // Text "AI-CLACVAA-AC-KCRLY$": 2, 10 and 13 are separators (null → skipped).
-        let lists: Vec<Vec<i64>> = (0..37)
-            .map(|i| match i % 4 {
-                0 => vec![],
-                1 => vec![(i % 20) as i64],
-                2 => vec![0, 2, 3, 10, 14],
-                _ => (0..19).collect(),
-            })
-            .collect();
-        let suffix_lists: Vec<&[i64]> = lists.iter().map(|l| l.as_slice()).collect();
-
-        let taxa = |proteins: &[sa_mappings::proteins::ProteinRef<'_>]| -> Vec<u32> {
-            proteins.iter().map(|p| p.taxon_id).collect()
-        };
-        let expected: Vec<Vec<u32>> =
-            suffix_lists.iter().map(|suffixes| taxa(&s.retrieve_proteins(suffixes))).collect();
-        let got: Vec<Vec<u32>> = s.retrieve_all_proteins(&suffix_lists).iter().map(|p| taxa(p)).collect();
-
-        assert_eq!(got, expected);
-        assert!(s.retrieve_all_proteins(&[]).is_empty());
     }
 
     // A batch size that does not divide the input length must still return one result per

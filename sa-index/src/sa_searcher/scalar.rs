@@ -135,16 +135,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
-        // Gated on `scalar_kmer_prefetch` (default true = today's behaviour). Unlike the
-        // batched path, which fans one lookup per peptide out before any search runs, this
-        // call sits immediately before the `search_bounds` below that repeats the identical
-        // k-mer table lookup — no intervening work, so no latency to hide. Since the mmap
-        // `madvise` was removed it is a pure redundant probe into a 127 MB (5-mer) / 3 GB
-        // (6-mer) table. Whether removing it actually helps is a measurement, not an
-        // assumption, so it is a knob rather than a deletion.
-        if self.tuning.scalar_kmer_prefetch {
-            self.prefetch_kmer_range(search_string);
-        }
+        // No `prefetch_kmer_range` here, unlike the batched path. That call sat immediately
+        // before the `search_bounds` below that repeats the identical k-mer table lookup — no
+        // intervening work, so no latency to hide — and once the mmap `madvise` was removed it
+        // was a pure redundant probe. Measured over 6 (bucket, backend) combos in run3: +0.3%
+        // median, inside the 3.9% noise floor. The batched path keeps its call, where N
+        // independent lookups genuinely do issue before any search runs.
 
         // Cap pre-allocation at 4096 entries (32 KB) so callers passing large max_matches
         // don't wastefully over-allocate for peptides that match rarely.
@@ -225,13 +221,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             }
 
             skip += 1;
-
-            // Only prefetch skip+1's SA range after confirming we're not returning early.
-            // Same `scalar_kmer_prefetch` caveat as the skip=0 call above: the next loop
-            // iteration's `search_bounds` immediately repeats this lookup.
-            if self.tuning.scalar_kmer_prefetch && skip < self.sa.sample_rate() as usize {
-                self.prefetch_kmer_range(&search_string[skip..]);
-            }
         }
 
         if matching_suffixes.is_empty() {

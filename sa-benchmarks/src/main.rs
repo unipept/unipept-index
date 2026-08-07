@@ -161,15 +161,6 @@ struct Args {
     #[arg(long, default_value_t = SearchTuning::default().retrieval_prefetch_distance)]
     retrieval_prefetch_distance: usize,
 
-    /// Queries whose retrieval is interleaved in one cross-query group.
-    #[arg(long, default_value_t = SearchTuning::default().retrieval_batch)]
-    retrieval_batch: usize,
-
-    /// Whether the scalar search path issues a redundant `prefetch_kmer_range` before each
-    /// skip's `search_bounds`. Only affects the scalar (mlp_batch=1) path.
-    #[arg(long, action = clap::ArgAction::Set, default_value_t = SearchTuning::default().scalar_kmer_prefetch)]
-    scalar_kmer_prefetch: bool,
-
     /// Run the full parameter matrix in one process: loads the index once, then iterates
     /// the selected `--matrix-phases` for each `--matrix-files` entry. Writes one record per
     /// (config × run) to <output>/<label>.jsonl.
@@ -249,8 +240,6 @@ struct BenchmarkConfig {
     validate_batch: usize,
     validate_prefetch_threshold: usize,
     retrieval_prefetch_distance: usize,
-    retrieval_batch: usize,
-    scalar_kmer_prefetch: bool,
     /// Which sweep produced this record: "single" (non-matrix CLI run), "grid" (Task 1
     /// trimmed grid), "ofat" (Task 2 one-factor-at-a-time), or "confirm" (Task 3 combo check).
     phase: String,
@@ -438,14 +427,11 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
     let (search_bounds_ns, match_iter_ns) = searcher.drain_timing_ns();
     let (candidates_examined, candidates_accepted) = searcher.drain_candidate_counts();
 
-    // Phase 2: protein retrieval — the exact function production's `search_all_peptides` calls
-    // (`retrieve_all_proteins`), which splits into `tuning.retrieval_batch`-sized cross-query
-    // groups run in parallel across rayon, interleaving the random reads *within* each group
-    // (`retrieve_proteins_batched`) so the prefetch look-ahead keeps firing even when
-    // individual result lists are far shorter than `tuning.retrieval_prefetch_distance`.
-    // Calling the same function production calls — instead of reimplementing its chunking
-    // here — is what makes this benchmark measure what ships; the old per-query
-    // `retrieve_proteins` loop it replaces was invisible to the batched-retrieval change.
+    // Phase 2: protein retrieval — per query via `retrieve_proteins`, which is exactly what
+    // production's `search_all_peptides` does. Keeping these two in step is what makes this
+    // benchmark measure what ships: an earlier revision called a batched retrieval here while
+    // production called the per-query one, which made a whole change invisible to measurement.
+    // If production's retrieval shape changes, change it here too.
     //
     // NoMatches queries are dropped before retrieval, exactly as `search_all_peptides` does —
     // there is nothing to look up for them.
@@ -460,7 +446,10 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
         .collect();
 
     let retrieval_start = Instant::now();
-    let retrieved = searcher.retrieve_all_proteins(&matched_suffixes);
+    let retrieved: Vec<Vec<_>> = matched_suffixes
+        .par_iter()
+        .map(|suf| searcher.retrieve_proteins(suf))
+        .collect();
     let retrieval_duration_ns = retrieval_start.elapsed().as_nanos() as u64;
 
     // Aggregate stats
@@ -560,7 +549,7 @@ struct OfatCell {
 /// k-mer table used throughout the OFAT sweep — fixed at the production default so knob
 /// effects aren't confounded with kmer-table effects.
 const OFAT_KMER: usize = 5;
-/// MLP batch used throughout the OFAT sweep except the scalar-only `scalar_kmer_prefetch` cell.
+/// MLP batch used throughout the OFAT sweep.
 const OFAT_MLP_BATCH: usize = 16;
 
 /// Builds the Task 2 OFAT knob sweep: one factor at a time around two fixed baselines, instead
@@ -571,10 +560,12 @@ const OFAT_MLP_BATCH: usize = 16;
 /// it, so sweeping those two knobs at B1 would measure pure noise — their baseline must be B2.
 /// B2 = equate_il=true, tryptic=true — forces `iterate_sa_range` on every query.
 ///
-/// `retrieval_prefetch_distance` and `retrieval_batch` affect retrieval regardless of which
-/// search path ran, so both are swept at both baselines. `scalar_kmer_prefetch` only affects
-/// the scalar search path, so it's swept at B1 with `mlp_batch` forced to 1 (the batched path
-/// at mlp_batch=16 never reaches the code this knob guards).
+/// `retrieval_prefetch_distance` affects retrieval regardless of which search path ran, so it
+/// is swept at both baselines.
+///
+/// Two knobs this sweep used to carry were removed after run3 measured them dead across all
+/// 12 (bucket, backend, baseline) combinations: `retrieval_batch` (cross-query batched
+/// retrieval, median +1.7%) and `scalar_kmer_prefetch` (+0.3%), both inside the 3.9% floor.
 fn build_ofat_cells() -> Vec<OfatCell> {
     let base = SearchTuning::default();
     let mut cells = Vec::new();
@@ -591,19 +582,11 @@ fn build_ofat_cells() -> Vec<OfatCell> {
         push("B2", "validate_prefetch_threshold", SearchTuning { validate_prefetch_threshold: v, ..base }, true, OFAT_MLP_BATCH);
     }
 
-    // retrieval_prefetch_distance / retrieval_batch: retrieval always runs, so both baselines.
+    // retrieval_prefetch_distance: retrieval always runs, so both baselines.
     for &(label, tryptic) in &[("B1", false), ("B2", true)] {
         for v in [8, 16, 32, 64] {
             push(label, "retrieval_prefetch_distance", SearchTuning { retrieval_prefetch_distance: v, ..base }, tryptic, OFAT_MLP_BATCH);
         }
-        for v in [1, 4, 16, 64] {
-            push(label, "retrieval_batch", SearchTuning { retrieval_batch: v, ..base }, tryptic, OFAT_MLP_BATCH);
-        }
-    }
-
-    // scalar_kmer_prefetch: scalar search path only, at B1, forced to mlp_batch=1.
-    for v in [true, false] {
-        push("B1", "scalar_kmer_prefetch", SearchTuning { scalar_kmer_prefetch: v, ..base }, false, 1);
     }
 
     cells
@@ -709,10 +692,10 @@ fn run_cell(
         _ => String::new(),
     };
     eprintln!(
-        "  {} {}{} il={} tr={} batch={} kmer={} tuning{{vb={} vpt={} rpd={} rb={} skp={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
+        "  {} {}{} il={} tr={} batch={} kmer={} tuning{{vb={} vpt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
         source, phase, tag, equate_il, tryptic, mlp_batch, kmer_k,
         searcher.tuning.validate_batch, searcher.tuning.validate_prefetch_threshold,
-        searcher.tuning.retrieval_prefetch_distance, searcher.tuning.retrieval_batch, searcher.tuning.scalar_kmer_prefetch,
+        searcher.tuning.retrieval_prefetch_distance,
         stats.qps_p50, band, stats.qps_p10, stats.qps_p90, accept_note,
     );
 
@@ -738,8 +721,6 @@ fn run_cell(
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            retrieval_batch: searcher.tuning.retrieval_batch,
-            scalar_kmer_prefetch: searcher.tuning.scalar_kmer_prefetch,
             phase: phase.to_string(),
             ofat_baseline: ofat_baseline.map(|s| s.to_string()),
             ofat_knob: ofat_knob.map(|s| s.to_string()),
@@ -765,8 +746,6 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
         validate_batch: args.validate_batch,
         validate_prefetch_threshold: args.validate_prefetch_threshold,
         retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-        retrieval_batch: args.retrieval_batch,
-        scalar_kmer_prefetch: args.scalar_kmer_prefetch,
     };
 
     println!("DRY RUN — planned matrix config, no index will be loaded");
@@ -856,8 +835,6 @@ fn run_matrix(
         validate_batch: args.validate_batch,
         validate_prefetch_threshold: args.validate_prefetch_threshold,
         retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-        retrieval_batch: args.retrieval_batch,
-        scalar_kmer_prefetch: args.scalar_kmer_prefetch,
     };
 
     // Build/load the 5-mer table (always in scope — the grid's default kmer set includes it)
@@ -1034,8 +1011,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         validate_batch: args.validate_batch,
         validate_prefetch_threshold: args.validate_prefetch_threshold,
         retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-        retrieval_batch: args.retrieval_batch,
-        scalar_kmer_prefetch: args.scalar_kmer_prefetch,
     };
 
     let theoretical_max = theoretical_memory(&searcher, mapping_type_str, cfg!(feature = "mmap"));
@@ -1216,8 +1191,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            retrieval_batch: searcher.tuning.retrieval_batch,
-            scalar_kmer_prefetch: searcher.tuning.scalar_kmer_prefetch,
             phase: "single".to_string(),
             ofat_baseline: None,
             ofat_knob: None,
