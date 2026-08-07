@@ -8,7 +8,7 @@
 
 use std::cmp::min;
 
-use sa_mappings::proteins::ProteinsBackend;
+use sa_mappings::proteins::{ProteinsBackend, SEPARATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
 use crate::array::SuffixArrayBackend;
@@ -16,7 +16,10 @@ use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 
 use super::metrics::Timer;
 use super::BoundSearch::{Maximum, Minimum};
-use super::{BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher};
+use super::{
+    tryptic_extension_chars, BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher,
+    TRYPTIC_EXTENSION_CHARS,
+};
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Batched `binary_search_bound_in_range`, advancing many independent streams in
@@ -95,6 +98,24 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Batched `search_bounds` for many search strings at once.
     fn search_bounds_batched(&self, strings: &[&[u8]]) -> Vec<BoundSearchResult> {
+        self.search_bounds_batched_inner(strings, true)
+    }
+
+    /// `search_bounds_batched` with the k-mer table forced off.
+    ///
+    /// Needed for the separator variant of the left-extended tryptic search: `'-'` is absent from
+    /// the k-mer table's ALPHABET, so a lookup returns `None` and the stream would be dropped as
+    /// `NoMatches`, silently losing every protein-start match. Mirrors the scalar
+    /// `search_bounds_full_range`.
+    fn search_bounds_batched_full_range(&self, strings: &[&[u8]]) -> Vec<BoundSearchResult> {
+        self.search_bounds_batched_inner(strings, false)
+    }
+
+    fn search_bounds_batched_inner(
+        &self,
+        strings: &[&[u8]],
+        use_kmer_table: bool,
+    ) -> Vec<BoundSearchResult> {
         let n = strings.len();
         let mut out: Vec<BoundSearchResult> =
             (0..n).map(|_| BoundSearchResult::NoMatches).collect();
@@ -104,10 +125,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let mut min_streams: Vec<BsStream> = Vec::with_capacity(n);
         for (i, &ss) in strings.iter().enumerate() {
             let range = match &self.kmer_table {
-                Some(table) if ss.len() >= table.k => match table.lookup(&ss[..table.k]) {
-                    Some((lo, hi)) => (lo, hi + 1, table.k),
-                    None => continue, // out[i] stays NoMatches
-                },
+                Some(table) if use_kmer_table && ss.len() >= table.k => {
+                    match table.lookup(&ss[..table.k]) {
+                        Some((lo, hi)) => (lo, hi + 1, table.k),
+                        None => continue, // out[i] stays NoMatches
+                    }
+                }
                 _ => (0, self.sa.len(), 0),
             };
             ranges[i] = Some(range);
@@ -169,7 +192,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             self.prefetch_kmer_range(ss);
         }
 
-        for skip in 0..sample {
+        // Mirrors the scalar path: for tryptic searches the skip = sample-1 pass is replaced by
+        // left-extended searches, which cover the same positions with a ~20x smaller SA range.
+        // See `search_matching_suffixes` in scalar.rs for the derivation.
+        let use_extended = tryptic && sample >= 2;
+        let skip_end = if use_extended { sample - 1 } else { sample };
+
+        for skip in 0..skip_end {
             let active: Vec<usize> = (0..n).filter(|&i| done[i].is_none()).collect();
             if active.is_empty() {
                 break;
@@ -232,12 +261,82 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             }
             self.match_iter_ns.add(t_iter.elapsed_ns());
 
-            if skip + 1 < sample {
+            if skip + 1 < skip_end {
                 for &i in &active {
                     if done[i].is_none() {
                         self.prefetch_kmer_range(&strings[i][skip + 1..]);
                     }
                 }
+            }
+        }
+
+        // Left-extended phase. One batched bound search per extension character, so the streams
+        // stay interleaved exactly as in the skip loop above.
+        if use_extended {
+            let text = self.proteins.text();
+            // Flat buffer holding every `X + peptide` for this variant, with per-stream offsets —
+            // one allocation per variant instead of one per peptide.
+            let mut ext_buf: Vec<u8> = Vec::new();
+            let mut ext_spans: Vec<(usize, usize)> = Vec::new();
+
+            for &prefix_char in TRYPTIC_EXTENSION_CHARS.iter() {
+                let active: Vec<usize> = (0..n)
+                    .filter(|&i| {
+                        done[i].is_none()
+                            && tryptic_extension_chars(strings[i]).contains(&prefix_char)
+                    })
+                    .collect();
+                if active.is_empty() {
+                    continue;
+                }
+
+                ext_buf.clear();
+                ext_spans.clear();
+                for &i in &active {
+                    let start = ext_buf.len();
+                    ext_buf.push(prefix_char);
+                    ext_buf.extend_from_slice(strings[i]);
+                    ext_spans.push((start, ext_buf.len()));
+                }
+                let extended: Vec<&[u8]> =
+                    ext_spans.iter().map(|&(s, e)| &ext_buf[s..e]).collect();
+
+                let t_bounds = Timer::start();
+                // The separator is not representable in the k-mer table — routing it there would
+                // silently drop every protein-start match. See `search_bounds_batched_full_range`.
+                let bounds = if prefix_char == SEPARATION_CHARACTER {
+                    self.search_bounds_batched_full_range(&extended)
+                } else {
+                    self.search_bounds_batched(&extended)
+                };
+                self.search_bounds_ns.add(t_bounds.elapsed_ns());
+
+                let t_iter = Timer::start();
+                for (ai, &i) in active.iter().enumerate() {
+                    let (min_bound, max_bound) = match &bounds[ai] {
+                        BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
+                        BoundSearchResult::NoMatches => continue,
+                    };
+                    let search_string = strings[i];
+                    let last_is_kr = matches!(search_string.last(), Some(b'K' | b'R'));
+                    let hit_max = self.iterate_extended_sa_range(
+                        self.sa.iter_range(min_bound, max_bound),
+                        max_bound.saturating_sub(min_bound),
+                        text,
+                        search_string,
+                        &il_locs[i],
+                        equate_il,
+                        last_is_kr,
+                        &mut matching[i],
+                        max_matches,
+                    );
+                    if hit_max {
+                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(
+                            &mut matching[i],
+                        )));
+                    }
+                }
+                self.match_iter_ns.add(t_iter.elapsed_ns());
             }
         }
 
@@ -300,7 +399,12 @@ mod tests {
 
     use crate::{
         array::OriginalSA,
-        sa_searcher::{test_helpers::get_example_proteins, Searcher},
+        sa_searcher::{
+            test_helpers::{
+                get_example_proteins, searcher_over_text, tryptic_fixture_peptides, TRYPTIC_FIXTURE,
+            },
+            SearchAllSuffixesResult, Searcher,
+        },
         suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
         SuffixArray,
     };
@@ -313,19 +417,21 @@ mod tests {
         macro_rules! check_batched {
             ($searcher:expr, $peptides:expr) => {{
                 for &eq in &[false, true] {
-                    for &mm in &[usize::MAX, 1usize, 2usize] {
-                        let scalar: Vec<_> = $peptides
-                            .iter()
-                            .map(|p| $searcher.search_matching_suffixes(p, mm, eq, false))
-                            .collect();
-                        let batched =
-                            $searcher.search_matching_suffixes_batched($peptides, mm, eq, false);
-                        for i in 0..$peptides.len() {
-                            assert_eq!(
-                                batched[i], scalar[i],
-                                "mismatch: peptide={:?} equate_il={} max_matches={}",
-                                std::str::from_utf8($peptides[i]).unwrap(), eq, mm
-                            );
+                    for &tr in &[false, true] {
+                        for &mm in &[usize::MAX, 1usize, 2usize] {
+                            let scalar: Vec<_> = $peptides
+                                .iter()
+                                .map(|p| $searcher.search_matching_suffixes(p, mm, eq, tr))
+                                .collect();
+                            let batched =
+                                $searcher.search_matching_suffixes_batched($peptides, mm, eq, tr);
+                            for i in 0..$peptides.len() {
+                                assert_eq!(
+                                    batched[i], scalar[i],
+                                    "mismatch: peptide={:?} equate_il={} tryptic={} max_matches={}",
+                                    std::str::from_utf8($peptides[i]).unwrap(), eq, tr, mm
+                                );
+                            }
                         }
                     }
                 }
@@ -352,6 +458,76 @@ mod tests {
         let peptides: Vec<&[u8]> =
             vec![b"CLA", b"ACVAA", b"KCRLY", b"VAA", b"LACVAA", b"CVAA", b"CLACVAA", b"ZZZ"];
         check_batched!(&searcher, &peptides);
+    }
+
+    // The batched left-extended tryptic path must agree with the dense scalar index, which does
+    // not use the transform at all (sparseness 1 keeps the original skip loop) and is therefore
+    // an exact oracle.
+    //
+    // `test_batched_matches_scalar` above passes tryptic=false throughout, so without this the
+    // batched extended path would have no coverage at all.
+    #[test]
+    fn test_batched_extended_tryptic_matches_dense_scalar() {
+        let dense = searcher_over_text(TRYPTIC_FIXTURE, 1);
+        let owned = tryptic_fixture_peptides();
+        let peptides: Vec<&[u8]> = owned.iter().map(|p| p.as_slice()).collect();
+
+        // Guard against a vacuous pass.
+        let hits = peptides
+            .iter()
+            .filter(|p| {
+                !matches!(
+                    dense.search_matching_suffixes(p, usize::MAX, true, true),
+                    SearchAllSuffixesResult::NoMatches
+                )
+            })
+            .count();
+        assert!(hits >= 5, "fixture yields only {hits} tryptic hits");
+
+        for &sparseness in &[2u8, 3] {
+            let sparse = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
+            for equate_il in [false, true] {
+                let batched =
+                    sparse.search_matching_suffixes_batched(&peptides, usize::MAX, equate_il, true);
+                for (i, p) in peptides.iter().enumerate() {
+                    assert_eq!(
+                        batched[i],
+                        dense.search_matching_suffixes(p, usize::MAX, equate_il, true),
+                        "sparseness={sparseness} equate_il={equate_il} peptide={:?}",
+                        std::str::from_utf8(p).unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    // The separator variant must bypass the k-mer table in the batched path too, exactly as in
+    // the scalar one — otherwise every protein-start match disappears once a table is attached.
+    // "PKTR" starts protein 2 at position 21, which is unsampled at sparseness 2, so it is
+    // reachable only through the '-' extended search.
+    #[test]
+    fn test_batched_extended_protein_start_with_kmer_table() {
+        let plain = searcher_over_text(TRYPTIC_FIXTURE, 2);
+        let mut kmered = searcher_over_text(TRYPTIC_FIXTURE, 2);
+        kmered.build_kmer_table(3);
+
+        let peptides: Vec<&[u8]> = vec![b"PKTR", b"RIY", b"KTR", b"MKAPTR", b"QST"];
+
+        let plain_res = plain.search_matching_suffixes_batched(&peptides, usize::MAX, true, true);
+        assert_eq!(
+            plain_res[0],
+            SearchAllSuffixesResult::SearchResult(vec![21]),
+            "protein-start tryptic match missing from the batched un-tabled searcher"
+        );
+
+        let kmer_res = kmered.search_matching_suffixes_batched(&peptides, usize::MAX, true, true);
+        for (i, p) in peptides.iter().enumerate() {
+            assert_eq!(
+                kmer_res[i], plain_res[i],
+                "k-mer table changed the batched tryptic result for {:?}",
+                std::str::from_utf8(p).unwrap()
+            );
+        }
     }
 
     #[test]

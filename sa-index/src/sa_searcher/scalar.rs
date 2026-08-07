@@ -5,14 +5,16 @@
 
 use std::cmp::min;
 
-use sa_mappings::proteins::ProteinsBackend;
+use sa_mappings::proteins::{ProteinsBackend, SEPARATION_CHARACTER};
 
 use crate::array::SuffixArrayBackend;
 use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 
 use super::metrics::Timer;
 use super::BoundSearch::{Maximum, Minimum};
-use super::{BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher};
+use super::{
+    tryptic_extension_chars, BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher,
+};
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Binary search within the SA window `[left, right)` for the minimum or maximum bound
@@ -90,7 +92,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
     pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
-        let full_range = (0, self.sa.len(), 0);
         let (left, right, lcp_skip) = match &self.kmer_table {
             Some(table) if search_string.len() >= table.k => {
                 match table.lookup(&search_string[..table.k]) {
@@ -98,9 +99,35 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     None => return BoundSearchResult::NoMatches,
                 }
             }
-            _ => full_range,
+            _ => (0, self.sa.len(), 0),
         };
+        self.search_bounds_within(search_string, left, right, lcp_skip)
+    }
 
+    /// `search_bounds` over the whole suffix array, never consulting the k-mer table.
+    ///
+    /// Required for search strings containing the protein separator, which the k-mer table
+    /// cannot represent: `ALPHABET` in `kmer_table.rs` holds amino acids only, so
+    /// `bytes_to_kmer_index` returns `None` for any k-mer containing `-`, and `search_bounds`
+    /// would turn that into `NoMatches`. Routing the separator variant of the left-extended
+    /// tryptic search through the table would therefore silently drop every protein-start
+    /// match — roughly 3 % of all tryptic hits, and every protein's N-terminal peptide.
+    ///
+    /// Costs a full-height binary search (~35 random SA reads instead of ~13). Bounded by
+    /// `test_extended_protein_start_with_kmer_table`.
+    fn search_bounds_full_range(&self, search_string: &[u8]) -> BoundSearchResult {
+        self.search_bounds_within(search_string, 0, self.sa.len(), 0)
+    }
+
+    /// Shared tail of `search_bounds` / `search_bounds_full_range`: the two bound searches over
+    /// an already-chosen window.
+    fn search_bounds_within(
+        &self,
+        search_string: &[u8],
+        left: usize,
+        right: usize,
+        lcp_skip: usize,
+    ) -> BoundSearchResult {
         let (found_min, min_bound) =
             self.binary_search_bound_in_range(Minimum, search_string, left, right, lcp_skip);
 
@@ -152,8 +179,28 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             }
         }
 
+        let sample = self.sa.sample_rate() as usize;
+
+        // Tryptic searches replace the most expensive skip pass with left-extended searches.
+        //
+        // A `skip = j` pass finds matches at `ms ≡ -j (mod s)` by searching a j-character-shorter
+        // string, so its SA range grows ~20x per character dropped — `skip = s-1` alone is ~95 %
+        // of all candidates examined, a ~40x overscan (measured: 195,293 candidates per 5-10aa
+        // peptide to find 134 matches).
+        //
+        // But a tryptic match at `ms` requires `text[ms-1]` to be K, R or a separator — which is
+        // exactly the character needed to extend the search string *leftward* instead of
+        // truncating it. `X + peptide` is one character longer, so its range is ~20x *smaller*.
+        // Its SA entry sits at `ms-1`, covering `ms ≡ 1 (mod s)` — the same positions
+        // `skip = s-1` covers, since `-(s-1) ≡ 1 (mod s)`.
+        //
+        // Only for s >= 2: at s = 1 every position is sampled, `skip = 0` already covers
+        // everything, and there is no truncated pass to replace (extending would drop ms = 0).
+        let use_extended = tryptic && sample >= 2;
+        let skip_end = if use_extended { sample - 1 } else { sample };
+
         let mut skip: usize = 0;
-        while skip < self.sa.sample_rate() as usize {
+        while skip < skip_end {
             // il_locations is built in ascending index order, so partition_point gives us
             // the first position that is relevant for this skip value in O(log n).
             // These are still absolute positions within `search_string`, not within the suffix.
@@ -223,6 +270,51 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             skip += 1;
         }
 
+        // Left-extended phase, replacing the skip = sample-1 pass (see above).
+        if use_extended {
+            let text = self.proteins.text();
+            let last_is_kr = matches!(search_string.last(), Some(b'K' | b'R'));
+            // One reusable buffer for `X + search_string`: three allocations per peptide in this
+            // path would cost more than the extra searches save.
+            let mut extended = Vec::with_capacity(search_string.len() + 1);
+
+            for &prefix_char in tryptic_extension_chars(search_string) {
+                extended.clear();
+                extended.push(prefix_char);
+                extended.extend_from_slice(search_string);
+
+                let t_bounds = Timer::start();
+                // The separator cannot be represented in the k-mer table — see
+                // `search_bounds_full_range` for why routing it there would silently drop every
+                // protein-start match.
+                let bounds = if prefix_char == SEPARATION_CHARACTER {
+                    self.search_bounds_full_range(&extended)
+                } else {
+                    self.search_bounds(&extended)
+                };
+                self.search_bounds_ns.add(t_bounds.elapsed_ns());
+
+                if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
+                    let t_iter = Timer::start();
+                    let hit_max = self.iterate_extended_sa_range(
+                        self.sa.iter_range(min_bound, max_bound),
+                        max_bound.saturating_sub(min_bound),
+                        text,
+                        search_string,
+                        &il_locations,
+                        equate_il,
+                        last_is_kr,
+                        &mut matching_suffixes,
+                        max_matches,
+                    );
+                    self.match_iter_ns.add(t_iter.elapsed_ns());
+                    if hit_max {
+                        return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                    }
+                }
+            }
+        }
+
         if matching_suffixes.is_empty() {
             SearchAllSuffixesResult::NoMatches
         } else {
@@ -247,7 +339,12 @@ mod tests {
 
     use crate::{
         array::OriginalSA,
-        sa_searcher::{test_helpers::get_example_proteins, BoundSearchResult, SearchAllSuffixesResult, Searcher},
+        sa_searcher::{
+            test_helpers::{
+                get_example_proteins, searcher_over_text, tryptic_fixture_peptides, TRYPTIC_FIXTURE,
+            },
+            BoundSearchResult, SearchAllSuffixesResult, Searcher,
+        },
         suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
         SuffixArray,
     };
@@ -506,6 +603,127 @@ mod tests {
         match searcher.search_matching_suffixes(b"A", 2, true, false) {
             SearchAllSuffixesResult::MaxMatches(v) => assert_eq!(v.len(), 2),
             other => panic!("expected MaxMatches, got {:?}", other),
+        }
+    }
+
+    // ── left-extended tryptic search ─────────────────────────────────────
+
+    // The left-extended tryptic path (sparseness >= 2) must return exactly what the dense index
+    // returns, where `use_extended` is false and the original skip loop runs. A dense searcher
+    // over the same text is therefore an exact oracle.
+    //
+    // This is the load-bearing test for the whole transform: no pre-existing test reached it,
+    // because `test_tryptic_search` uses sparseness 1.
+    #[test]
+    fn test_extended_tryptic_matches_dense() {
+        let dense = searcher_over_text(TRYPTIC_FIXTURE, 1);
+        let peptides = tryptic_fixture_peptides();
+        assert!(peptides.len() > 30, "corpus too small to be meaningful");
+
+        // Guard against a vacuous pass: the fixture must actually produce tryptic hits.
+        let hits = peptides
+            .iter()
+            .filter(|p| {
+                !matches!(
+                    dense.search_matching_suffixes(p, usize::MAX, true, true),
+                    SearchAllSuffixesResult::NoMatches
+                )
+            })
+            .count();
+        assert!(hits >= 5, "fixture yields only {hits} tryptic hits; comparison would be weak");
+
+        for &sparseness in &[2u8, 3] {
+            let sparse = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
+            for equate_il in [false, true] {
+                for p in &peptides {
+                    assert_eq!(
+                        sparse.search_matching_suffixes(p, usize::MAX, equate_il, true),
+                        dense.search_matching_suffixes(p, usize::MAX, equate_il, true),
+                        "sparseness={sparseness} equate_il={equate_il} peptide={:?}",
+                        std::str::from_utf8(p).unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    // A match at a protein start is found through the `'-' + peptide` variant, which must bypass
+    // the k-mer table: `'-'` is not in the table's ALPHABET, so a table lookup returns None and
+    // `search_bounds` would report NoMatches — silently losing every protein-start match.
+    //
+    // "PKTR" starts protein 2 at position 21, which is *odd*, so at sparseness 2 it is not in the
+    // suffix array and can only be reached via the extended search (whose SA entry is the
+    // separator at 20). It also starts with proline, so the K/R variants are correctly skipped
+    // and `'-'` is the only search performed — making this fail if the bypass is wrong.
+    #[test]
+    fn test_extended_protein_start_with_kmer_table() {
+        let plain = searcher_over_text(TRYPTIC_FIXTURE, 2);
+        let mut kmered = searcher_over_text(TRYPTIC_FIXTURE, 2);
+        kmered.build_kmer_table(3);
+
+        // Non-vacuous: the protein-start match really is there, and really is at position 21.
+        assert_eq!(
+            plain.search_matching_suffixes(b"PKTR", usize::MAX, true, true),
+            SearchAllSuffixesResult::SearchResult(vec![21]),
+            "protein-start tryptic match missing from the un-tabled searcher"
+        );
+
+        for p in [&b"PKTR"[..], b"RIY", b"KTR", b"MKA", b"AKT", b"QST"] {
+            assert_eq!(
+                kmered.search_matching_suffixes(p, usize::MAX, true, true),
+                plain.search_matching_suffixes(p, usize::MAX, true, true),
+                "k-mer table changed the tryptic result for {:?}",
+                std::str::from_utf8(p).unwrap()
+            );
+        }
+    }
+
+    // A peptide starting with proline can only match at a protein start: K|R followed by P is not
+    // a trypsin cut site, so the K and R extension variants are skipped entirely.
+    #[test]
+    fn test_extended_proline_start_only_matches_protein_start() {
+        let s = searcher_over_text(TRYPTIC_FIXTURE, 2);
+
+        // "PKTR" at 21 is a protein start → found.
+        assert_eq!(
+            s.search_matching_suffixes(b"PKTR", usize::MAX, true, true),
+            SearchAllSuffixesResult::SearchResult(vec![21])
+        );
+        // "PQST" at 16 is preceded by K (15), but proline blocks the cut → no tryptic match,
+        // even though the same peptide matches fine without the tryptic filter.
+        assert_eq!(
+            s.search_matching_suffixes(b"PQST", usize::MAX, true, true),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(
+            s.search_matching_suffixes(b"PQST", usize::MAX, true, false),
+            SearchAllSuffixesResult::SearchResult(vec![16])
+        );
+    }
+
+    // sparseness 1 must be untouched by the transform: every position is sampled, skip=0 already
+    // covers everything, and extending would drop ms = 0. "MKAPTR" at position 0 is the canary —
+    // a protein start with no preceding character at all, so it is reachable *only* through the
+    // skip=0 pass and never through a left-extended search.
+    //
+    // (It is tryptic because it ends in R and text[6] = 'V' is not proline. "MKA" would not be:
+    // it ends in A at position 3, which holds 'P'.)
+    #[test]
+    fn test_extended_guard_leaves_dense_index_alone() {
+        let dense = searcher_over_text(TRYPTIC_FIXTURE, 1);
+        assert_eq!(
+            dense.search_matching_suffixes(b"MKAPTR", usize::MAX, true, true),
+            SearchAllSuffixesResult::SearchResult(vec![0]),
+            "match at ms=0 lost on the dense index"
+        );
+        // and it survives on a sparse index too, via the skip=0 pass (0 is always sampled)
+        for &sparseness in &[2u8, 3] {
+            assert_eq!(
+                searcher_over_text(TRYPTIC_FIXTURE, sparseness)
+                    .search_matching_suffixes(b"MKAPTR", usize::MAX, true, true),
+                SearchAllSuffixesResult::SearchResult(vec![0]),
+                "match at ms=0 lost at sparseness {sparseness}"
+            );
         }
     }
 

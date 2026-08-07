@@ -62,6 +62,29 @@ enum TrypticQuery {
     ZeroLength
 }
 
+/// Characters that can legally precede a tryptic match: the two trypsin cut residues plus the
+/// protein separator (a match at a protein start needs no cut).
+///
+/// Searching `X + peptide` for each of these — instead of truncating the peptide — is what makes
+/// the tryptic path cheap; see `search_matching_suffixes` for the derivation. Ordered K, R,
+/// separator so the two common cases run first.
+const TRYPTIC_EXTENSION_CHARS: [u8; 3] = [b'K', b'R', b'-'];
+
+/// The separator-only subset, used when the peptide starts with proline: `K|R` followed by P is
+/// not a trypsin cut site, so those two searches are guaranteed empty and are skipped entirely.
+const TRYPTIC_EXTENSION_CHARS_PROLINE: [u8; 1] = [b'-'];
+
+/// Left-extension characters to search for this peptide.
+#[inline]
+fn tryptic_extension_chars(search_string: &[u8]) -> &'static [u8] {
+    debug_assert_eq!(TRYPTIC_EXTENSION_CHARS[2], SEPARATION_CHARACTER);
+    if search_string.first() == Some(&b'P') {
+        &TRYPTIC_EXTENSION_CHARS_PROLINE
+    } else {
+        &TRYPTIC_EXTENSION_CHARS
+    }
+}
+
 impl TrypticQuery {
     #[inline]
     fn new(tryptic: bool, search_string: &[u8]) -> Self {
@@ -526,6 +549,132 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             && Self::check_suffix(skip, il_locations, suffix_str, ProteinTextSlice::new(text, suffix, match_end), equate_il)
             && self.check_tryptic_boundaries(text, match_start, match_end, tryptic);
         if valid { Some(match_start as i64) } else { None }
+    }
+
+    /// Checks only the C-terminal half of the tryptic predicate.
+    ///
+    /// Used by the left-extended search path, where the N-terminal half holds by construction:
+    /// the search string was `X + peptide` for `X` in {K, R, separator}, so the character before
+    /// the match *is* `X`. Nothing to read and nothing to check.
+    ///
+    /// `last_is_kr` is the query-invariant stand-in for `text[match_end - 1]` — see
+    /// [`TrypticQuery`] for why the substitution is sound.
+    #[inline]
+    fn check_tryptic_c_term(&self, text: &P::Text, match_end: usize, last_is_kr: bool) -> bool {
+        let after = text.get(match_end);
+        after == TERMINATION_CHARACTER
+            || after == SEPARATION_CHARACTER
+            || (last_is_kr && after != b'P')
+    }
+
+    /// Validates a hit from a left-extended search (`X + search_string`).
+    ///
+    /// The SA entry sits at `match_start - 1` (the `X`), so `match_start = raw + 1` — the mirror
+    /// image of `validate_candidate`'s `suffix - skip`, which is why this cannot reuse it.
+    ///
+    /// Two conjuncts of the normal predicate are gone:
+    /// * the prefix check, because the SA range already matched `X + search_string` in full, so
+    ///   `text[match_start..match_end]` equals `search_string` modulo L → I;
+    /// * the N-terminal tryptic check, free by construction (see `check_tryptic_c_term`).
+    ///
+    /// What remains is the I/L check (only when `equate_il` is false) and one text read at
+    /// `match_end`.
+    #[inline]
+    fn validate_extended_candidate(
+        &self,
+        text: &P::Text,
+        raw: i64,
+        search_string: &[u8],
+        il_locations: &[usize],
+        equate_il: bool,
+        last_is_kr: bool,
+    ) -> Option<i64> {
+        let match_start = raw as usize + 1;
+        let match_end = match_start + search_string.len();
+        // skip = 0: il_locations are absolute positions in `search_string`, and the slice starts
+        // at match_start, so the two index spaces already line up.
+        let valid = Self::check_suffix(
+            0,
+            il_locations,
+            search_string,
+            ProteinTextSlice::new(text, match_start, match_end),
+            equate_il,
+        ) && self.check_tryptic_c_term(text, match_end, last_is_kr);
+        if valid { Some(match_start as i64) } else { None }
+    }
+
+    /// Scans the SA range of a left-extended search, validating each hit.
+    /// Returns `true` if `max_matches` was reached.
+    ///
+    /// Same two-pass prefetch shape as `iterate_sa_range`, but the hint set is smaller because
+    /// the validation is: `match_end` always (the C-terminal read), plus `match_start` only when
+    /// `equate_il` is false and the I/L check will actually read the span.
+    #[allow(clippy::too_many_arguments)]
+    fn iterate_extended_sa_range(
+        &self,
+        mut sa_iter: impl Iterator<Item = i64>,
+        range_size: usize,
+        text: &P::Text,
+        search_string: &[u8],
+        il_locations: &[usize],
+        equate_il: bool,
+        last_is_kr: bool,
+        matching_suffixes: &mut Vec<i64>,
+        max_matches: usize,
+    ) -> bool {
+        let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
+        let prefetch_threshold = self.tuning.validate_prefetch_threshold;
+        let needs_span = !equate_il && !il_locations.is_empty();
+
+        let mut examined = 0u64;
+        let mut accepted = 0u64;
+
+        let hit_max = 'scan: {
+            if range_size < prefetch_threshold {
+                for raw in sa_iter {
+                    examined += 1;
+                    if let Some(v) = self.validate_extended_candidate(
+                        text, raw, search_string, il_locations, equate_il, last_is_kr,
+                    ) {
+                        accepted += 1;
+                        matching_suffixes.push(v);
+                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                    }
+                }
+                break 'scan false;
+            }
+
+            let mut raw_batch = [0i64; MAX_VALIDATE_BATCH];
+
+            loop {
+                let mut batch_len = 0usize;
+                for s in &mut sa_iter {
+                    let ms = s as usize + 1;
+                    text.prefetch_at(ms + search_string.len());
+                    if needs_span { text.prefetch_at(ms); }
+                    raw_batch[batch_len] = s;
+                    batch_len += 1;
+                    if batch_len == batch_size { break; }
+                }
+                if batch_len == 0 { break; }
+
+                for &raw in &raw_batch[..batch_len] {
+                    examined += 1;
+                    if let Some(v) = self.validate_extended_candidate(
+                        text, raw, search_string, il_locations, equate_il, last_is_kr,
+                    ) {
+                        accepted += 1;
+                        matching_suffixes.push(v);
+                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                    }
+                }
+            }
+            false
+        };
+
+        self.candidates_examined.add(examined);
+        self.candidates_accepted.add(accepted);
+        hit_max
     }
 
     /// Iterates the SA range and validates each candidate suffix.

@@ -25,6 +25,39 @@ pub(crate) fn get_example_proteins() -> Proteins {
     ])
 }
 
+/// Fixture for the left-extended tryptic search, positions annotated because the test cases
+/// depend on them:
+///
+/// ```text
+///   0 M  1 K  2 A  3 P  4 T  5 R  6 V  7 G  8 A  9 K  10 -
+///  11 R 12 I 13 Y 14 N 15 K 16 P 17 Q 18 S 19 T  20 -
+///  21 P 22 K 23 T 24 R 25 L 26 D 27 E 28 I  29 $
+/// ```
+///
+/// Protein starts at 0, 11, 21; separators at 10, 20; termination at 29. It deliberately contains
+/// K/R cut sites (1, 5, 9, 11, 15, 22, 24), a proline-blocked cut (15→16 is K then P), a protein
+/// that starts with proline (21, at an *odd* — hence unsampled at sparseness 2 — position), and
+/// I/L so `equate_il=false` is exercised.
+pub(crate) const TRYPTIC_FIXTURE: &str = "MKAPTRVGAK-RIYNKPQST-PKTRLDEI$";
+
+/// Every pure-amino-acid substring of [`TRYPTIC_FIXTURE`] of length 3..=6, as a peptide corpus.
+/// Length 3 is the floor so the corpus stays usable at sparseness 3.
+pub(crate) fn tryptic_fixture_peptides() -> Vec<Vec<u8>> {
+    let bytes = TRYPTIC_FIXTURE.as_bytes();
+    let mut peptides: Vec<Vec<u8>> = Vec::new();
+    for len in 3..=6usize {
+        for start in 0..bytes.len().saturating_sub(len) {
+            let s = &bytes[start..start + len];
+            if s.iter().all(|c| c.is_ascii_uppercase()) {
+                peptides.push(s.to_vec());
+            }
+        }
+    }
+    peptides.sort();
+    peptides.dedup();
+    peptides
+}
+
 /// Builds a `Searcher` over an arbitrary `-`-separated, `$`-terminated protein text, with the
 /// suffix array computed by brute force (fine at fixture scale).
 ///
