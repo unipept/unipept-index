@@ -218,9 +218,9 @@ mod tests {
     fn test_equals_slice() {
         let text = InMemoryProteinText::from_string("ACICA-CAC$");
         let text_slice = text.slice(1, 5);
-        assert!(text_slice.equals_slice(&[b'C', b'I', b'C', b'A'], false));
-        assert!(!text_slice.equals_slice(&[b'C', b'C', b'C', b'A'], false));
-        assert!(text_slice.equals_slice(&[b'C', b'L', b'C', b'A'], true));
+        assert!(text_slice.equals_slice(&b"CICA"[..], false));
+        assert!(!text_slice.equals_slice(&b"CCCA"[..], false));
+        assert!(text_slice.equals_slice(&b"CLCA"[..], true));
     }
 
     #[test]
@@ -228,8 +228,8 @@ mod tests {
         let text = InMemoryProteinText::from_string("ACILA-CAC$");
         let text_slice = text.slice(1, 5);
         let il_locations = [1, 2];
-        assert!(text_slice.check_il_locations(0, &il_locations, &[b'C', b'I', b'L', b'A']));
-        assert!(!text_slice.check_il_locations(0, &il_locations, &[b'C', b'I', b'C', b'A']));
+        assert!(text_slice.check_il_locations(0, &il_locations, &b"CILA"[..]));
+        assert!(!text_slice.check_il_locations(0, &il_locations, &b"CICA"[..]));
     }
 
     #[test]

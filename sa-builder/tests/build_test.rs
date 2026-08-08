@@ -2,9 +2,10 @@
 use std::io::Write;
 use std::process::Command;
 
-use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
-use sa_index::{Nullable, ReadBinaryMmap, SuffixArray};
-use sa_mappings::proteins::Proteins;
+use sa_index::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingBackend as _};
+use sa_index::{Nullable, ReadBinaryMmap, SuffixArray, SuffixArrayBackend as _};
+use sa_mappings::proteins::{Proteins, ProteinsBackend as _};
+use text_compression::ProteinTextBackend as _;
 
 /// Four proteins used as test input, matching the fixture in sa-mappings unit tests.
 /// Text layout (L→I translation happens internally during SA construction):
@@ -148,8 +149,8 @@ fn test_mapping_output() {
         .status()
         .unwrap();
 
-    let mapping = SuffixToProteinMapping::read_binary_mmap(&out_mapping).unwrap();
-    let idx = &*mapping.0;
+    // The mapping enum implements the backend trait directly — no inner box to unwrap.
+    let idx = SuffixToProteinMapping::read_binary_mmap(&out_mapping).unwrap();
 
     // Positions inside each protein resolve to the correct protein index.
     assert_eq!(idx.suffix_to_protein(0),   0, "position 0 should map to protein 0");

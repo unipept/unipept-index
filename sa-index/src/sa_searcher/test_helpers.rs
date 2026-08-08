@@ -73,7 +73,7 @@ pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> Searcher<SuffixA
         text.bytes().map(|c| if c == b'L' { b'I' } else { c }).collect();
 
     let mut positions: Vec<i64> = (0..text.len() as i64)
-        .filter(|p| *p as usize % sparseness as usize == 0)
+        .filter(|p| (*p as usize).is_multiple_of(sparseness as usize))
         .collect();
     positions.sort_by(|&a, &b| normalised[a as usize..].cmp(&normalised[b as usize..]));
 

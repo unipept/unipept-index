@@ -112,7 +112,7 @@ pub fn search_peptide<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixTo
 /// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
 pub fn search_all_peptides<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
     searcher: &Searcher<SA, P, STPM>,
-    peptides: &Vec<String>,
+    peptides: &[String],
     cutoff: usize,
     equate_il: bool,
     tryptic: bool

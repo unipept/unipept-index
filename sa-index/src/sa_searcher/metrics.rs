@@ -35,6 +35,10 @@ mod imp {
         }
 
         /// Overwrites the counter. Test/setup helper, not for the hot path.
+        ///
+        /// Its only callers are the metrics tests, which live behind
+        /// `#[cfg(all(test, not(feature = "mmap")))]`, so it reads as dead under `--all-features`.
+        #[allow(dead_code)]
         #[inline]
         pub fn store(&self, v: u64) {
             self.0.store(v, Ordering::Relaxed);
@@ -79,6 +83,8 @@ mod imp {
         #[inline]
         pub fn add(&self, _v: u64) {}
 
+        /// Mirrors the real `Counter::store`; see there for why this reads as dead code.
+        #[allow(dead_code)]
         #[inline]
         pub fn store(&self, _v: u64) {}
 

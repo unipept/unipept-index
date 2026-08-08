@@ -3,7 +3,10 @@ pub(crate) mod metrics;
 mod orchestrate;
 mod retrieval;
 mod scalar;
-#[cfg(test)]
+// The shared fixtures build a `SuffixArray::Original` / `SuffixToProteinMapping::BitVec`, which
+// only exist in the preloaded configuration. Every consumer is gated the same way, so gating the
+// module itself keeps `--features mmap` compiling.
+#[cfg(all(test, not(feature = "mmap")))]
 mod test_helpers;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
@@ -215,13 +218,13 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM:
     pub tuning: SearchTuning,
     /// Total nanoseconds spent inside `search_bounds()` across all queries (since last drain).
     /// Only accumulated with the `metrics` feature enabled; a no-op ZST otherwise.
-    pub search_bounds_ns: Counter,
+    pub(crate) search_bounds_ns: Counter,
     /// Total nanoseconds spent iterating matches in `search_matching_suffixes()` (since last drain).
     /// Only accumulated with the `metrics` feature enabled; a no-op ZST otherwise.
-    pub match_iter_ns: Counter,
+    pub(crate) match_iter_ns: Counter,
     /// Candidate suffixes inspected by `iterate_sa_range` (since last drain), i.e. every entry
     /// the SA-range scan looked at, accepted or not. `metrics` only.
-    pub candidates_examined: Counter,
+    pub(crate) candidates_examined: Counter,
     /// Candidate suffixes `iterate_sa_range` accepted as real matches (since last drain).
     /// `metrics` only.
     ///
@@ -230,7 +233,7 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM:
     /// simply sifting ~1/ratio times more candidates to reach `max_matches` (make each check
     /// cheaper), whereas a ratio near 1 with the cutoff rarely reached means whole SA ranges
     /// are being scanned to exhaustion (a `max_candidates` scan cap is the fix).
-    pub candidates_accepted: Counter,
+    pub(crate) candidates_accepted: Counter,
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -525,6 +528,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Checks whether the candidate suffix `raw` is a valid match for the current search
     /// parameters. Returns `Some(match_start)` when valid, `None` otherwise.
+    ///
+    /// The parameters are the query state hoisted out of the candidate loop; bundling them into a
+    /// struct would put a field load on the innermost path, so they stay positional.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     fn validate_candidate(
         &self,
@@ -683,6 +690,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Two-pass batching with hardware prefetch hints to hide DRAM latency:
     /// Pass 1 — fills a batch and issues prefetch hints for the text positions to validate.
     /// Pass 2 — validates candidates after prefetches have had time to complete.
+    ///
+    /// Same rationale as `validate_candidate` for the positional parameter list.
+    #[allow(clippy::too_many_arguments)]
     fn iterate_sa_range(
         &self,
         mut sa_iter: impl Iterator<Item = i64>,
@@ -1175,12 +1185,17 @@ mod tests {
     ///
     /// `max_matches` is deliberately finite and larger than the smallest swept `validate_batch`
     /// so the cutoff fires mid-batch for the common peptides.
+    /// One row per (mlp_batch, peptide): the batch size, the result-variant tag, the sorted
+    /// matching suffixes, and the retrieved `(taxon_id, uniprot_id)` pairs. Comparing these
+    /// rows across tuning settings is what proves the knobs are behaviour-neutral.
+    type TuningRow = (usize, &'static str, Vec<i64>, Vec<(u32, String)>);
+
     fn tuning_run(
         searcher: &Searcher<SuffixArray>,
         peptides: &[&[u8]],
         equate_il: bool,
         tryptic: bool,
-    ) -> Vec<(usize, &'static str, Vec<i64>, Vec<(u32, String)>)> {
+    ) -> Vec<TuningRow> {
         let mut out = Vec::new();
         for mlp_batch in [1usize, 16] {
             let results =
@@ -1232,7 +1247,7 @@ mod tests {
         // The third element is the sparseness factor: `search_matching_suffixes` indexes
         // `search_string[skip..]` for every skip below it, so peptides shorter than that are
         // out of contract (production drops them before the search) and must be filtered out.
-        let mut fixtures = vec![
+        let mut fixtures = [
             ("dense", searcher_over_text(&text, 1), 1usize),
             ("sparse", searcher_over_text(&text, 3), 3usize),
             ("kmer", kmered, 1usize),
