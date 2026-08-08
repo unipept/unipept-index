@@ -1,9 +1,21 @@
 target/
+
+# Index data: build inputs and the multi-GB artefacts built from them.
 data/
-uniprot-2026-01/
-scripts/
-data/benchmarks/
+uniprot-*/
 benchmarks/
+
+# Dev harness. The shell scripts are tracked; the fixtures and captured
+# responses they produce (tens of MB each) are not.
+scripts/*.json
+scripts/*.txt
+scripts/benchmarks/
+sa-benchmarks/summary/
+*.log
+
+# Tooling scratch space.
+.claude/
+.env/
 
 libsais64-rs/libsais
 libsais64-rs/libsais-packed
