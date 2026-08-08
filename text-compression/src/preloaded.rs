@@ -1,15 +1,25 @@
-// Non-mmap build: in-memory protein text backed by a BitArray.
+//! In-memory protein text: the whole text decompressed into owned RAM.
+//!
+//! Compiled in *both* configurations, not only non-mmap builds: this module owns the
+//! `WriteBinary` implementation, so `sa-builder` uses it to produce the file that the mmap
+//! backend later reads. Only the reading half is configuration-specific.
+//!
+//! See [`crate::mmap`] for the counterpart that decodes straight out of a mapping.
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read, Write};
 
-use bitarray::{Binary, BitArray, data_to_writer};
+use bitarray::{Binary, BitArray};
 
 use binary_traits::{ReadBinary, WriteBinary};
 use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
 
 // ── InMemoryProteinText ───────────────────────────────────────────────────────
 
+/// The protein text held in owned memory, packed at 5 bits per residue.
+///
+/// Carries the ASCII → 5-bit table alongside the packed data so that `set` can encode; decoding
+/// needs only [`crate::BIT5_TO_CHAR`].
 pub struct InMemoryProteinText {
     pub(crate) bit_array: BitArray<5>,
     pub(crate) char_to_5bit: HashMap<u8, u8>,
@@ -20,6 +30,11 @@ impl InMemoryProteinText {
         BIT5_TO_CHAR.iter().enumerate().map(|(i, &c)| (c, i as u8)).collect()
     }
 
+    /// Encodes `input_string`, one residue per character.
+    ///
+    /// # Panics
+    ///
+    /// If any character is outside the alphabet in [`crate::BIT5_TO_CHAR`].
     pub fn from_string(input_string: &str) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
         let mut bit_array = BitArray::<5>::with_capacity(input_string.len());
@@ -31,6 +46,12 @@ impl InMemoryProteinText {
         Self { bit_array, char_to_5bit }
     }
 
+    /// Encodes `input_vec`, one residue per byte. Same alphabet constraint as
+    /// [`Self::from_string`].
+    ///
+    /// # Panics
+    ///
+    /// If any byte is outside the alphabet in [`crate::BIT5_TO_CHAR`].
     pub fn from_vec(input_vec: &[u8]) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
         let mut bit_array = BitArray::<5>::with_capacity(input_vec.len());
@@ -42,20 +63,28 @@ impl InMemoryProteinText {
         Self { bit_array, char_to_5bit }
     }
 
+    /// Wraps an already-packed bit array, as produced by `read_binary`.
     pub fn new(bit_array: BitArray<5>) -> Self {
         Self { bit_array, char_to_5bit: Self::create_char_to_5bit_hashmap() }
     }
 
+    /// Allocates room for `capacity` residues, all decoding to the first alphabet entry.
     pub fn with_capacity(capacity: usize) -> Self {
         Self::new(BitArray::<5>::with_capacity(capacity))
     }
 
+    /// Encodes and stores the ASCII residue `value` at `index`.
+    ///
+    /// # Panics
+    ///
+    /// If `value` is outside the alphabet, or `index` is out of bounds.
     pub fn set(&mut self, index: usize, value: u8) {
         let char_5bit: u8 = *self.char_to_5bit.get(&value)
             .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
         self.bit_array.set(index, char_5bit as u64);
     }
 
+    /// Zeroes the text without reallocating.
     pub fn clear(&mut self) { self.bit_array.clear(); }
 }
 
@@ -68,6 +97,11 @@ impl ProteinTextBackend for InMemoryProteinText {
     #[inline]
     fn len(&self) -> usize { self.bit_array.len() }
 
+    /// Prefetches the backing word holding `index`.
+    ///
+    /// Note the index conversion: `get_data_slice` is indexed by `u64` *word*, not by residue,
+    /// so the residue index has to be scaled by the 5-bit width first. Out-of-range indices are
+    /// skipped rather than clamped, per the trait contract.
     #[inline]
     fn prefetch_at(&self, index: usize) {
         if index < self.bit_array.len() {
@@ -78,6 +112,16 @@ impl ProteinTextBackend for InMemoryProteinText {
     }
 }
 
+/// On-disk format for the protein text — written here, read by both backends.
+///
+/// ```text
+/// [ text_length: u64 little-endian ][ packed residues: ceil(len*5/64) * 8 bytes ]
+/// ```
+///
+/// The payload is exactly `BitArray<5>`'s backing words, so it is packed
+/// most-significant-bit-first within each little-endian `u64` and values may straddle a word
+/// boundary. `crate::bit_array_byte_size` computes the payload length and is what the mmap
+/// readers bounds-check against.
 impl WriteBinary for InMemoryProteinText {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         let text_length = self.bit_array.len() as u64;
@@ -104,27 +148,6 @@ impl ReadBinary for InMemoryProteinText {
 
         Ok(Self::new(bit_array))
     }
-}
-
-// ── I/O helpers ──────────────────────────────────────────────────────────────
-
-pub fn dump_compressed_text(text: Vec<u8>, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
-    let bits_per_value = 5;
-    writer.write(&[bits_per_value as u8]).map_err(|_| "Could not write the required bits to the writer")?;
-    writer.write(&(text.len() as u64).to_le_bytes()).map_err(|_| "Could not write the size of the text to the writer")?;
-    let text_writer: Vec<i64> = text.iter().map(|item| <i64>::from(*item)).collect();
-    data_to_writer(text_writer, bits_per_value, 8 * 1024, writer)
-        .map_err(|_| "Could not write the compressed text to the writer")?;
-    Ok(())
-}
-
-pub fn load_compressed_text(reader: &mut impl BufRead) -> Result<InMemoryProteinText, Box<dyn Error>> {
-    let mut size_buffer = [0_u8; 8];
-    reader.read_exact(&mut size_buffer).map_err(|_| "Could not read the size of the text from the binary file")?;
-    let size = u64::from_le_bytes(size_buffer) as usize;
-    let mut compressed_text = BitArray::<5>::with_capacity(size);
-    compressed_text.read_binary(reader).map_err(|_| "Could not read the compressed text from the binary file")?;
-    Ok(InMemoryProteinText::new(compressed_text))
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -230,54 +253,6 @@ mod tests {
         let il_locations = [1, 2];
         assert!(text_slice.check_il_locations(0, &il_locations, &b"CILA"[..]));
         assert!(!text_slice.check_il_locations(0, &il_locations, &b"CICA"[..]));
-    }
-
-    #[test]
-    fn test_dump_compressed_text() {
-        let text: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        let mut writer = vec![];
-        dump_compressed_text(text, &mut writer).unwrap();
-        assert_eq!(writer, vec![5, 10, 0, 0, 0, 0, 0, 0, 0, 0, 128, 74, 232, 152, 66, 134, 8]);
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not write the required bits to the writer")]
-    fn test_dump_compressed_text_fail_required_bits() {
-        dump_compressed_text(vec![], &mut FailingWriter { valid_write_count: 0 }).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not write the size of the text to the writer")]
-    fn test_dump_compressed_text_fail_size() {
-        dump_compressed_text(vec![], &mut FailingWriter { valid_write_count: 1 }).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not write the compressed text to the writer")]
-    fn test_dump_compressed_text_fail_compressed_text() {
-        dump_compressed_text(vec![1], &mut FailingWriter { valid_write_count: 3 }).unwrap();
-    }
-
-    #[test]
-    fn test_load_compressed_text() {
-        let data = [10, 0, 0, 0, 0, 0, 0, 0, 0, 128, 74, 232, 152, 66, 134, 8];
-        let mut reader = std::io::BufReader::new(&data[..]);
-        let compressed_text = load_compressed_text(&mut reader).unwrap();
-        for (i, c) in "BCDEFGHIKL".chars().enumerate() {
-            assert_eq!(compressed_text.get(i), c as u8);
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not read the size of the text from the binary file")]
-    fn test_load_compressed_text_fail_size() {
-        load_compressed_text(&mut FailingReader { valid_read_count: 0 }).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not read the compressed text from the binary file")]
-    fn test_load_compressed_text_fail_compressed_text() {
-        load_compressed_text(&mut FailingReader { valid_read_count: 2 }).unwrap();
     }
 
     #[test]
