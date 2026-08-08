@@ -1,3 +1,19 @@
+//! Compile-time-width bit array — the fast half of the pair.
+//!
+//! Identical in behaviour to [`crate::dynamic::DynBitArray`], and asserted so by the shared
+//! parity test. It exists separately because making the width a const generic turns every
+//! quantity in [`BitArray::get`] into a compile-time constant:
+//!
+//! * `MASK` becomes an immediate instead of a field load,
+//! * `index * BITS`, `64 - start_bit - BITS` and friends fold into a shift by a constant rather
+//!   than a variable-shift instruction,
+//! * and for widths that divide 64 the `start_bit + BITS <= 64` branch folds away entirely, so
+//!   the straddling path is never even branched over.
+//!
+//! `get` is called once per residue compared during candidate validation — the innermost loop in
+//! the whole index — so this matters. Prefer this type whenever the width is a property of the
+//! data rather than of the file being read; see the crate docs for the choice.
+
 use std::io::{BufRead, Result, Write};
 
 use crate::binary::{self, Binary};
@@ -5,14 +21,19 @@ use crate::binary::{self, Binary};
 // ── BitArray<const BITS> ──────────────────────────────────────────────────────
 
 /// A bit array whose bits-per-value is fixed at compile time.
+///
+/// Values are packed most-significant-bit first within each little-endian `u64`, and may straddle
+/// a word boundary. `BITS` must be in `1..=64`; `BITS == 0` fails to compile at `MASK`.
 pub struct BitArray<const BITS: usize> {
     data: Vec<u64>,
     len: usize,
 }
 
 impl<const BITS: usize> BitArray<BITS> {
+    /// Low `BITS` bits set. Const-evaluated, so it costs no runtime work and no register.
     const MASK: u64 = u64::MAX >> (64 - BITS);
 
+    /// Allocates room for `capacity` values, all zero.
     pub fn with_capacity(capacity: usize) -> Self {
         let extra = if (capacity * BITS).is_multiple_of(64) { 0 } else { 1 };
         Self {
@@ -28,6 +49,15 @@ impl<const BITS: usize> BitArray<BITS> {
         crate::hugepages::advise(&self.data);
     }
 
+    /// Returns the value at `index`.
+    ///
+    /// `#[inline]` is load-bearing: every caller is in another crate and the workspace sets no
+    /// `[profile.release]`, so without this the innermost loop of the index pays a cross-crate
+    /// call per residue. See the crate docs on `prefetch` for the same argument at length.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is out of bounds, via the underlying slice index.
     #[inline]
     pub fn get(&self, index: usize) -> u64 {
         let bit_offset = index * BITS;
@@ -41,6 +71,7 @@ impl<const BITS: usize> BitArray<BITS> {
         }
     }
 
+    /// Writes `value` at `index`. Only the low `BITS` bits of `value` are stored.
     pub fn set(&mut self, index: usize, value: u64) {
         let start_block = index * BITS / 64;
         let start_block_offset = index * BITS % 64;
@@ -61,15 +92,30 @@ impl<const BITS: usize> BitArray<BITS> {
         self.data[end_block] |= value << (64 - end_block_offset);
     }
 
+    /// Bits stored per value, i.e. `BITS`. Present so callers can be generic over both
+    /// implementations.
     pub fn bits_per_value(&self) -> usize { BITS }
+    /// Number of values stored.
     pub fn len(&self) -> usize { self.len }
+    /// Whether the array holds no values.
     pub fn is_empty(&self) -> bool { self.len == 0 }
+    /// Zeroes every value without reallocating, so the buffer can be refilled.
     pub fn clear(&mut self) { self.data.iter_mut().for_each(|x| *x = 0); }
 
+    /// Borrows the raw backing words in `start_slice..end_slice`.
+    ///
+    /// Exposed for prefetching: callers translate a value index to its word index and take the
+    /// address of that word. Word indices are not value indices.
     pub fn get_data_slice(&self, start_slice: usize, end_slice: usize) -> &[u64] {
         &self.data[start_slice..end_slice]
     }
 
+    /// Iterates values in `start..end` (half-open).
+    ///
+    /// This is the sequential fast path and the reason to prefer it over a `get` loop: the
+    /// iterator carries the current and next words, so consecutive values that share a word cost
+    /// no reload, and a straddling value already has its second word to hand. `get` re-derives
+    /// and re-loads both on every call.
     pub fn iter_range(&self, start: usize, end: usize) -> BitArrayRangeIter<'_, BITS> {
         BitArrayRangeIter::new(&self.data, start, end)
     }
@@ -160,156 +206,28 @@ impl<const BITS: usize> ExactSizeIterator for BitArrayRangeIter<'_, BITS> {}
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
+/// Constructor shim for the shared suite: the width is a const generic here.
 #[cfg(test)]
-mod tests {
+macro_rules! new_bitarray {
+    ($capacity:expr, $bits:literal) => { BitArray::<$bits>::with_capacity($capacity) };
+}
+
+#[cfg(test)]
+bitarray_test_suite!(new_bitarray);
+
+#[cfg(test)]
+mod constant_only_tests {
     use super::*;
 
+    /// The point of this type: `MASK` is a compile-time constant, usable in const context.
     #[test]
-    fn test_with_capacity() {
-        let ba = BitArray::<40>::with_capacity(4);
-        assert_eq!(ba.data, vec![0, 0, 0]);
-        assert_eq!(ba.len, 4);
-    }
+    fn mask_is_a_compile_time_constant() {
+        const M40: u64 = BitArray::<40>::MASK;
+        const M64: u64 = BitArray::<64>::MASK;
+        const M1: u64 = BitArray::<1>::MASK;
 
-    #[test]
-    fn test_get() {
-        let mut ba = BitArray::<40>::with_capacity(4);
-        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
-
-        assert_eq!(ba.get(0), 0b0001110011111010110001000111111100110010);
-        assert_eq!(ba.get(1), 0b1100001001010010011000010100110111001001);
-        assert_eq!(ba.get(2), 0b1111001101001101101101101011101001010001);
-        assert_eq!(ba.get(3), 0b0000100010010001010001001110101110011100);
-    }
-
-    #[test]
-    fn test_set() {
-        let mut ba = BitArray::<40>::with_capacity(4);
-
-        ba.set(0, 0b0001110011111010110001000111111100110010_u64);
-        ba.set(1, 0b1100001001010010011000010100110111001001_u64);
-        ba.set(2, 0b1111001101001101101101101011101001010001_u64);
-        ba.set(3, 0b0000100010010001010001001110101110011100_u64);
-
-        assert_eq!(ba.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
-    }
-
-    #[test]
-    fn test_bits_per_value() {
-        assert_eq!(BitArray::<40>::with_capacity(4).bits_per_value(), 40);
-    }
-
-    #[test]
-    fn test_len_and_empty() {
-        assert_eq!(BitArray::<40>::with_capacity(4).len(), 4);
-        assert!(BitArray::<40>::with_capacity(0).is_empty());
-        assert!(!BitArray::<40>::with_capacity(4).is_empty());
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut ba = BitArray::<40>::with_capacity(4);
-        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
-        ba.clear();
-        assert_eq!(ba.data, vec![0, 0, 0]);
-    }
-
-    // ── Binary impl ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_write_binary() {
-        let mut ba = BitArray::<40>::with_capacity(4);
-        ba.set(0, 0x1234567890_u64);
-        ba.set(1, 0xabcdef0123_u64);
-        ba.set(2, 0x4567890abc_u64);
-        ba.set(3, 0xdef0123456_u64);
-
-        let mut buf = Vec::new();
-        ba.write_binary(&mut buf).unwrap();
-
-        assert_eq!(buf, vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
-            0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
-        ]);
-    }
-
-    #[test]
-    fn test_read_binary() {
-        let buf = [
-            0xef_u8, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67,
-            0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
-        ];
-        let mut ba = BitArray::<40>::with_capacity(4);
-        ba.read_binary(&buf[..]).unwrap();
-
-        assert_eq!(ba.get(0), 0x1234567890);
-        assert_eq!(ba.get(1), 0xabcdef0123);
-        assert_eq!(ba.get(2), 0x4567890abc);
-        assert_eq!(ba.get(3), 0xdef0123456);
-    }
-
-    // ── BitArrayRangeIter ─────────────────────────────────────────────────────
-
-    fn collect<const BITS: usize>(ba: &BitArray<BITS>, start: usize, end: usize) -> Vec<i64> {
-        ba.iter_range(start, end).collect()
-    }
-
-    fn expected<const BITS: usize>(ba: &BitArray<BITS>, start: usize, end: usize) -> Vec<i64> {
-        (start..end).map(|i| ba.get(i) as i64).collect()
-    }
-
-    #[test]
-    fn test_iter_range_empty() {
-        let ba = BitArray::<32>::with_capacity(8);
-        assert!(collect(&ba, 3, 3).is_empty());
-        assert!(collect(&ba, 5, 3).is_empty());
-    }
-
-    #[test]
-    fn test_iter_range_single_entry() {
-        let mut ba = BitArray::<40>::with_capacity(4);
-        ba.set(2, 0xABCDEF1234_u64);
-        assert_eq!(collect(&ba, 2, 3), vec![0xABCDEF1234_i64]);
-    }
-
-    #[test]
-    fn test_iter_range_mid_block_start() {
-        let values: Vec<u64> = (0..8).map(|i| i * 111 + 7).collect();
-        let mut ba = BitArray::<32>::with_capacity(8);
-        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-        assert_eq!(collect(&ba, 1, 6), expected(&ba, 1, 6));
-    }
-
-    #[test]
-    fn test_iter_range_crosses_block_boundary() {
-        let values: Vec<u64> = (0..16).map(|i| i as u64 * 0x100000001 + 3).collect();
-        let mut ba = BitArray::<40>::with_capacity(16);
-        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-        assert_eq!(collect(&ba, 0, 16), expected(&ba, 0, 16));
-        assert_eq!(collect(&ba, 3, 13), expected(&ba, 3, 13));
-    }
-
-    #[test]
-    fn test_iter_range_bits_per_value_64() {
-        let values: Vec<u64> = (0..8).map(|i| i as u64 * 0xDEAD_BEEF + 1).collect();
-        let mut ba = BitArray::<64>::with_capacity(8);
-        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-        assert_eq!(collect(&ba, 0, 8), expected(&ba, 0, 8));
-        assert_eq!(collect(&ba, 2, 6), expected(&ba, 2, 6));
-    }
-
-    #[test]
-    fn test_iter_range_bits_per_value_1() {
-        let mut ba = BitArray::<1>::with_capacity(128);
-        for i in (0..128).step_by(3) { ba.set(i, 1); }
-        assert_eq!(collect(&ba, 0, 128), expected(&ba, 0, 128));
-        assert_eq!(collect(&ba, 60, 70), expected(&ba, 60, 70));
-    }
-
-    #[test]
-    fn test_iter_range_exact_size() {
-        let mut ba = BitArray::<40>::with_capacity(10);
-        for i in 0..10 { ba.set(i, i as u64 * 99); }
-        assert_eq!(ba.iter_range(2, 8).len(), 6);
+        assert_eq!(M40, 0xff_ffff_ffff);
+        assert_eq!(M64, u64::MAX);
+        assert_eq!(M1, 1);
     }
 }

@@ -1,3 +1,14 @@
+//! Runtime-width bit array — the flexible half of the pair.
+//!
+//! Identical in behaviour to [`crate::constant::BitArray`], and asserted so by the shared parity
+//! test. Use this one when the width is not known until runtime, which in practice means it came
+//! out of a file header: the compressed suffix array picks its width from the text length at
+//! build time and records it in the file, so the reader cannot be generic over it.
+//!
+//! The cost of that flexibility is that `mask` is a field load rather than an immediate and every
+//! shift amount is computed rather than folded — see [`crate::constant`] for what that buys. If
+//! the width is a property of the data rather than of the file, prefer the const-generic type.
+
 use std::io::{BufRead, Result, Write};
 
 use crate::binary::{self, Binary};
@@ -5,6 +16,9 @@ use crate::binary::{self, Binary};
 // ── DynBitArray ───────────────────────────────────────────────────────────────
 
 /// A bit array whose bits-per-value is determined at runtime.
+///
+/// Values are packed most-significant-bit first within each little-endian `u64`, and may straddle
+/// a word boundary — byte-for-byte the same layout as [`crate::constant::BitArray`].
 pub struct DynBitArray {
     data: Vec<u64>,
     mask: u64,
@@ -13,6 +27,9 @@ pub struct DynBitArray {
 }
 
 impl DynBitArray {
+    /// Allocates room for `capacity` values of `bits_per_value` bits each, all zero.
+    ///
+    /// `bits_per_value` is expected to be in `1..=64`.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
         let extra = if (capacity * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
         Self {
@@ -68,15 +85,27 @@ impl DynBitArray {
         self.data[end_block] |= value << (64 - end_block_offset);
     }
 
+    /// Bits stored per value.
     pub fn bits_per_value(&self) -> usize { self.bits_per_value }
+    /// Number of values stored.
     pub fn len(&self) -> usize { self.len }
+    /// Whether the array holds no values.
     pub fn is_empty(&self) -> bool { self.len == 0 }
+    /// Zeroes every value without reallocating, so the buffer can be refilled.
     pub fn clear(&mut self) { self.data.iter_mut().for_each(|x| *x = 0); }
 
+    /// Borrows the raw backing words in `start_slice..end_slice`.
+    ///
+    /// Exposed for prefetching: callers translate a value index to its word index and take the
+    /// address of that word. Word indices are not value indices.
     pub fn get_data_slice(&self, start_slice: usize, end_slice: usize) -> &[u64] {
         &self.data[start_slice..end_slice]
     }
 
+    /// Iterates values in `start..end` (half-open).
+    ///
+    /// The sequential fast path: the iterator carries the current and next words, so consecutive
+    /// values that share a word cost no reload. See [`crate::constant::BitArray::iter_range`].
     pub fn iter_range(&self, start: usize, end: usize) -> DynBitArrayRangeIter<'_> {
         DynBitArrayRangeIter::new(&self.data, self.bits_per_value, self.mask, start, end)
     }
@@ -167,157 +196,25 @@ impl ExactSizeIterator for DynBitArrayRangeIter<'_> {}
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
+/// Constructor shim for the shared suite: the width is a runtime argument here.
 #[cfg(test)]
-mod tests {
+macro_rules! new_bitarray {
+    ($capacity:expr, $bits:literal) => { DynBitArray::with_capacity($capacity, $bits) };
+}
+
+#[cfg(test)]
+bitarray_test_suite!(new_bitarray);
+
+#[cfg(test)]
+mod dynamic_only_tests {
     use super::*;
 
+    /// The runtime counterpart of `BitArray::MASK`, including the `1 << 64` overflow case that
+    /// the const version sidesteps by construction.
     #[test]
-    fn test_with_capacity() {
-        let ba = DynBitArray::with_capacity(4, 40);
-        assert_eq!(ba.data, vec![0, 0, 0]);
-        assert_eq!(ba.mask, 0xff_ffff_ffff);
-        assert_eq!(ba.len, 4);
-    }
-
-    #[test]
-    fn test_get() {
-        let mut ba = DynBitArray::with_capacity(4, 40);
-        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
-
-        assert_eq!(ba.get(0), 0b0001110011111010110001000111111100110010);
-        assert_eq!(ba.get(1), 0b1100001001010010011000010100110111001001);
-        assert_eq!(ba.get(2), 0b1111001101001101101101101011101001010001);
-        assert_eq!(ba.get(3), 0b0000100010010001010001001110101110011100);
-    }
-
-    #[test]
-    fn test_set() {
-        let mut ba = DynBitArray::with_capacity(4, 40);
-
-        ba.set(0, 0b0001110011111010110001000111111100110010_u64);
-        ba.set(1, 0b1100001001010010011000010100110111001001_u64);
-        ba.set(2, 0b1111001101001101101101101011101001010001_u64);
-        ba.set(3, 0b0000100010010001010001001110101110011100_u64);
-
-        assert_eq!(ba.data, vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144EB9C00000000]);
-    }
-
-    #[test]
-    fn test_bits_per_value() {
-        assert_eq!(DynBitArray::with_capacity(4, 40).bits_per_value(), 40);
-    }
-
-    #[test]
-    fn test_len_and_empty() {
-        assert_eq!(DynBitArray::with_capacity(4, 40).len(), 4);
-        assert!(DynBitArray::with_capacity(0, 40).is_empty());
-        assert!(!DynBitArray::with_capacity(4, 40).is_empty());
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut ba = DynBitArray::with_capacity(4, 40);
-        ba.data = vec![0x1cfac47f32c25261, 0x4dc9f34db6ba5108, 0x9144eb9ca32eb4a4];
-        ba.clear();
-        assert_eq!(ba.data, vec![0, 0, 0]);
-    }
-
-    // ── Binary impl ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_write_binary() {
-        let mut ba = DynBitArray::with_capacity(4, 40);
-        ba.set(0, 0x1234567890_u64);
-        ba.set(1, 0xabcdef0123_u64);
-        ba.set(2, 0x4567890abc_u64);
-        ba.set(3, 0xdef0123456_u64);
-
-        let mut buf = Vec::new();
-        ba.write_binary(&mut buf).unwrap();
-
-        assert_eq!(buf, vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
-            0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
-        ]);
-    }
-
-    #[test]
-    fn test_read_binary() {
-        let buf = [
-            0xef_u8, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67,
-            0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
-        ];
-        let mut ba = DynBitArray::with_capacity(4, 40);
-        ba.read_binary(&buf[..]).unwrap();
-
-        assert_eq!(ba.get(0), 0x1234567890);
-        assert_eq!(ba.get(1), 0xabcdef0123);
-        assert_eq!(ba.get(2), 0x4567890abc);
-        assert_eq!(ba.get(3), 0xdef0123456);
-    }
-
-    // ── DynBitArrayRangeIter ──────────────────────────────────────────────────
-
-    fn collect(ba: &DynBitArray, start: usize, end: usize) -> Vec<i64> {
-        ba.iter_range(start, end).collect()
-    }
-
-    fn expected(ba: &DynBitArray, start: usize, end: usize) -> Vec<i64> {
-        (start..end).map(|i| ba.get(i) as i64).collect()
-    }
-
-    #[test]
-    fn test_iter_range_empty() {
-        let ba = DynBitArray::with_capacity(8, 32);
-        assert!(collect(&ba, 3, 3).is_empty());
-        assert!(collect(&ba, 5, 3).is_empty());
-    }
-
-    #[test]
-    fn test_iter_range_single_entry() {
-        let mut ba = DynBitArray::with_capacity(4, 40);
-        ba.set(2, 0xABCDEF1234_u64);
-        assert_eq!(collect(&ba, 2, 3), vec![0xABCDEF1234_i64]);
-    }
-
-    #[test]
-    fn test_iter_range_mid_block_start() {
-        let values: Vec<u64> = (0..8).map(|i| i * 111 + 7).collect();
-        let mut ba = DynBitArray::with_capacity(8, 32);
-        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-        assert_eq!(collect(&ba, 1, 6), expected(&ba, 1, 6));
-    }
-
-    #[test]
-    fn test_iter_range_crosses_block_boundary() {
-        let values: Vec<u64> = (0..16).map(|i| i as u64 * 0x100000001 + 3).collect();
-        let mut ba = DynBitArray::with_capacity(16, 40);
-        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-        assert_eq!(collect(&ba, 0, 16), expected(&ba, 0, 16));
-        assert_eq!(collect(&ba, 3, 13), expected(&ba, 3, 13));
-    }
-
-    #[test]
-    fn test_iter_range_bits_per_value_64() {
-        let values: Vec<u64> = (0..8).map(|i| i as u64 * 0xDEAD_BEEF + 1).collect();
-        let mut ba = DynBitArray::with_capacity(8, 64);
-        for (i, &v) in values.iter().enumerate() { ba.set(i, v); }
-        assert_eq!(collect(&ba, 0, 8), expected(&ba, 0, 8));
-        assert_eq!(collect(&ba, 2, 6), expected(&ba, 2, 6));
-    }
-
-    #[test]
-    fn test_iter_range_bits_per_value_1() {
-        let mut ba = DynBitArray::with_capacity(128, 1);
-        for i in (0..128).step_by(3) { ba.set(i, 1); }
-        assert_eq!(collect(&ba, 0, 128), expected(&ba, 0, 128));
-        assert_eq!(collect(&ba, 60, 70), expected(&ba, 60, 70));
-    }
-
-    #[test]
-    fn test_iter_range_exact_size() {
-        let mut ba = DynBitArray::with_capacity(10, 40);
-        for i in 0..10 { ba.set(i, i as u64 * 99); }
-        assert_eq!(ba.iter_range(2, 8).len(), 6);
+    fn mask_is_derived_from_the_runtime_width() {
+        assert_eq!(DynBitArray::with_capacity(4, 40).mask, 0xff_ffff_ffff);
+        assert_eq!(DynBitArray::with_capacity(4, 64).mask, u64::MAX);
+        assert_eq!(DynBitArray::with_capacity(4, 1).mask, 1);
     }
 }

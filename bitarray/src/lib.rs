@@ -1,3 +1,31 @@
+//! Dense arrays of fixed-width values packed into `u64` words.
+//!
+//! The index stores hundreds of millions of values that need far fewer than 64 bits each — a
+//! suffix array over a 300 M-residue text needs 29, and the protein text itself needs 5 for its
+//! 24-letter alphabet. Packing them at their natural width rather than rounding up to a byte is
+//! what keeps the compressed index small enough to be worth loading.
+//!
+//! Values are packed **most-significant-bit first within each little-endian `u64` word**, and a
+//! value may straddle a word boundary. Both implementations below and the mmap readers in
+//! `text-compression` and `sa-index` depend on that layout matching exactly.
+//!
+//! # Two implementations
+//!
+//! [`BitArray<BITS>`] fixes the width at compile time; [`DynBitArray`] takes it at runtime. They
+//! are otherwise interchangeable, and `test_suite.rs` asserts they pack identically at every
+//! width from 1 to 64. Which to use:
+//!
+//! * **[`BitArray<BITS>`] when the width is a property of the data.** The protein text is always
+//!   5 bits per residue, so `text-compression` uses `BitArray<5>`. See [`constant`] for why this
+//!   is measurably faster.
+//! * **[`DynBitArray`] when the width comes from a file header.** The compressed suffix array
+//!   chooses its width from the text length at build time and records it in the file, so the
+//!   reader cannot know it until runtime.
+
+#[cfg(test)]
+#[macro_use]
+mod test_suite;
+
 mod binary;
 mod constant;
 mod dynamic;
@@ -12,14 +40,39 @@ pub use dynamic::{DynBitArray, DynBitArrayRangeIter};
 // ── data_to_writer ────────────────────────────────────────────────────────────
 
 /// Writes packed bit data to a writer in chunks, minimising peak memory.
+///
+/// Builds and serialises `max_capacity` values at a time instead of packing the whole of `data`
+/// into one array first. At index-build scale `data` is already several gigabytes, so the
+/// difference is between one transient buffer and a second full copy of the index.
+///
+/// # Panics in the caller's future, if `max_capacity` is chosen badly
+///
+/// Each chunk is written as a whole number of `u64` words, so for the chunks to concatenate into
+/// one continuous bit stream every chunk must occupy a whole number of words — that is,
+/// `max_capacity * bits_per_value` must be a multiple of 64. Both callers pass `8 * 1024`, which
+/// satisfies this for every width. See the note on the chunk size below.
 pub fn data_to_writer(
     data: Vec<i64>,
     bits_per_value: usize,
     max_capacity: usize,
     writer: &mut impl Write,
 ) -> Result<()> {
+    // Round the requested chunk size down to a multiple of gcd(bits_per_value, 64).
+    //
+    // CAUTION: this is *not* the invariant the chunking actually needs. A chunk only lands on a
+    // word boundary when `capacity * bits_per_value % 64 == 0`, i.e. when `capacity` is a
+    // multiple of `64 / gcd`, not of `gcd`. For `bits_per_value = 5` the gcd is 1 and this line
+    // rounds to nothing at all; the code is correct today only because both callers pass
+    // `8 * 1024`, which is a multiple of 64 and therefore satisfies the real invariant for every
+    // width. A `max_capacity` of, say, 100 would silently emit a partly-filled trailing word per
+    // chunk and corrupt the stream. Tracked as a known issue; not changed here because doing so
+    // would alter the bytes this function emits.
     let gcd = gcd(bits_per_value, 64);
     let capacity = max(gcd, max_capacity / gcd * gcd);
+    debug_assert!(
+        (capacity * bits_per_value).is_multiple_of(64),
+        "chunk of {capacity} values at {bits_per_value} bits does not fill whole u64 words"
+    );
 
     if data.len() <= capacity {
         let mut ba = DynBitArray::with_capacity(data.len(), bits_per_value);
