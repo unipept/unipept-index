@@ -1,4 +1,11 @@
-// This entire file is mmap-only.
+//! Protein metadata borrowed from a memory mapping.
+//!
+//! The counterpart to [`super::preloaded`]: same file, but the accession strings and the encoded
+//! annotations are returned as slices into the mapping instead of owned `String`s and `Vec`s.
+//! That is what keeps a multi-gigabyte protein table servable in bounded RSS.
+//!
+//! The file itself is written by `preloaded`'s `WriteBinary`; see there for the format.
+
 use std::{error::Error, path::Path, sync::Arc};
 
 use memmap2::Mmap;
@@ -8,22 +15,50 @@ use super::{ProteinRef, ProteinsBackend};
 
 // ── MmapBackedProteins ────────────────────────────────────────────────────────
 
+/// Protein table borrowed from a memory mapping.
+///
+/// The mapping is shared with [`Self::text`], which borrows the text section of the same file.
 pub struct MmapBackedProteins {
+    /// The mapping of `proteins.bin`, shared with `text`.
     pub mmap: Arc<Mmap>,
+    /// The concatenated protein text, borrowing the same mapping.
     pub text: ProteinText,
+    /// Number of entries in the fixed-size table.
     pub protein_count: usize,
     pub(crate) fixed_table_offset: usize,
     pub(crate) uid_data_offset: usize,
     pub(crate) fa_data_offset: usize,
 }
 
+/// Field layout of one fixed-size entry in the protein table.
+///
+/// Must stay in lockstep with the writer in [`super::preloaded`], which emits these fields in
+/// this order; nothing but this comment ties the two together.
 mod entry_offsets {
+    /// NCBI taxon id.
     pub const TAXON_ID:   std::ops::Range<usize> = 0..4;
+    /// Byte offset of this protein's accession within the UID blob.
     pub const UID_OFFSET: std::ops::Range<usize> = 4..8;
+    /// Length of the accession in bytes.
     pub const UID_LEN:    std::ops::Range<usize> = 8..10;
+    /// Byte offset of this protein's encoded annotations within the FA blob.
     pub const FA_OFFSET:  std::ops::Range<usize> = 10..14;
+    /// Length of the encoded annotations in bytes.
     pub const FA_LEN:     std::ops::Range<usize> = 14..16;
+    /// Total size of one entry. Entries are fixed-size so that `get` is O(1).
     pub const ENTRY_SIZE: usize = 16;
+}
+
+impl MmapBackedProteins {
+    /// Borrows the fixed-size table entry for `index`, or `None` if it falls outside the mapping.
+    ///
+    /// Both `get` and `prefetch_strings` used to compute this offset independently, in two
+    /// different indexing styles; keeping it in one place is what stops them drifting apart.
+    #[inline]
+    fn entry(&self, index: usize) -> Option<&[u8]> {
+        let off = self.fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
+        self.mmap.get(off..off + entry_offsets::ENTRY_SIZE)
+    }
 }
 
 impl ProteinsBackend for MmapBackedProteins {
@@ -41,27 +76,38 @@ impl ProteinsBackend for MmapBackedProteins {
         let _ = self.mmap.advise(memmap2::Advice::Random);
     }
 
+    /// Prefetches the fixed-size table entry for `index`.
     #[inline]
     fn prefetch(&self, index: usize) {
-        let off = self.fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
-        if off + entry_offsets::ENTRY_SIZE <= self.mmap.len() {
-            prefetch::prefetch_read(&self.mmap[off] as *const u8);
+        if let Some(entry) = self.entry(index) {
+            prefetch::prefetch_read(entry.as_ptr());
         }
     }
 
+    /// Prefetches the accession and annotation bytes for `index`.
+    ///
+    /// Separate from [`Self::prefetch`] because they are two extra dependent loads: the entry has
+    /// to arrive before its offsets can be followed. Retrieval issues this one batch ahead so the
+    /// string data is in flight while the current batch is being decoded.
     #[inline]
     fn prefetch_strings(&self, index: usize) {
+        let Some(entry) = self.entry(index) else { return };
         use entry_offsets as eo;
-        let entry_off = self.fixed_table_offset + index * eo::ENTRY_SIZE;
-        if entry_off + eo::ENTRY_SIZE > self.mmap.len() { return; }
-        let uid_off = u32::from_le_bytes(self.mmap[entry_off + eo::UID_OFFSET.start..entry_off + eo::UID_OFFSET.end].try_into().unwrap()) as usize;
-        let fa_off  = u32::from_le_bytes(self.mmap[entry_off + eo::FA_OFFSET.start ..entry_off + eo::FA_OFFSET.end ].try_into().unwrap()) as usize;
+        let uid_off = u32::from_le_bytes(entry[eo::UID_OFFSET].try_into().unwrap()) as usize;
+        let fa_off  = u32::from_le_bytes(entry[eo::FA_OFFSET ].try_into().unwrap()) as usize;
         let uid_ptr = self.uid_data_offset + uid_off;
         let fa_ptr  = self.fa_data_offset  + fa_off;
         if uid_ptr < self.mmap.len() { prefetch::prefetch_read(&self.mmap[uid_ptr] as *const u8); }
         if fa_ptr  < self.mmap.len() { prefetch::prefetch_read(&self.mmap[fa_ptr]  as *const u8); }
     }
 
+    /// Decodes the entry at `index` into slices borrowed from the mapping.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is out of range, or the file's offsets point outside the mapping. The bounds
+    /// are only `debug_assert`ed, so a corrupt file panics in release rather than erroring —
+    /// tracked as a known issue.
     #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;
@@ -91,6 +137,9 @@ impl ReadBinaryMmap for MmapBackedProteins {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         use std::fs::File;
         let f = File::open(path)?;
+        // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
+        // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
+        // truncated or written underneath us.
         let mmap = Arc::new(unsafe { Mmap::map(&f)? });
 
         #[cfg(unix)]
@@ -135,23 +184,16 @@ impl ReadBinaryMmap for MmapBackedProteins {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write, path::PathBuf};
+    use std::{fs::File, path::PathBuf};
     use tempdir::TempDir;
     use text_compression::{ReadBinaryMmap, WriteBinary};
     use super::MmapBackedProteins;
     use crate::proteins::{ProteinsBackend as _, preloaded::InMemoryProteins};
-
-    fn create_database_file(tmp_dir: &TempDir) -> PathBuf {
-        let path = tmp_dir.path().join("database.tsv");
-        let mut f = File::create(&path).unwrap();
-        f.write_all("P12345\t1\tMLPGLALLLLAAWTARALEV\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()).unwrap();
-        f.write_all("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()).unwrap();
-        f.write_all("P67890\t6\tKWDSDPSGTKTCIDT\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()).unwrap();
-        path
-    }
+    use crate::proteins::test_fixtures::{TEST_PROTEINS, write_database_file};
+    use text_compression::{ProteinTextBackend as _, bit_array_byte_size};
 
     fn write_binary_to_tempfile(tmp_dir: &TempDir) -> PathBuf {
-        let db = create_database_file(tmp_dir);
+        let db = write_database_file(tmp_dir, &TEST_PROTEINS[..3]);
         let original = InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap();
         let bin_path = tmp_dir.path().join("proteins.bin");
         let mut bin_file = File::create(&bin_path).unwrap();
@@ -195,5 +237,88 @@ mod tests {
         for i in 0..mmap.len() {
             assert_eq!(mmap.get(i).get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
         }
+    }
+
+    /// Every backend agrees on every field. This is the check that would catch a drift between
+    /// the writer's field order in `preloaded` and the reader's `entry_offsets` here, which are
+    /// two independent statements of the same 16-byte layout.
+    #[test]
+    fn matches_the_preloaded_backend_field_for_field() {
+        let tmp_dir = TempDir::new("test_mmap_parity").unwrap();
+        let db = write_database_file(&tmp_dir, &TEST_PROTEINS);
+        let preloaded = InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap();
+
+        let bin_path = tmp_dir.path().join("proteins.bin");
+        let mut bin_file = File::create(&bin_path).unwrap();
+        InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap()
+            .write_binary(&mut bin_file).unwrap();
+        let mapped = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+
+        assert_eq!(mapped.len(), preloaded.len());
+        for i in 0..preloaded.len() {
+            let (a, b) = (preloaded.get(i), mapped.get(i));
+            assert_eq!(a.uniprot_id, b.uniprot_id, "uniprot_id differs at {i}");
+            assert_eq!(a.taxon_id, b.taxon_id, "taxon_id differs at {i}");
+            assert_eq!(a.functional_annotations, b.functional_annotations, "annotations differ at {i}");
+        }
+
+        assert_eq!(mapped.text().len(), preloaded.text().len());
+        for i in 0..preloaded.text().len() {
+            assert_eq!(mapped.text().get(i), preloaded.text().get(i), "text differs at {i}");
+        }
+    }
+
+    /// `read_binary_mmap` parses an untrusted header. Truncation anywhere up to the end of the
+    /// UID blob must error rather than panic or read out of bounds; none of its length checks had
+    /// coverage before.
+    ///
+    /// The sweep deliberately stops at `fa_data_offset`. Beyond that the reader validates
+    /// nothing: it parses `fa_bytes_total` from the header but never checks
+    /// `fa_data_offset + fa_bytes_total <= mmap.len()`, so a file truncated inside the FA blob
+    /// loads happily and only fails later, as an out-of-bounds slice inside `get` — in a request
+    /// handler. That is a known issue, reported rather than fixed in this pass; when it is fixed,
+    /// extend this sweep to `full.len()` and it should stay green.
+    #[test]
+    fn truncated_files_error_rather_than_panicking() {
+        let tmp_dir = TempDir::new("test_mmap_truncated").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let full = std::fs::read(&bin_path).unwrap();
+
+        // Recompute the section boundaries the way the reader does, rather than hard-coding them.
+        let text_length = u64::from_le_bytes(full[0..8].try_into().unwrap()) as usize;
+        let meta_offset = 8 + bit_array_byte_size(text_length);
+        let protein_count =
+            u64::from_le_bytes(full[meta_offset..meta_offset + 8].try_into().unwrap()) as usize;
+        let uid_bytes_total =
+            u64::from_le_bytes(full[meta_offset + 8..meta_offset + 16].try_into().unwrap()) as usize;
+        let fa_data_offset = meta_offset + 24 + protein_count * 16 + uid_bytes_total;
+        assert!(fa_data_offset < full.len(), "fixture should have a non-empty FA blob");
+
+        for cut in 0..fa_data_offset {
+            let path = tmp_dir.path().join(format!("truncated_{cut}.bin"));
+            std::fs::write(&path, &full[..cut]).unwrap();
+            assert!(
+                MmapBackedProteins::read_binary_mmap(&path).is_err(),
+                "{cut} of {} bytes should not load", full.len()
+            );
+        }
+    }
+
+    /// A header declaring more proteins than the file holds must be rejected.
+    #[test]
+    fn overlong_protein_count_is_rejected() {
+        let tmp_dir = TempDir::new("test_mmap_overlong").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let mut bytes = std::fs::read(&bin_path).unwrap();
+
+        // The protein count sits just past the text section; locate it the same way the reader
+        // does rather than hard-coding an offset.
+        let text_length = u64::from_le_bytes(bytes[0..8].try_into().unwrap()) as usize;
+        let meta_offset = 8 + bit_array_byte_size(text_length);
+        bytes[meta_offset..meta_offset + 8].copy_from_slice(&1_000_000_u64.to_le_bytes());
+
+        let path = tmp_dir.path().join("overlong.bin");
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(MmapBackedProteins::read_binary_mmap(&path).is_err());
     }
 }
