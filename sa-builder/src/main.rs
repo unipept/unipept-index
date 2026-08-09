@@ -70,13 +70,17 @@ fn main() {
 
     timed("writing suffix-to-protein mapping binary", || {
         let text_len = proteins.text().len();
+        // The three arms differ only in the concrete mapping type; each writes its own type byte,
+        // which is what `read_binary` later dispatches on. A generic helper would need the closure
+        // to be nameable, so the repetition is left explicit.
+        let char_at = |i: usize| proteins.text().get(i);
         let result = match &mapping_style {
             SuffixToProteinMappingStyle::Dense =>
-                DenseSuffixToProtein::from_text_parts(text_len, |i: usize| proteins.text().get(i)).write_binary(&mut mapping_file),
+                DenseSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file),
             SuffixToProteinMappingStyle::Sparse =>
-                SparseSuffixToProtein::from_text_parts(text_len, |i: usize| proteins.text().get(i)).write_binary(&mut mapping_file),
+                SparseSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file),
             SuffixToProteinMappingStyle::BitVec =>
-                BitVecSuffixToProtein::from_text_parts(text_len, |i: usize| proteins.text().get(i)).write_binary(&mut mapping_file),
+                BitVecSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file),
         };
         result.unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
         mapping_file.flush().unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
@@ -86,6 +90,11 @@ fn main() {
     let mut proteins_file = open_file_buffer(&output_proteins, 100 * 1024 * 1024)
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
+    // NOTE: unlike the mapping writer above, this buffer and the k-mer one below are never
+    // explicitly flushed — they rely on `BufWriter`'s `Drop`, which discards any I/O error. With a
+    // 100 MB buffer that means a full disk on the final flush produces a silently truncated index
+    // that then loads without complaint. Reported as a known issue rather than fixed here, since
+    // this pass does not change behaviour.
     timed("writing proteins binary", || {
         proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });

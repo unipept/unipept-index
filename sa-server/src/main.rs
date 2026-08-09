@@ -13,19 +13,27 @@ use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher:
 use serde::Deserialize;
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 
-/// Enum that represents all possible commandline arguments
+/// Serve peptide searches over a prebuilt suffix-array index.
+///
+/// All three index files come from one `sa-builder` run and must match; mixing builds produces
+/// wrong answers rather than errors.
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// Path to the database file. This should point to the binary proteins file (.proteins.bin)
+    /// Path to the binary proteins file (proteins.bin) holding the protein table and text.
     #[arg(short, long)]
     database_file: String,
+    /// Path to the binary suffix array (sa.bin).
     #[arg(short, long)]
     index_file: String,
     /// Path to the prebuilt suffix-to-protein mapping binary file.
     #[arg(long)]
     mapping_file: String,
+    /// Address to bind the HTTP server to.
+    #[arg(long, default_value = "0.0.0.0:3000")]
+    address: String,
     /// Optional path to a pre-built k-mer bounds table file (produced by sa-builder
-    /// --output-kmer-table). When provided, binary search is accelerated by ~60 %.
+    /// --output-kmer-table). When provided, the binary search starts from precomputed bounds
+    /// instead of the whole array, which is a large saving on short peptides.
     #[arg(long)]
     kmer_table_file: Option<String>,
 }
@@ -33,12 +41,6 @@ pub struct Arguments {
 /// Function used by serde to place a default value in the cutoff field of the input
 fn default_cutoff() -> usize {
     10000
-}
-
-/// Function used by serde to use `true` as a default value
-#[allow(dead_code)]
-fn default_true() -> bool {
-    true
 }
 
 /// Struct representing the input arguments accepted by the endpoints
@@ -53,10 +55,12 @@ struct InputData {
     peptides: Vec<String>,
     #[serde(default = "default_cutoff")] // default value is 10000
     cutoff: usize,
+    /// Treat I and L as interchangeable. Defaults to false: the caller decides, because the
+    /// answer differs and mass spectrometry cannot always distinguish the two.
     #[serde(default = "bool::default")]
-    // default value is false // TODO: maybe default should be true?
     equate_il: bool,
-    #[serde(default = "bool::default")] // default false
+    /// Return only matches at tryptic boundaries. Defaults to false.
+    #[serde(default = "bool::default")]
     tryptic: bool
 }
 
@@ -100,7 +104,12 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file, mapping_file, kmer_table_file } = args;
+    let Arguments { database_file, index_file, mapping_file, kmer_table_file, address } = args;
+
+    // The backend is a compile-time choice with a large effect on memory use, and nothing else
+    // at runtime reveals which one this binary has.
+    eprintln!();
+    eprintln!("Storage backend: {}", sa_server::BACKEND);
 
     eprintln!();
     eprintln!("Started loading the suffix array...");
@@ -138,7 +147,7 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))
         .with_state(searcher);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    let listener = tokio::net::TcpListener::bind(&address).await?;
 
     eprintln!();
     eprintln!("🚀 Server is ready...");

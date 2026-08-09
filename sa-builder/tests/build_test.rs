@@ -1,10 +1,20 @@
-#![cfg(feature = "mmap")]
+//! End-to-end tests: run the real `sa-builder` binary and inspect what it writes.
+//!
+//! Only the read-back assertions need the `mmap` feature (they go through `read_binary_mmap`).
+//! The "did it produce the right files" test is backend-agnostic and runs in both
+//! configurations — previously a file-level `#![cfg(feature = "mmap")]` made the whole suite
+//! vanish from the default `cargo test`, so the preloaded builder was never exercised at all.
+
 use std::io::Write;
 use std::process::Command;
 
+#[cfg(feature = "mmap")]
 use sa_index::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingBackend as _};
+#[cfg(feature = "mmap")]
 use sa_index::{Nullable, ReadBinaryMmap, SuffixArray, SuffixArrayBackend as _};
+#[cfg(feature = "mmap")]
 use sa_mappings::proteins::{Proteins, ProteinsBackend as _};
+#[cfg(feature = "mmap")]
 use text_compression::ProteinTextBackend as _;
 
 /// Four proteins used as test input, matching the fixture in sa-mappings unit tests.
@@ -25,6 +35,8 @@ const PROTEINS: &[(&str, u32, &str, &str)] = &[
     ("P13579", 17, "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
 ];
 
+// Only the mmap-gated read-back tests assert against this.
+#[cfg(feature = "mmap")]
 const TEXT_LENGTH: usize = 114; // sum of sequence lengths + 3 separators + 1 terminator
 
 fn write_tsv(path: &std::path::Path) {
@@ -61,6 +73,7 @@ fn test_build_creates_all_output_files() {
     assert!(out_mapping.exists(),  "mapping binary not created");
 }
 
+#[cfg(feature = "mmap")]
 #[test]
 fn test_suffix_array_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -95,6 +108,7 @@ fn test_suffix_array_output() {
     }
 }
 
+#[cfg(feature = "mmap")]
 #[test]
 fn test_proteins_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -128,6 +142,7 @@ fn test_proteins_output() {
     assert_eq!(proteins.text().len(), TEXT_LENGTH, "protein text length mismatch");
 }
 
+#[cfg(feature = "mmap")]
 #[test]
 fn test_mapping_output() {
     let dir = tempfile::tempdir().unwrap();

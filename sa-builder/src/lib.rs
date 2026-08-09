@@ -180,7 +180,11 @@ mod tests {
             "--output-mapping",
             "output.mapping",
             "--mapping-style",
-            "dense"
+            "dense",
+            "--output-kmer-table",
+            "output.kmer",
+            "--kmer-size",
+            "5"
         ]);
 
         assert_eq!(args.database_file, "database.fa");
@@ -191,6 +195,28 @@ mod tests {
         assert!(args.compress_sa);
         assert_eq!(args.output_mapping, "output.mapping".to_string());
         assert_eq!(args.mapping_style, SuffixToProteinMappingStyle::Dense);
+        assert_eq!(args.output_kmer_table, Some("output.kmer".to_string()));
+        assert_eq!(args.kmer_size, 5);
+    }
+
+    /// The k-mer table is optional; omitting its path must leave it unbuilt.
+    #[test]
+    fn test_arguments_without_kmer_table() {
+        let args = Arguments::parse_from([
+            "sa-builder",
+            "--database-file",
+            "database.fa",
+            "--output-sa",
+            "output.fa",
+            "--output-proteins",
+            "output.proteins",
+            "--output-mapping",
+            "output.mapping"
+        ]);
+
+        assert_eq!(args.output_kmer_table, None);
+        assert_eq!(args.sparseness_factor, 1, "default sparseness");
+        assert!(!args.compress_sa, "compression is opt-in");
     }
 
     #[test]
