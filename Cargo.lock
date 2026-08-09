@@ -1182,7 +1182,6 @@ dependencies = [
  "serde",
  "serde_json",
  "succinct",
- "tempdir",
  "tempfile",
  "text-compression",
 ]

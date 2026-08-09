@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Sweep the MLP cross-query batch size (SA_MLP_BATCH) for one backend and print
+# Sweep the MLP cross-query batch size (--mlp-batch) for one backend and print
 # throughput vs the scalar (B=1) baseline. Batching interleaves B independent
 # peptide searches per rayon task to hide random-access DRAM latency.
 #
 # Usage (from the repo root):
-#   bash scripts/mlp_sweep.sh [mmap|preloaded]
+#   bash sa-benchmarks/mlp_sweep.sh [mmap|preloaded]
 #
 # Override any of these via env vars:
+#   INDEX_DIR  = dataset root holding suffix-array/ and peptides/ (default
+#                $REPO/uniprot-2025-04 — set this, the checked-in default is just a
+#                placeholder and no dataset is committed to the repo)
 #   MLP_INDEX  = index dir with sa.bin/proteins.bin/mapping.bin/warmup.txt
-#   MLP_PEP    = peptide file (needs >= AMT*RUNS lines)
+#                (default $INDEX_DIR/suffix-array)
+#   MLP_PEP    = peptide file, needs >= AMT*RUNS lines
+#                (default $INDEX_DIR/peptides/peptides_5_50.txt)
 #   MLP_RUNS   = timed runs per B (default 100)
 #   MLP_AMT    = peptides per run (default 10000)
 #   MLP_BATCHES= space-separated B values (default "1 4 8 16 32 64 128")
@@ -22,8 +27,9 @@ set -euo pipefail
 
 BACKEND="${1:-mmap}"
 REPO="$(git rev-parse --show-toplevel)"
-IDX="${MLP_INDEX:-$REPO/uniprot-2025-04/suffix-array}"
-PEP="${MLP_PEP:-$REPO/uniprot-2025-04/peptides/peptides_5_50.txt}"
+DATASET="${INDEX_DIR:-$REPO/uniprot-2025-04}"
+IDX="${MLP_INDEX:-$DATASET/suffix-array}"
+PEP="${MLP_PEP:-$DATASET/peptides/peptides_5_50.txt}"
 RUNS="${MLP_RUNS:-100}"
 AMT="${MLP_AMT:-10000}"
 read -r -a BATCHES <<< "${MLP_BATCHES:-1 4 8 16 32 64 128}"
@@ -38,8 +44,8 @@ elif [ -n "$KMER" ]; then
   KMER_ARG=(--build-kmer-table "$KMER")
 fi
 
-[ -f "$IDX/sa.bin" ] || { echo "ERROR: no sa.bin in $IDX (set MLP_INDEX)"; exit 1; }
-[ -f "$PEP" ]        || { echo "ERROR: peptide file not found: $PEP (set MLP_PEP)"; exit 1; }
+[ -f "$IDX/sa.bin" ] || { echo "ERROR: no sa.bin in $IDX (set INDEX_DIR or MLP_INDEX)"; exit 1; }
+[ -f "$PEP" ]        || { echo "ERROR: peptide file not found: $PEP (set INDEX_DIR or MLP_PEP)"; exit 1; }
 
 # Tag the results dir by config so k-mer/huge-page variants don't collide with the
 # per-B result cache (files are labeled b_<B>).
@@ -57,11 +63,9 @@ for b in "${BATCHES[@]}"; do
   lbl="b_$b"
   [ -s "$OUT/$lbl.jsonl" ] && { echo "  skip B=$b (exists in $OUT)"; continue; }
   echo "[$(date +%H:%M:%S)] B=$b"
-  if [ "$b" = 1 ]; then unset SA_MLP_BATCH; else export SA_MLP_BATCH="$b"; fi
-  "$BIN" --index-dir "$IDX" --output "$OUT" --label "$lbl" \
+  "$BIN" --index-dir "$IDX" --output "$OUT" --label "$lbl" --mlp-batch "$b" \
     --peptide-file "$PEP" --amount-of-peptides "$AMT" --runs "$RUNS" --warmup "$WARMUP" \
     "${KMER_ARG[@]}" >/dev/null 2>&1
-  unset SA_MLP_BATCH
 done
 
 echo "== Results ($BACKEND) =="

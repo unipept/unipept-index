@@ -1,3 +1,30 @@
+//! Throughput/memory measurement harness for the suffix-array index.
+//!
+//! Loads a built index (`sa.bin` / `proteins.bin` / `mapping.bin`, plus an optional k-mer
+//! table), pushes peptides through the same search + retrieval pipeline production uses, and
+//! writes one JSONL record per measured config to `<output>/<label>.jsonl`.
+//!
+//! Two modes:
+//!   * single run  — one config from the CLI flags, `--runs` reps, one record per rep;
+//!   * `--matrix`  — load the index once and sweep the `grid` of configs
+//!     (k-mer table × equate_il × tryptic × MLP batch) across several peptide files,
+//!     writing one aggregated record (median rep + spread) per config. `--dry-run` prints
+//!     the planned config list without touching the index.
+//!
+//! Dev-only: this crate is a workspace member but is excluded from `default-members`, so a
+//! plain `cargo build` skips it. Build and run it explicitly:
+//!
+//! ```text
+//! cargo build --release -p sa-benchmarks                  # preloaded backend
+//! cargo build --release -p sa-benchmarks --features mmap  # mmap backend
+//! ./target/release/sa-benchmarks --index-dir <idx> --output /tmp/bench --label smoke \
+//!     --peptide-file scripts/peptides.txt --amount-of-peptides 10000 --runs 20 --warmup all
+//! ```
+//!
+//! The `metrics` feature adds the per-candidate counters and the internal phase breakdown, at
+//! the cost of perturbing what it measures — keep it off for timing runs.
+//! See `matrix_bench.sh` / `mlp_sweep.sh` next to this crate for the driver scripts.
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{File, OpenOptions, create_dir_all};
@@ -11,7 +38,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rayon::prelude::*;
 use sa_index::kmer_table::AMINO_ACID_COUNT;
-use sa_index::{sa_searcher::{SearchAllSuffixesResult, Searcher}, KmerTable, SearchTuning, SuffixArray, SuffixArrayBackend};
+use sa_index::{sa_searcher::{DEFAULT_MLP_BATCH, SearchAllSuffixesResult, Searcher}, KmerTable, SearchTuning, SuffixArray, SuffixArrayBackend};
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
@@ -22,9 +49,12 @@ use text_compression::ProteinTextBackend as _;
 /// Schema version — increment when the output JSON format changes.
 /// v2: matrix records aggregate `runs` reps into one line and carry a `stats` spread.
 /// v3: every `SearchTuning` field is recorded in `config` (was previously implicit/default),
-///     plus `phase` / `ofat_baseline` / `ofat_knob` so grid, OFAT, and confirm records are
-///     groupable in one jsonl file; `result` gains `candidates_examined` / `candidates_accepted`.
-const SCHEMA_VERSION: u32 = 3;
+///     plus a `phase` tag so records from different sweeps are groupable in one jsonl file;
+///     `result` gains `candidates_examined` / `candidates_accepted`.
+/// v4: the OFAT and confirm sweeps were retired once they had settled which knobs matter, so
+///     `config.ofat_baseline` / `config.ofat_knob` are gone and `config.phase` is now only
+///     "single" (non-matrix CLI run) or "grid" (matrix sweep).
+const SCHEMA_VERSION: u32 = 4;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -142,10 +172,15 @@ struct Args {
     #[arg(long)]
     build_kmer_table: Option<usize>,
 
-    // -- SearchTuning knobs (applied to `searcher.tuning`). In single-run mode these come
-    // straight from the CLI; in matrix mode they're the defaults for the "grid"/"ofat" phases
-    // and the explicit combination under test for the "confirm" phase (Task 3). Defaults match
-    // `SearchTuning::default()` so omitting them is a no-op.
+    /// Cross-query MLP batch size: how many independent peptide searches are interleaved per
+    /// rayon task to hide random-access DRAM latency. 1 = scalar (one peptide per task).
+    /// Defaults to the production value so an unqualified run measures what ships.
+    /// Single-run mode only — matrix mode sweeps `--matrix-batches` instead.
+    #[arg(long, default_value_t = DEFAULT_MLP_BATCH)]
+    mlp_batch: usize,
+
+    // -- SearchTuning knobs (applied to `searcher.tuning`), in both single-run and matrix mode.
+    // Defaults match `SearchTuning::default()` so omitting them is a no-op.
     /// Candidates per two-pass validation batch in `iterate_sa_range` (only reachable on the
     /// tryptic / non-fast-path route — see sa_index::SearchTuning::validate_batch). Clamped to
     /// 1..=256 internally.
@@ -161,15 +196,15 @@ struct Args {
     #[arg(long, default_value_t = SearchTuning::default().retrieval_prefetch_distance)]
     retrieval_prefetch_distance: usize,
 
-    /// Run the full parameter matrix in one process: loads the index once, then iterates
-    /// the selected `--matrix-phases` for each `--matrix-files` entry. Writes one record per
-    /// (config × run) to <output>/<label>.jsonl.
+    /// Run the full parameter matrix in one process: loads the index once, then sweeps the
+    /// grid (see `expand_cells`) for each `--matrix-files` entry. Writes one aggregated
+    /// record per config to <output>/<label>.jsonl.
     #[arg(long)]
     matrix: bool,
 
     /// Matrix mode: comma-separated peptide files; each becomes one "file" dimension.
     /// File stems must be "small" / "medium" / "large" for the tryptic-collapse rule in
-    /// `grid_for_file` to apply; unrecognised stems get the full (uncollapsed) grid.
+    /// `expand_cells` to apply; unrecognised stems get the full (uncollapsed) grid.
     #[arg(long, value_delimiter = ',')]
     matrix_files: Vec<PathBuf>,
 
@@ -186,28 +221,14 @@ struct Args {
     #[arg(long, value_delimiter = ',', default_values_t = vec![1usize, 16])]
     matrix_batches: Vec<usize>,
 
-    /// Matrix mode: include the 6-mer table in the "grid" and "confirm" phases. Off by
+    /// Matrix mode: include the 6-mer table in the grid. Off by
     /// default — the full-DB sweep showed 6-mer vs 5-mer inside the noise floor (p90 3.9%)
     /// on medium/small and only +4.1% on large, for 3.06 GB vs 127 MB resident. Also gates
     /// whether the (expensive) 6-mer table is built/loaded at all.
     #[arg(long)]
     matrix_kmer6: bool,
 
-    /// Matrix mode: comma-separated phases to run in this one process/index-load.
-    ///   grid    - Task 1 trimmed default grid (kmer x equate_il x tryptic x mlp_batch, with
-    ///             small/medium tryptic collapsed to one representative cell).
-    ///   ofat    - Task 2 one-factor-at-a-time sweep of the 5 SearchTuning knobs around two
-    ///             fixed baselines (B1 = fast path, B2 = iterate_sa_range path).
-    ///   confirm - Task 3: the --validate-batch/--validate-prefetch-threshold/
-    ///             --retrieval-prefetch-distance/--retrieval-batch/--scalar-kmer-prefetch CLI
-    ///             values applied as one combined tuning across the same grid as "grid", so a
-    ///             best-of-each-knob combination can be checked against the OFAT baselines
-    ///             (knobs may not be separable — validate_batch and retrieval_prefetch_distance
-    ///             both consume line-fill buffers).
-    #[arg(long, value_delimiter = ',', default_values_t = vec!["grid".to_string()])]
-    matrix_phases: Vec<String>,
-
-    /// Print the planned config list for the selected --matrix-phases and exit, without
+    /// Print the planned config list for the matrix sweep and exit, without
     /// loading the index. Use this to eyeball a sweep before committing a multi-hour run.
     #[arg(long)]
     dry_run: bool,
@@ -240,15 +261,9 @@ struct BenchmarkConfig {
     validate_batch: usize,
     validate_prefetch_threshold: usize,
     retrieval_prefetch_distance: usize,
-    /// Which sweep produced this record: "single" (non-matrix CLI run), "grid" (Task 1
-    /// trimmed grid), "ofat" (Task 2 one-factor-at-a-time), or "confirm" (Task 3 combo check).
+    /// Which sweep produced this record: "single" (non-matrix CLI run) or "grid" (the trimmed
+    /// default matrix grid).
     phase: String,
-    /// OFAT only: which baseline (B1/B2) this cell was swept around.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ofat_baseline: Option<String>,
-    /// OFAT only: which SearchTuning field this cell varies.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ofat_knob: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -487,11 +502,10 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
 }
 
 // ---------------------------------------------------------------------------
-// Matrix mode: grid / OFAT / confirm sweep generation
+// Matrix mode: grid generation
 // ---------------------------------------------------------------------------
 
-/// One cell of the Task 1 trimmed default grid, or the Task 3 confirm sweep (which reuses the
-/// same cell shape with a different tuning).
+/// One cell of the trimmed default grid.
 #[derive(Clone, Copy, Debug)]
 struct GridCell {
     kmer_k: usize,
@@ -500,7 +514,25 @@ struct GridCell {
     mlp_batch: usize,
 }
 
-/// Builds the trimmed default grid for one peptide-file bucket (Task 1).
+/// The `SearchTuning` the CLI asks for. Defaults match `SearchTuning::default()`, so this is
+/// that default unless one of the `--validate-*` / `--retrieval-*` flags was passed.
+fn tuning_from(args: &Args) -> SearchTuning {
+    SearchTuning {
+        validate_batch: args.validate_batch,
+        validate_prefetch_threshold: args.validate_prefetch_threshold,
+        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
+    }
+}
+
+/// The k-mer table sizes the matrix sweeps. `0` means "no table attached".
+fn matrix_kmers(args: &Args) -> Vec<usize> {
+    if args.matrix_kmer6 { vec![0, 5, 6] } else { vec![0, 5] }
+}
+
+/// Expands the grid for one peptide-file bucket. This is the single source of truth for the
+/// planned cell list: both `run_matrix` and `print_dry_run` go through it, so `--dry-run`
+/// cannot drift from what a real run would execute (`matrix_bench.sh` shells out to
+/// `--dry-run` for its expected-config count precisely to rely on that).
 ///
 /// Full sweep is kmer × equate_il × mlp_batch, doubled for tryptic=true/false — except tryptic
 /// on the small/medium buckets, which collapses to one representative cell: the last full run
@@ -508,10 +540,12 @@ struct GridCell {
 /// sweeping kmer/batch/equate_il there just re-measures a constant at ~1/6 of the whole
 /// matrix's wall time. `large` keeps the full sweep since tryptic there is retrieval/search
 /// volume bound, not constant.
-fn grid_for_file(file_bucket: &str, kmers: &[usize], batches: &[usize]) -> Vec<GridCell> {
+fn expand_cells(args: &Args, file_bucket: &str) -> Vec<GridCell> {
+    let kmers = matrix_kmers(args);
+    let batches = &args.matrix_batches;
     let sweep = |tryptic: bool| -> Vec<GridCell> {
         let mut v = Vec::new();
-        for &kmer_k in kmers {
+        for &kmer_k in &kmers {
             for equate_il in [true, false] {
                 for &mlp_batch in batches {
                     v.push(GridCell { kmer_k, equate_il, tryptic, mlp_batch });
@@ -532,80 +566,6 @@ fn grid_for_file(file_bucket: &str, kmers: &[usize], batches: &[usize]) -> Vec<G
     cells
 }
 
-/// One cell of the Task 2 OFAT knob sweep: one `SearchTuning` field varied around a fixed
-/// baseline, everything else held at that baseline's defaults.
-#[derive(Clone, Debug)]
-struct OfatCell {
-    /// "B1" (fast path, bypasses `iterate_sa_range` entirely) or "B2" (forces it).
-    baseline: &'static str,
-    knob: &'static str,
-    tuning: SearchTuning,
-    equate_il: bool,
-    tryptic: bool,
-    mlp_batch: usize,
-    kmer_k: usize,
-}
-
-/// k-mer table used throughout the OFAT sweep — fixed at the production default so knob
-/// effects aren't confounded with kmer-table effects.
-const OFAT_KMER: usize = 5;
-/// MLP batch used throughout the OFAT sweep.
-const OFAT_MLP_BATCH: usize = 16;
-
-/// Builds the Task 2 OFAT knob sweep: one factor at a time around two fixed baselines, instead
-/// of the 46,080-config full cross-product.
-///
-/// B1 = equate_il=true, tryptic=false — the bulk fast path. `validate_batch` and
-/// `validate_prefetch_threshold` only take effect inside `iterate_sa_range`, and B1 never calls
-/// it, so sweeping those two knobs at B1 would measure pure noise — their baseline must be B2.
-/// B2 = equate_il=true, tryptic=true — forces `iterate_sa_range` on every query.
-///
-/// `retrieval_prefetch_distance` affects retrieval regardless of which search path ran, so it
-/// is swept at both baselines.
-///
-/// Two knobs this sweep used to carry were removed after run3 measured them dead across all
-/// 12 (bucket, backend, baseline) combinations: `retrieval_batch` (cross-query batched
-/// retrieval, median +1.7%) and `scalar_kmer_prefetch` (+0.3%), both inside the 3.9% floor.
-fn build_ofat_cells() -> Vec<OfatCell> {
-    let base = SearchTuning::default();
-    let mut cells = Vec::new();
-
-    let mut push = |baseline: &'static str, knob: &'static str, tuning: SearchTuning, tryptic: bool, mlp_batch: usize| {
-        cells.push(OfatCell { baseline, knob, tuning, equate_il: true, tryptic, mlp_batch, kmer_k: OFAT_KMER });
-    };
-
-    // validate_batch / validate_prefetch_threshold: iterate_sa_range only, so baseline = B2.
-    for v in [16, 32, 64, 128] {
-        push("B2", "validate_batch", SearchTuning { validate_batch: v, ..base }, true, OFAT_MLP_BATCH);
-    }
-    for v in [8, 16, 32, 64] {
-        push("B2", "validate_prefetch_threshold", SearchTuning { validate_prefetch_threshold: v, ..base }, true, OFAT_MLP_BATCH);
-    }
-
-    // retrieval_prefetch_distance: retrieval always runs, so both baselines.
-    for &(label, tryptic) in &[("B1", false), ("B2", true)] {
-        for v in [8, 16, 32, 64] {
-            push(label, "retrieval_prefetch_distance", SearchTuning { retrieval_prefetch_distance: v, ..base }, tryptic, OFAT_MLP_BATCH);
-        }
-    }
-
-    cells
-}
-
-/// Validates and returns `--matrix-phases`.
-fn parse_phases(raw: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
-    const VALID: [&str; 3] = ["grid", "ofat", "confirm"];
-    if raw.is_empty() {
-        return Err("--matrix-phases must name at least one phase".into());
-    }
-    for p in raw {
-        if !VALID.contains(&p.as_str()) {
-            return Err(format!("unknown --matrix-phases entry '{}': expected one of {:?}", p, VALID).into());
-        }
-    }
-    Ok(raw.to_vec())
-}
-
 /// Swaps the k-mer table of size `k` into `searcher.kmer_table`, returning whatever was
 /// previously attached to its owning slot (`table5`/`table6`) first. All swaps are `Option`
 /// moves (pointer-sized), so this is cheap to call once per cell regardless of sweep order.
@@ -624,37 +584,45 @@ fn ensure_kmer_table(searcher: &mut Searcher<SuffixArray>, table5: &mut Option<K
     };
 }
 
-/// Runs one config for `args.runs` reps, prints the summary line, and appends one aggregated
-/// record to `output_file`. Shared by the grid, ofat, and confirm phases of `run_matrix`.
-#[allow(clippy::too_many_arguments)]
-fn run_cell(
-    searcher: &Searcher<SuffixArray>,
-    peptides: &[String],
-    args: &Args,
-    mapping_type: &str,
-    sa_type: &str,
+/// Everything `run_cell` needs about one matrix cell that isn't the searcher, the peptides,
+/// the CLI args, or the output file: the index-wide facts (fixed for a whole run), the
+/// peptide-file facts (fixed per file), and the cell's own coordinates.
+#[derive(Clone, Copy)]
+struct CellSpec<'a> {
+    // -- index-wide
+    mapping_type: &'a str,
+    sa_type: &'a str,
     sample_rate: u8,
     bits_per_value: usize,
     use_mmap: bool,
     baseline_memory: u64,
-    theoretical_max: u64,
-    source: &str,
+    commit: &'a str,
+    // -- per peptide file
+    source: &'a str,
     p_min: usize,
     p_max: usize,
+    // -- per cell
+    theoretical_max: u64,
     equate_il: bool,
     tryptic: bool,
     mlp_batch: usize,
     kmer_k: usize,
-    phase: &str,
-    ofat_baseline: Option<&str>,
-    ofat_knob: Option<&str>,
-    commit: &str,
+    phase: &'a str,
+}
+
+/// Runs one config for `args.runs` reps, prints the summary line, and appends one aggregated
+/// record to `output_file`.
+fn run_cell(
+    searcher: &Searcher<SuffixArray>,
+    peptides: &[String],
+    args: &Args,
+    spec: CellSpec,
     output_file: &mut File,
 ) -> Result<(), Box<dyn Error>> {
     // Run every rep, then summarise: one record per config with a spread, and the median-qps
     // rep kept as the representative detailed `result`.
     let mut results: Vec<BenchmarkResult> = (0..args.runs)
-        .map(|_| run_benchmark(searcher, peptides, args.max_matches, equate_il, tryptic, mlp_batch, theoretical_max, baseline_memory))
+        .map(|_| run_benchmark(searcher, peptides, args.max_matches, spec.equate_il, spec.tryptic, spec.mlp_batch, spec.theoretical_max, spec.baseline_memory))
         .collect();
 
     let mut qps: Vec<f64> = results.iter().map(|r| r.throughput_qps).collect();
@@ -687,13 +655,9 @@ fn run_cell(
         String::new()
     };
 
-    let tag = match (ofat_baseline, ofat_knob) {
-        (Some(b), Some(k)) => format!(" [{} {}]", b, k),
-        _ => String::new(),
-    };
     eprintln!(
-        "  {} {}{} il={} tr={} batch={} kmer={} tuning{{vb={} vpt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
-        source, phase, tag, equate_il, tryptic, mlp_batch, kmer_k,
+        "  {} {} il={} tr={} batch={} kmer={} tuning{{vb={} vpt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
+        spec.source, spec.phase, spec.equate_il, spec.tryptic, spec.mlp_batch, spec.kmer_k,
         searcher.tuning.validate_batch, searcher.tuning.validate_prefetch_threshold,
         searcher.tuning.retrieval_prefetch_distance,
         stats.qps_p50, band, stats.qps_p10, stats.qps_p90, accept_note,
@@ -702,28 +666,26 @@ fn run_cell(
     let record = BenchmarkRecord {
         version: SCHEMA_VERSION,
         label: args.label.clone(),
-        commit: commit.to_string(),
+        commit: spec.commit.to_string(),
         config: BenchmarkConfig {
-            sa_type: sa_type.to_string(),
-            mapping_type: mapping_type.to_string(),
-            use_mmap,
-            sample_rate,
-            bits_per_value,
-            equate_il,
-            tryptic,
+            sa_type: spec.sa_type.to_string(),
+            mapping_type: spec.mapping_type.to_string(),
+            use_mmap: spec.use_mmap,
+            sample_rate: spec.sample_rate,
+            bits_per_value: spec.bits_per_value,
+            equate_il: spec.equate_il,
+            tryptic: spec.tryptic,
             max_matches: args.max_matches,
-            batch_size: mlp_batch,
-            kmer_k,
+            batch_size: spec.mlp_batch,
+            kmer_k: spec.kmer_k,
             amount_of_peptides: peptides.len(),
-            peptide_length_min: p_min,
-            peptide_length_max: p_max,
-            peptide_source: source.to_string(),
+            peptide_length_min: spec.p_min,
+            peptide_length_max: spec.p_max,
+            peptide_source: spec.source.to_string(),
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            phase: phase.to_string(),
-            ofat_baseline: ofat_baseline.map(|s| s.to_string()),
-            ofat_knob: ofat_knob.map(|s| s.to_string()),
+            phase: spec.phase.to_string(),
         },
         result: representative,
         stats: Some(stats),
@@ -740,22 +702,12 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
     if args.matrix_files.is_empty() {
         return Err("--matrix requires at least one --matrix-files entry".into());
     }
-    let phases = parse_phases(&args.matrix_phases)?;
-    let kmers: Vec<usize> = if args.matrix_kmer6 { vec![0, 5, 6] } else { vec![0, 5] };
-    let confirm_tuning = SearchTuning {
-        validate_batch: args.validate_batch,
-        validate_prefetch_threshold: args.validate_prefetch_threshold,
-        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-    };
 
     println!("DRY RUN — planned matrix config, no index will be loaded");
     println!("backend        : {}", if cfg!(feature = "mmap") { "mmap" } else { "preloaded" });
-    println!("phases         : {:?}", phases);
-    println!("kmer sizes     : {:?}", kmers);
+    println!("kmer sizes     : {:?}", matrix_kmers(args));
     println!("mlp batches    : {:?}", args.matrix_batches);
-    if phases.iter().any(|p| p == "confirm") {
-        println!("confirm tuning : {:?}", confirm_tuning);
-    }
+    println!("tuning         : {:?}", tuning_from(args));
     println!("runs/config    : {}", args.runs);
     println!();
 
@@ -763,41 +715,14 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
 
     for pep_path in &args.matrix_files {
         let source = pep_path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+        // Same expansion the real run uses — a dry run cannot diverge from it.
+        let cells = expand_cells(args, source);
         println!("== {} ==", source);
-        let mut file_total = 0usize;
-
-        if phases.iter().any(|p| p == "grid") {
-            let cells = grid_for_file(source, &kmers, &args.matrix_batches);
-            println!("  grid: {} configs", cells.len());
-            for c in &cells {
-                println!("    kmer={:<2} il={:<5} tr={:<5} batch={:<3}", c.kmer_k, c.equate_il, c.tryptic, c.mlp_batch);
-            }
-            file_total += cells.len();
+        println!("  grid: {} configs", cells.len());
+        for c in &cells {
+            println!("    kmer={:<2} il={:<5} tr={:<5} batch={:<3}", c.kmer_k, c.equate_il, c.tryptic, c.mlp_batch);
         }
-
-        if phases.iter().any(|p| p == "ofat") {
-            let cells = build_ofat_cells();
-            println!("  ofat: {} configs", cells.len());
-            for c in &cells {
-                println!(
-                    "    baseline={} knob={:<28} il={} tr={:<5} batch={:<2} kmer={} tuning={:?}",
-                    c.baseline, c.knob, c.equate_il, c.tryptic, c.mlp_batch, c.kmer_k, c.tuning
-                );
-            }
-            file_total += cells.len();
-        }
-
-        if phases.iter().any(|p| p == "confirm") {
-            let cells = grid_for_file(source, &kmers, &args.matrix_batches);
-            println!("  confirm: {} configs (tuning: {:?})", cells.len(), confirm_tuning);
-            for c in &cells {
-                println!("    kmer={:<2} il={:<5} tr={:<5} batch={:<3}", c.kmer_k, c.equate_il, c.tryptic, c.mlp_batch);
-            }
-            file_total += cells.len();
-        }
-
-        println!("  -- {} total: {} configs", source, file_total);
-        grand_total += file_total;
+        grand_total += cells.len();
         println!();
     }
 
@@ -807,15 +732,66 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 // ---------------------------------------------------------------------------
+// Warmup (never timed)
+// ---------------------------------------------------------------------------
+
+/// Peptides per warmup batch — bounds the memory held for the peptide strings themselves
+/// while still giving rayon a big enough chunk to parallelise over.
+const WARMUP_BATCH_SIZE: usize = 100_000;
+
+/// Touches every page of every mmap-backed region, populating the page cache. Leaves CPU
+/// caches and the TLB cold — pair with `warmup_pipeline` for those.
+fn warmup_touch_pages(searcher: &Searcher<SuffixArray>) {
+    rayon::scope(|s| {
+        s.spawn(|_| searcher.sa.touch_all_pages());
+        s.spawn(|_| searcher.proteins.touch_all_pages());
+        s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
+    });
+}
+
+/// Pushes `count` peptides from `<index-dir>/warmup.txt` through the full search + retrieval
+/// pipeline, in batches, discarding the results. Stops early if the file runs out.
+fn warmup_pipeline(searcher: &Searcher<SuffixArray>, args: &Args, count: usize) -> Result<(), Box<dyn Error>> {
+    let warmup_path = args.index_dir.join("warmup.txt");
+    eprintln!("Warming up with {} peptides from {} (batch size {})...", count, warmup_path.display(), WARMUP_BATCH_SIZE);
+    let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
+    let mut remaining = count;
+    while remaining > 0 {
+        let batch_size = remaining.min(WARMUP_BATCH_SIZE);
+        let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
+        if batch.is_empty() {
+            break;
+        }
+        remaining -= batch.len();
+        batch.par_iter().for_each(|peptide| {
+            let result = searcher.search_matching_suffixes(
+                peptide.trim_end().to_uppercase().as_bytes(),
+                args.max_matches,
+                args.equate_il,
+                args.tryptic,
+            );
+            match result {
+                SearchAllSuffixesResult::SearchResult(ref suf)
+                | SearchAllSuffixesResult::MaxMatches(ref suf) => {
+                    let _ = searcher.retrieve_proteins(suf);
+                }
+                SearchAllSuffixesResult::NoMatches => {}
+            }
+        });
+    }
+    eprintln!("Warmup complete.");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// Matrix mode: load the index once, then run the selected `--matrix-phases` for each peptide
-/// file. The k-mer tables are swapped in/out (moved, not cloned) so the big 6-mer table is
-/// built/loaded at most once (and only at all if `--matrix-kmer6` is set). Each config runs
-/// `runs` reps but writes a single aggregated record (median-qps rep as `result`, plus a
-/// `stats` spread) to <output>/<label>.jsonl.
-#[allow(clippy::too_many_arguments)]
+/// Matrix mode: load the index once, then sweep the grid (see `expand_cells`) for each
+/// peptide file. The k-mer tables are swapped in/out (moved, not cloned) so the big 6-mer
+/// table is built/loaded at most once (and only at all if `--matrix-kmer6` is set). Each
+/// config runs `runs` reps but writes a single aggregated record (median-qps rep as `result`,
+/// plus a `stats` spread) to <output>/<label>.jsonl.
 fn run_matrix(
     mut searcher: Searcher<SuffixArray>,
     args: &Args,
@@ -828,18 +804,12 @@ fn run_matrix(
     if args.matrix_files.is_empty() {
         return Err("--matrix requires at least one --matrix-files entry".into());
     }
-    let phases = parse_phases(&args.matrix_phases)?;
     let use_mmap = cfg!(feature = "mmap");
-    let kmers: Vec<usize> = if args.matrix_kmer6 { vec![0, 5, 6] } else { vec![0, 5] };
-    let confirm_tuning = SearchTuning {
-        validate_batch: args.validate_batch,
-        validate_prefetch_threshold: args.validate_prefetch_threshold,
-        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-    };
+    let kmers = matrix_kmers(args);
 
     // Build/load the 5-mer table (always in scope — the grid's default kmer set includes it)
     // and, only if requested, the 6-mer table: at 3.06 GB vs 127 MB for a sub-noise-floor
-    // difference (see grid_for_file / --matrix-kmer6), it isn't worth the build/load cost
+    // difference (see expand_cells / --matrix-kmer6), it isn't worth the build/load cost
     // unless someone explicitly opts in.
     let mut table5: Option<KmerTable> = Some(match &args.kmer5_file {
         Some(p) => { eprintln!("Loading 5-mer table from {}...", p.display()); load_kmer_table_file(p.to_str().unwrap())? }
@@ -856,18 +826,11 @@ fn run_matrix(
 
     // Warm the page cache once (matters for mmap); CPU caches warm over the repeated runs.
     eprintln!("Warming up (touching all pages)...");
-    rayon::scope(|s| {
-        s.spawn(|_| searcher.sa.touch_all_pages());
-        s.spawn(|_| searcher.proteins.touch_all_pages());
-        s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
-    });
+    warmup_touch_pages(&searcher);
 
     // Theoretical memory footprint per k-mer table size — index-wide, independent of the
     // peptide file, so this is computed once per k value up front rather than per cell (it
-    // walks every protein's metadata length, which is not free at full-DB scale). `kmers` is
-    // always {0,5} or {0,5,6}, so it already covers OFAT_KMER (5) — the ofat phase's lookups
-    // below never miss.
-    debug_assert!(kmers.contains(&OFAT_KMER), "kmers must include OFAT_KMER for the ofat phase's theoretical_by_k lookups");
+    // walks every protein's metadata length, which is not free at full-DB scale).
     let mut theoretical_by_k: HashMap<usize, u64> = HashMap::new();
     for &k in &kmers {
         ensure_kmer_table(&mut searcher, &mut table5, &mut table6, k);
@@ -878,6 +841,7 @@ fn run_matrix(
     let output_path = args.output.join(format!("{}.jsonl", args.label));
     let mut output_file = OpenOptions::new().create(true).write(true).truncate(true).open(&output_path)?;
     let commit = env!("GIT_COMMIT_HASH").to_string();
+    let tuning = tuning_from(args);
 
     for pep_path in &args.matrix_files {
         let peptides: Vec<String> = BufReader::new(File::open(pep_path)?)
@@ -888,47 +852,39 @@ fn run_matrix(
         let (p_min, p_max) = peptides.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
         let source = pep_path.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
 
-        if phases.iter().any(|p| p == "grid") {
-            eprintln!("-- {} : grid --", source);
-            for cell in grid_for_file(&source, &kmers, &args.matrix_batches) {
-                ensure_kmer_table(&mut searcher, &mut table5, &mut table6, cell.kmer_k);
-                searcher.tuning = SearchTuning::default();
-                run_cell(
-                    &searcher, &peptides, args, mapping_type, sa_type, sample_rate, bits_per_value,
-                    use_mmap, baseline_memory, theoretical_by_k[&cell.kmer_k], &source, p_min, p_max,
-                    cell.equate_il, cell.tryptic, cell.mlp_batch, cell.kmer_k, "grid", None, None,
-                    &commit, &mut output_file,
-                )?;
-            }
-        }
+        // Everything the cells of this file share; the per-cell fields are filled in below.
+        let base_spec = CellSpec {
+            mapping_type,
+            sa_type,
+            sample_rate,
+            bits_per_value,
+            use_mmap,
+            baseline_memory,
+            commit: &commit,
+            source: &source,
+            p_min,
+            p_max,
+            theoretical_max: 0,
+            equate_il: false,
+            tryptic: false,
+            mlp_batch: 1,
+            kmer_k: 0,
+            phase: "grid",
+        };
 
-        if phases.iter().any(|p| p == "ofat") {
-            eprintln!("-- {} : ofat --", source);
-            for cell in build_ofat_cells() {
-                ensure_kmer_table(&mut searcher, &mut table5, &mut table6, cell.kmer_k);
-                searcher.tuning = cell.tuning;
-                run_cell(
-                    &searcher, &peptides, args, mapping_type, sa_type, sample_rate, bits_per_value,
-                    use_mmap, baseline_memory, theoretical_by_k[&cell.kmer_k], &source, p_min, p_max,
-                    cell.equate_il, cell.tryptic, cell.mlp_batch, cell.kmer_k, "ofat",
-                    Some(cell.baseline), Some(cell.knob),
-                    &commit, &mut output_file,
-                )?;
-            }
-        }
-
-        if phases.iter().any(|p| p == "confirm") {
-            eprintln!("-- {} : confirm (tuning: {:?}) --", source, confirm_tuning);
-            for cell in grid_for_file(&source, &kmers, &args.matrix_batches) {
-                ensure_kmer_table(&mut searcher, &mut table5, &mut table6, cell.kmer_k);
-                searcher.tuning = confirm_tuning;
-                run_cell(
-                    &searcher, &peptides, args, mapping_type, sa_type, sample_rate, bits_per_value,
-                    use_mmap, baseline_memory, theoretical_by_k[&cell.kmer_k], &source, p_min, p_max,
-                    cell.equate_il, cell.tryptic, cell.mlp_batch, cell.kmer_k, "confirm", None, None,
-                    &commit, &mut output_file,
-                )?;
-            }
+        eprintln!("-- {} : grid --", source);
+        for cell in expand_cells(args, &source) {
+            ensure_kmer_table(&mut searcher, &mut table5, &mut table6, cell.kmer_k);
+            searcher.tuning = tuning;
+            let spec = CellSpec {
+                theoretical_max: theoretical_by_k[&cell.kmer_k],
+                equate_il: cell.equate_il,
+                tryptic: cell.tryptic,
+                mlp_batch: cell.mlp_batch,
+                kmer_k: cell.kmer_k,
+                ..base_spec
+            };
+            run_cell(&searcher, &peptides, args, spec, &mut output_file)?;
         }
     }
     eprintln!("Matrix complete → {}", output_path.display());
@@ -943,8 +899,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("--peptide-length-min must be <= --peptide-length-max".into());
     }
 
+    if args.mlp_batch == 0 {
+        return Err("--mlp-batch must be >= 1 (1 = scalar)".into());
+    }
+
     // --dry-run never touches the index (which may not even exist locally) — it only expands
-    // and prints the config list the requested matrix phases would run.
+    // and prints the config list the matrix sweep would run.
     if args.dry_run {
         if !args.matrix {
             return Err("--dry-run only applies to --matrix mode".into());
@@ -1007,11 +967,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Apply the SearchTuning knobs from the CLI (defaults match SearchTuning::default(), so
     // this is a no-op unless the caller overrides one of --validate-batch/etc).
-    searcher.tuning = SearchTuning {
-        validate_batch: args.validate_batch,
-        validate_prefetch_threshold: args.validate_prefetch_threshold,
-        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-    };
+    searcher.tuning = tuning_from(&args);
 
     let theoretical_max = theoretical_memory(&searcher, mapping_type_str, cfg!(feature = "mmap"));
     eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
@@ -1048,83 +1004,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Optional warmup pass (not timed)
-    const WARMUP_BATCH_SIZE: usize = 100_000;
     match &args.warmup {
         None => {}
         Some(WarmupMode::All) => {
             eprintln!("Warming up: touching all mmap pages...");
-            rayon::scope(|s| {
-                s.spawn(|_| searcher.sa.touch_all_pages());
-                s.spawn(|_| searcher.proteins.touch_all_pages());
-                s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
-            });
+            warmup_touch_pages(&searcher);
             eprintln!("Warmup complete.");
         }
         Some(WarmupMode::Count(warmup_count)) => {
-            let warmup_path = args.index_dir.join("warmup.txt");
-            eprintln!("Warming up with {} peptides from {} (batch size {})...", warmup_count, warmup_path.display(), WARMUP_BATCH_SIZE);
-            let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
-            let mut remaining = *warmup_count;
-            while remaining > 0 {
-                let batch_size = remaining.min(WARMUP_BATCH_SIZE);
-                let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
-                if batch.is_empty() {
-                    break;
-                }
-                remaining -= batch.len();
-                batch.par_iter().for_each(|peptide| {
-                    let result = searcher.search_matching_suffixes(
-                        peptide.trim_end().to_uppercase().as_bytes(),
-                        args.max_matches,
-                        args.equate_il,
-                        args.tryptic,
-                    );
-                    match result {
-                        SearchAllSuffixesResult::SearchResult(ref suf)
-                        | SearchAllSuffixesResult::MaxMatches(ref suf) => {
-                            let _ = searcher.retrieve_proteins(suf);
-                        }
-                        SearchAllSuffixesResult::NoMatches => {}
-                    }
-                });
-            }
-            eprintln!("Warmup complete.");
+            warmup_pipeline(&searcher, &args, *warmup_count)?;
         }
         Some(WarmupMode::AllThenCount(warmup_count)) => {
             eprintln!("Warming up: touching all mmap pages...");
-            rayon::scope(|s| {
-                s.spawn(|_| searcher.sa.touch_all_pages());
-                s.spawn(|_| searcher.proteins.touch_all_pages());
-                s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
-            });
-            eprintln!("Page warmup complete. Running pipeline warmup with {} peptides (batch size {})...", warmup_count, WARMUP_BATCH_SIZE);
-            let warmup_path = args.index_dir.join("warmup.txt");
-            let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
-            let mut remaining = *warmup_count;
-            while remaining > 0 {
-                let batch_size = remaining.min(WARMUP_BATCH_SIZE);
-                let batch: Vec<String> = lines.by_ref().take(batch_size).collect::<Result<_, _>>()?;
-                if batch.is_empty() {
-                    break;
-                }
-                remaining -= batch.len();
-                batch.par_iter().for_each(|peptide| {
-                    let result = searcher.search_matching_suffixes(
-                        peptide.trim_end().to_uppercase().as_bytes(),
-                        args.max_matches,
-                        args.equate_il,
-                        args.tryptic,
-                    );
-                    match result {
-                        SearchAllSuffixesResult::SearchResult(ref suf)
-                        | SearchAllSuffixesResult::MaxMatches(ref suf) => {
-                            let _ = searcher.retrieve_proteins(suf);
-                        }
-                        SearchAllSuffixesResult::NoMatches => {}
-                    }
-                });
-            }
-            eprintln!("Warmup complete.");
+            warmup_touch_pages(&searcher);
+            eprintln!("Page warmup complete.");
+            warmup_pipeline(&searcher, &args, *warmup_count)?;
         }
     }
 
@@ -1140,10 +1034,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!();
     eprintln!("Starting {} benchmark run(s) — results → {}", args.runs, output_path.display());
     eprintln!();
-
-    // SA_MLP_BATCH=B (>1) selects the batched searcher for the whole run.
-    let mlp_batch: usize = std::env::var("SA_MLP_BATCH")
-        .ok().and_then(|v| v.parse().ok()).filter(|&b| b > 1).unwrap_or(1);
 
     // RNG for random mode. Seeded → reproducible stream across runs and invocations; otherwise
     // seeded from OS entropy. Unused in file mode (peptides come from disk).
@@ -1182,7 +1072,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             equate_il: args.equate_il,
             tryptic: args.tryptic,
             max_matches: args.max_matches,
-            batch_size: mlp_batch,
+            batch_size: args.mlp_batch,
             kmer_k: searcher.kmer_table.as_ref().map_or(0, |t| t.k),
             amount_of_peptides: run_peptides.len(),
             peptide_length_min: p_min,
@@ -1192,11 +1082,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
             phase: "single".to_string(),
-            ofat_baseline: None,
-            ofat_knob: None,
         };
 
-        let result = run_benchmark(&searcher, &run_peptides, args.max_matches, args.equate_il, args.tryptic, mlp_batch, theoretical_max, baseline_memory);
+        let result = run_benchmark(&searcher, &run_peptides, args.max_matches, args.equate_il, args.tryptic, args.mlp_batch, theoretical_max, baseline_memory);
 
         let record = BenchmarkRecord {
             version: SCHEMA_VERSION,
