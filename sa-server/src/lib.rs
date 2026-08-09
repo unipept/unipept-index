@@ -7,13 +7,11 @@
 //! See [`BACKEND`] for reporting which one is active, and the `sa-index` crate docs for the
 //! trade-off.
 
-use std::error::Error;
-use std::fs::File;
-use std::io::BufReader;
-use sa_index::{KmerTable, ReadBinary, SuffixArray};
+use std::{error::Error, fs::File, io::BufReader};
+
 #[cfg(feature = "mmap")]
 use sa_index::ReadBinaryMmap;
-use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
+use sa_index::{KmerTable, ReadBinary, SuffixArray, suffix_to_protein_index::SuffixToProteinMapping};
 use sa_mappings::proteins::Proteins;
 
 /// Which storage backend this binary was compiled with.

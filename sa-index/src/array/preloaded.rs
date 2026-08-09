@@ -9,9 +9,10 @@ use std::{error::Error, io::BufRead};
 use bitarray::DynBitArrayRangeIter;
 use text_compression::{ReadBinary, WriteBinary};
 
-use super::{SuffixArrayBackend, OriginalSA, OriginalRangeIter, CompressedSA};
-use super::original::load_original;
-use super::compressed::load_compressed;
+use super::{
+    CompressedSA, OriginalRangeIter, OriginalSA, SuffixArrayBackend, compressed::load_compressed,
+    original::load_original
+};
 
 /// Dispatch a method call to whichever backend variant is active.
 macro_rules! dispatch {
@@ -29,21 +30,23 @@ macro_rules! dispatch {
 /// The variant is determined at runtime by the `bits_per_value` field in the binary header.
 pub enum InMemorySA {
     Original(OriginalSA),
-    Compressed(CompressedSA),
+    Compressed(CompressedSA)
 }
 
 // ── InMemoryRangeIter ────────────────────────────────────────────────────────
 
 pub enum InMemoryRangeIter<'a> {
     Original(OriginalRangeIter<'a>),
-    Compressed(DynBitArrayRangeIter<'a>),
+    Compressed(DynBitArrayRangeIter<'a>)
 }
 
 impl Iterator for InMemoryRangeIter<'_> {
     type Item = i64;
 
     #[inline]
-    fn next(&mut self) -> Option<i64> { dispatch!(self, next()) }
+    fn next(&mut self) -> Option<i64> {
+        dispatch!(self, next())
+    }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -59,22 +62,32 @@ impl ExactSizeIterator for InMemoryRangeIter<'_> {}
 impl SuffixArrayBackend for InMemorySA {
     type RangeIter<'a> = InMemoryRangeIter<'a>;
 
-    fn len(&self) -> usize            { dispatch!(self, len()) }
-    fn bits_per_value(&self) -> usize { dispatch!(self, bits_per_value()) }
-    fn sample_rate(&self) -> u8       { dispatch!(self, sample_rate()) }
+    fn len(&self) -> usize {
+        dispatch!(self, len())
+    }
+    fn bits_per_value(&self) -> usize {
+        dispatch!(self, bits_per_value())
+    }
+    fn sample_rate(&self) -> u8 {
+        dispatch!(self, sample_rate())
+    }
     #[inline]
-    fn get(&self, index: usize) -> i64 { dispatch!(self, get(index)) }
+    fn get(&self, index: usize) -> i64 {
+        dispatch!(self, get(index))
+    }
     // iter_range needs a manual match: each arm wraps its backend's native iterator
     // type into the appropriate InMemoryRangeIter variant.
     fn iter_range(&self, start: usize, end: usize) -> InMemoryRangeIter<'_> {
         match self {
-            Self::Original(b)   => InMemoryRangeIter::Original(b.iter_range(start, end)),
-            Self::Compressed(b) => InMemoryRangeIter::Compressed(b.iter_range(start, end)),
+            Self::Original(b) => InMemoryRangeIter::Original(b.iter_range(start, end)),
+            Self::Compressed(b) => InMemoryRangeIter::Compressed(b.iter_range(start, end))
         }
     }
 
     #[inline]
-    fn prefetch_sa_index(&self, index: usize) { dispatch!(self, prefetch_sa_index(index)) }
+    fn prefetch_sa_index(&self, index: usize) {
+        dispatch!(self, prefetch_sa_index(index))
+    }
 }
 
 // ── ReadBinary / WriteBinary ──────────────────────────────────────────────────
@@ -89,7 +102,9 @@ impl ReadBinary for InMemorySA {
         let sample_rate = buf1[0];
 
         let mut buf8 = [0u8; 8];
-        reader.read_exact(&mut buf8).map_err(|_| "Could not read the size of the suffix array from the binary file")?;
+        reader
+            .read_exact(&mut buf8)
+            .map_err(|_| "Could not read the size of the suffix array from the binary file")?;
         let size = u64::from_le_bytes(buf8) as usize;
 
         if bits_per_value == 64 {

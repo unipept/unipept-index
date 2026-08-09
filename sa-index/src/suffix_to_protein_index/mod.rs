@@ -17,13 +17,17 @@
 //! Each has a preloaded and an mmap implementation, selected by the `mmap` feature through the
 //! [`SuffixToProteinMapping`] alias; see the crate docs.
 
-pub mod preloaded;
 #[cfg(feature = "mmap")]
 pub mod mmap;
+pub mod preloaded;
 
-pub use preloaded::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein, InMemorySuffixToProteinMapping};
 #[cfg(feature = "mmap")]
-pub use mmap::{MmapDenseSuffixToProtein, MmapSparseSuffixToProtein, MmapBitVecSuffixToProtein, MmapBackedSuffixToProteinMapping};
+pub use mmap::{
+    MmapBackedSuffixToProteinMapping, MmapBitVecSuffixToProtein, MmapDenseSuffixToProtein, MmapSparseSuffixToProtein
+};
+pub use preloaded::{
+    BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein
+};
 
 #[cfg(feature = "mmap")]
 pub type SuffixToProteinMapping = MmapBackedSuffixToProteinMapping;

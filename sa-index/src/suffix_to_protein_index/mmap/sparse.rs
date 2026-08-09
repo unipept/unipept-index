@@ -2,15 +2,15 @@ use std::error::Error;
 
 use memmap2::Mmap;
 
-use crate::Nullable;
 use super::super::SuffixToProteinMappingBackend;
+use crate::Nullable;
 
 /// Mapping backed by a memory-mapped Sparse binary file.
 /// Format: [1 byte type=0x01] [8 bytes count (u64 LE)] [count × 8 bytes (i64 LE)]
 pub struct MmapSparseSuffixToProtein {
     mmap: Mmap,
     data_offset: usize, // 9 = 1 (type) + 8 (count)
-    count: usize,
+    count: usize
 }
 
 impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
@@ -58,14 +58,14 @@ mod tests {
     use std::io::Write as IoWrite;
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::InMemoryProteinText;
+    use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use text_compression::ProteinTextBackend;
-
-    use crate::{Nullable, ReadBinaryMmap, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-    use crate::suffix_to_protein_index::preloaded::SparseSuffixToProtein;
-    use crate::suffix_to_protein_index::mmap::MmapBackedSuffixToProteinMapping;
+    use crate::{
+        Nullable, ReadBinaryMmap, WriteBinary,
+        suffix_to_protein_index::{
+            SuffixToProteinMappingBackend, mmap::MmapBackedSuffixToProteinMapping, preloaded::SparseSuffixToProtein
+        }
+    };
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -91,12 +91,7 @@ mod tests {
 
         let original = SparseSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 

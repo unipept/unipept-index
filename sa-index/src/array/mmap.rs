@@ -1,6 +1,6 @@
 // This entire file is mmap-only.
-use std::{fs::File, path::Path};
-use std::error::Error;
+use std::{error::Error, fs::File, path::Path};
+
 use memmap2::Mmap;
 use text_compression::ReadBinaryMmap;
 
@@ -10,15 +10,21 @@ pub struct MmapBackedSA {
     pub(crate) data_offset: usize,
     pub(crate) len: usize,
     pub(crate) bits_per_value: usize,
-    pub(crate) sample_rate: u8,
+    pub(crate) sample_rate: u8
 }
 
 impl super::SuffixArrayBackend for MmapBackedSA {
     type RangeIter<'a> = MmapSaRangeIter<'a>;
 
-    fn len(&self) -> usize { self.len }
-    fn bits_per_value(&self) -> usize { self.bits_per_value }
-    fn sample_rate(&self) -> u8 { self.sample_rate }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn bits_per_value(&self) -> usize {
+        self.bits_per_value
+    }
+    fn sample_rate(&self) -> u8 {
+        self.sample_rate
+    }
 
     #[inline]
     fn get(&self, index: usize) -> i64 {
@@ -104,7 +110,13 @@ impl ReadBinaryMmap for MmapBackedSA {
             return Err("The binary file is too small to contain the SA data".into());
         }
 
-        Ok(MmapBackedSA { mmap, data_offset: 10, len: amount_of_items, bits_per_value, sample_rate })
+        Ok(MmapBackedSA {
+            mmap,
+            data_offset: 10,
+            len: amount_of_items,
+            bits_per_value,
+            sample_rate
+        })
     }
 }
 
@@ -147,37 +159,47 @@ pub struct MmapSaRangeIter<'a> {
     next_word: u64,
     block_idx: usize,
     bit_off: usize,
-    remaining: usize,
+    remaining: usize
 }
 
 impl<'a> MmapSaRangeIter<'a> {
-    pub fn new(
-        mmap: &'a Mmap,
-        data_offset: usize,
-        bits_per_value: usize,
-        start: usize,
-        end: usize,
-    ) -> Self {
+    pub fn new(mmap: &'a Mmap, data_offset: usize, bits_per_value: usize, start: usize, end: usize) -> Self {
         let remaining = end.saturating_sub(start);
         if remaining == 0 {
             return Self {
-                mmap, data_offset, bits_per_value,
-                mask: 0, current_word: 0, next_word: 0,
-                block_idx: 0, bit_off: 0, remaining: 0,
+                mmap,
+                data_offset,
+                bits_per_value,
+                mask: 0,
+                current_word: 0,
+                next_word: 0,
+                block_idx: 0,
+                bit_off: 0,
+                remaining: 0
             };
         }
 
         let mask = if bits_per_value == 64 { u64::MAX } else { (1u64 << bits_per_value) - 1 };
 
-        let bit_pos   = start * bits_per_value;
+        let bit_pos = start * bits_per_value;
         let block_idx = bit_pos / 64;
-        let bit_off   = bit_pos % 64;
+        let bit_off = bit_pos % 64;
 
         let current_word = read_u64_le(mmap, data_offset + block_idx * 8);
-        let next_off     = data_offset + (block_idx + 1) * 8;
-        let next_word    = if next_off + 8 <= mmap.len() { read_u64_le(mmap, next_off) } else { 0 };
+        let next_off = data_offset + (block_idx + 1) * 8;
+        let next_word = if next_off + 8 <= mmap.len() { read_u64_le(mmap, next_off) } else { 0 };
 
-        Self { mmap, data_offset, bits_per_value, mask, current_word, next_word, block_idx, bit_off, remaining }
+        Self {
+            mmap,
+            data_offset,
+            bits_per_value,
+            mask,
+            current_word,
+            next_word,
+            block_idx,
+            bit_off,
+            remaining
+        }
     }
 }
 
@@ -185,11 +207,15 @@ impl Iterator for MmapSaRangeIter<'_> {
     type Item = i64;
 
     #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) { (self.remaining, Some(self.remaining)) }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
 
     #[inline]
     fn next(&mut self) -> Option<i64> {
-        if self.remaining == 0 { return None; }
+        if self.remaining == 0 {
+            return None;
+        }
         self.remaining -= 1;
 
         let val = if self.bit_off + self.bits_per_value <= 64 {
@@ -201,13 +227,11 @@ impl Iterator for MmapSaRangeIter<'_> {
 
         self.bit_off += self.bits_per_value;
         if self.bit_off >= 64 {
-            self.bit_off   -= 64;
+            self.bit_off -= 64;
             self.block_idx += 1;
             self.current_word = self.next_word;
             let next_off = self.data_offset + (self.block_idx + 1) * 8;
-            self.next_word = if next_off + 8 <= self.mmap.len() {
-                read_u64_le(self.mmap, next_off)
-            } else { 0 };
+            self.next_word = if next_off + 8 <= self.mmap.len() { read_u64_le(self.mmap, next_off) } else { 0 };
         }
 
         Some(val as i64)
@@ -215,7 +239,6 @@ impl Iterator for MmapSaRangeIter<'_> {
 }
 
 impl ExactSizeIterator for MmapSaRangeIter<'_> {}
-
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
@@ -226,10 +249,7 @@ mod tests {
     use bitarray::DynBitArray;
 
     use super::*;
-    use crate::array::{
-        dump_compressed_suffix_array, dump_suffix_array, CompressedSA, OriginalSA,
-        SuffixArrayBackend,
-    };
+    use crate::array::{CompressedSA, OriginalSA, SuffixArrayBackend, dump_compressed_suffix_array, dump_suffix_array};
 
     /// Builds the owned compressed backend directly, to compare against.
     fn compressed_from(sa: &[i64], sparseness: u8, bits: usize) -> CompressedSA {
@@ -245,7 +265,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         match bits {
             None => dump_suffix_array(sa.to_vec(), sparseness, &mut buf).unwrap(),
-            Some(b) => dump_compressed_suffix_array(sa.to_vec(), sparseness, b, &mut buf).unwrap(),
+            Some(b) => dump_compressed_suffix_array(sa.to_vec(), sparseness, b, &mut buf).unwrap()
         }
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(&buf).unwrap();
@@ -307,7 +327,9 @@ mod tests {
 
             for start in [0usize, 1, 7, 12, 63, 64, 65, 130] {
                 for end in [start, start + 1, start + 13, start + 64, 200] {
-                    if end > 200 || end < start { continue; }
+                    if end > 200 || end < start {
+                        continue;
+                    }
                     let by_iter: Vec<i64> = mapped.iter_range(start, end).collect();
                     let by_get: Vec<i64> = (start..end).map(|i| mapped.get(i)).collect();
                     assert_eq!(by_iter, by_get, "iter_range({start}, {end}) at {bits} bits");

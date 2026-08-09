@@ -10,18 +10,17 @@ mod scalar;
 mod test_helpers;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
-
-use crate::sa_searcher::metrics::Counter;
-
 use sa_mappings::proteins::{Proteins, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
 
 use crate::{
-    KmerTable, array::SuffixArrayBackend,
-    sa_searcher::BoundSearch::{Maximum, Minimum},
-    suffix_to_protein_index::{
-        SuffixToProteinMappingBackend, SuffixToProteinMapping,
+    KmerTable,
+    array::SuffixArrayBackend,
+    sa_searcher::{
+        BoundSearch::{Maximum, Minimum},
+        metrics::Counter
     },
+    suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingBackend}
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -81,11 +80,7 @@ const TRYPTIC_EXTENSION_CHARS_PROLINE: [u8; 1] = [b'-'];
 #[inline]
 fn tryptic_extension_chars(search_string: &[u8]) -> &'static [u8] {
     debug_assert_eq!(TRYPTIC_EXTENSION_CHARS[2], SEPARATION_CHARACTER);
-    if search_string.first() == Some(&b'P') {
-        &TRYPTIC_EXTENSION_CHARS_PROLINE
-    } else {
-        &TRYPTIC_EXTENSION_CHARS
-    }
+    if search_string.first() == Some(&b'P') { &TRYPTIC_EXTENSION_CHARS_PROLINE } else { &TRYPTIC_EXTENSION_CHARS }
 }
 
 impl TrypticQuery {
@@ -196,7 +191,7 @@ pub struct SearchTuning {
     ///
     /// Swept over {8, 16, 32, 64}: median full-range swing +1.2%, inside the noise floor
     /// everywhere. Same caveat as `validate_prefetch_threshold`.
-    pub retrieval_prefetch_distance: usize,
+    pub retrieval_prefetch_distance: usize
 }
 
 impl Default for SearchTuning {
@@ -204,7 +199,7 @@ impl Default for SearchTuning {
         Self {
             validate_batch: 64,              // confirmed by run3; 16 costs ~10%, 128 gains nothing
             validate_prefetch_threshold: 32, // measured flat over 8..64
-            retrieval_prefetch_distance: 32, // measured flat over 8..64
+            retrieval_prefetch_distance: 32  // measured flat over 8..64
         }
     }
 }
@@ -218,7 +213,11 @@ impl Default for SearchTuning {
 /// Construct with [`Searcher::new`], then optionally attach a k-mer table with
 /// [`Searcher::with_kmer_table`]. The searcher is immutable during search and `Sync`, so one
 /// instance serves every request.
-pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM: SuffixToProteinMappingBackend = SuffixToProteinMapping> {
+pub struct Searcher<
+    SA: SuffixArrayBackend,
+    P: ProteinsBackend = Proteins,
+    STPM: SuffixToProteinMappingBackend = SuffixToProteinMapping
+> {
     pub sa: SA,
     pub proteins: P,
     pub suffix_index_to_protein: STPM,
@@ -243,7 +242,7 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM:
     /// simply sifting ~1/ratio times more candidates to reach `max_matches` (make each check
     /// cheaper), whereas a ratio near 1 with the cutoff rarely reached means whole SA ranges
     /// are being scanned to exhaustion (a `max_candidates` scan cap is the fix).
-    pub(crate) candidates_accepted: Counter,
+    pub(crate) candidates_accepted: Counter
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -267,7 +266,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             search_bounds_ns: Counter::new(),
             match_iter_ns: Counter::new(),
             candidates_examined: Counter::new(),
-            candidates_accepted: Counter::new(),
+            candidates_accepted: Counter::new()
         }
     }
 
@@ -326,7 +325,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
         let condition_check = match bound {
             Minimum => |a: u8, b: u8| a < b,
-            Maximum => |a: u8, b: u8| a > b,
+            Maximum => |a: u8, b: u8| a > b
         };
 
         // Advance while characters match (treating L == I).
@@ -343,10 +342,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 bound_satisfied = true;
             } else if i_text < text_len {
                 // The index has L replaced by I, so normalize both sides before ordering.
-                bound_satisfied = condition_check(
-                    Self::normalize_li(search_string[i_search]),
-                    Self::normalize_li(text.get(i_text)),
-                );
+                bound_satisfied =
+                    condition_check(Self::normalize_li(search_string[i_search]), Self::normalize_li(text.get(i_text)));
             }
         }
 
@@ -423,16 +420,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 // because `check_start_of_protein` short-circuits the `||` on that same test.)
                 let n_term_ok = match_start == 0 || {
                     let before = text.get(match_start - 1);
-                    before == SEPARATION_CHARACTER
-                        || ((before == b'K' || before == b'R') && first_not_proline)
+                    before == SEPARATION_CHARACTER || ((before == b'K' || before == b'R') && first_not_proline)
                 };
 
                 // C-terminus. `text[match_end]` answers protein-end and proline-block at once.
                 n_term_ok && {
                     let after = text.get(match_end);
-                    after == TERMINATION_CHARACTER
-                        || after == SEPARATION_CHARACTER
-                        || (last_is_kr && after != b'P')
+                    after == TERMINATION_CHARACTER || after == SEPARATION_CHARACTER || (last_is_kr && after != b'P')
                 }
             }
             // Zero-length query: `match_end == match_start`, so the peptide has no character to
@@ -527,17 +521,25 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         suffix_str: &[u8],
         il_locations: &[usize],
         equate_il: bool,
-        tryptic: TrypticQuery,
+        tryptic: TrypticQuery
     ) -> Option<i64> {
         let suffix = raw as usize;
-        if suffix < skip { return None; }
+        if suffix < skip {
+            return None;
+        }
         let match_start = suffix - skip;
         let match_end = suffix + search_string.len() - skip;
         // Order matters: the tryptic check stays last because it assumes the span
         // [match_start, match_end) has already been confirmed equal to `search_string`.
         let valid = (skip == 0
             || Self::check_prefix(prefix, ProteinTextSlice::new(text, match_start, suffix), equate_il))
-            && Self::check_suffix(skip, il_locations, suffix_str, ProteinTextSlice::new(text, suffix, match_end), equate_il)
+            && Self::check_suffix(
+                skip,
+                il_locations,
+                suffix_str,
+                ProteinTextSlice::new(text, suffix, match_end),
+                equate_il
+            )
             && self.check_tryptic_boundaries(text, match_start, match_end, tryptic);
         if valid { Some(match_start as i64) } else { None }
     }
@@ -568,9 +570,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     #[inline]
     fn check_tryptic_c_term(&self, text: &P::Text, match_end: usize, last_is_kr: bool) -> bool {
         let after = text.get(match_end);
-        after == TERMINATION_CHARACTER
-            || after == SEPARATION_CHARACTER
-            || (last_is_kr && after != b'P')
+        after == TERMINATION_CHARACTER || after == SEPARATION_CHARACTER || (last_is_kr && after != b'P')
     }
 
     /// Validates a hit from a left-extended search (`X + search_string`).
@@ -593,7 +593,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         search_string: &[u8],
         il_locations: &[usize],
         equate_il: bool,
-        last_is_kr: bool,
+        last_is_kr: bool
     ) -> Option<i64> {
         let match_start = raw as usize + 1;
         let match_end = match_start + search_string.len();
@@ -604,7 +604,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             il_locations,
             search_string,
             ProteinTextSlice::new(text, match_start, match_end),
-            equate_il,
+            equate_il
         ) && self.check_tryptic_c_term(text, match_end, last_is_kr);
         if valid { Some(match_start as i64) } else { None }
     }
@@ -626,7 +626,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         equate_il: bool,
         last_is_kr: bool,
         matching_suffixes: &mut Vec<i64>,
-        max_matches: usize,
+        max_matches: usize
     ) -> bool {
         let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
         let prefetch_threshold = self.tuning.validate_prefetch_threshold;
@@ -639,12 +639,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             if range_size < prefetch_threshold {
                 for raw in sa_iter {
                     examined += 1;
-                    if let Some(v) = self.validate_extended_candidate(
-                        text, raw, search_string, il_locations, equate_il, last_is_kr,
-                    ) {
+                    if let Some(v) =
+                        self.validate_extended_candidate(text, raw, search_string, il_locations, equate_il, last_is_kr)
+                    {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                        if matching_suffixes.len() >= max_matches {
+                            break 'scan true;
+                        }
                     }
                 }
                 break 'scan false;
@@ -657,21 +659,29 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 for s in &mut sa_iter {
                     let ms = s as usize + 1;
                     text.prefetch_at(ms + search_string.len());
-                    if needs_span { text.prefetch_at(ms); }
+                    if needs_span {
+                        text.prefetch_at(ms);
+                    }
                     raw_batch[batch_len] = s;
                     batch_len += 1;
-                    if batch_len == batch_size { break; }
+                    if batch_len == batch_size {
+                        break;
+                    }
                 }
-                if batch_len == 0 { break; }
+                if batch_len == 0 {
+                    break;
+                }
 
                 for &raw in &raw_batch[..batch_len] {
                     examined += 1;
-                    if let Some(v) = self.validate_extended_candidate(
-                        text, raw, search_string, il_locations, equate_il, last_is_kr,
-                    ) {
+                    if let Some(v) =
+                        self.validate_extended_candidate(text, raw, search_string, il_locations, equate_il, last_is_kr)
+                    {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                        if matching_suffixes.len() >= max_matches {
+                            break 'scan true;
+                        }
                     }
                 }
             }
@@ -705,7 +715,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         equate_il: bool,
         tryptic: bool,
         matching_suffixes: &mut Vec<i64>,
-        max_matches: usize,
+        max_matches: usize
     ) -> bool {
         // Default 64, tuned on x86_64 Zen4/Intel Sapphire Rapids: DRAM latency ~80–100 ns, one
         // SA entry read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably
@@ -731,11 +741,21 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 for raw in sa_iter {
                     examined += 1;
                     if let Some(v) = self.validate_candidate(
-                        text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+                        text,
+                        raw,
+                        skip,
+                        search_string,
+                        prefix,
+                        suffix_str,
+                        il_locations,
+                        equate_il,
+                        tryptic
                     ) {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                        if matching_suffixes.len() >= max_matches {
+                            break 'scan true;
+                        }
                     }
                 }
                 break 'scan false;
@@ -753,19 +773,33 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     }
                     raw_batch[batch_len] = s;
                     batch_len += 1;
-                    if batch_len == batch_size { break; }
+                    if batch_len == batch_size {
+                        break;
+                    }
                 }
-                if batch_len == 0 { break; }
+                if batch_len == 0 {
+                    break;
+                }
 
                 // --- Pass 2: validate (prefetches have had time to complete) ---
                 for &raw in &raw_batch[..batch_len] {
                     examined += 1;
                     if let Some(v) = self.validate_candidate(
-                        text, raw, skip, search_string, prefix, suffix_str, il_locations, equate_il, tryptic,
+                        text,
+                        raw,
+                        skip,
+                        search_string,
+                        prefix,
+                        suffix_str,
+                        il_locations,
+                        equate_il,
+                        tryptic
                     ) {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches { break 'scan true; }
+                        if matching_suffixes.len() >= max_matches {
+                            break 'scan true;
+                        }
                     }
                 }
             }
@@ -776,7 +810,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         self.candidates_accepted.add(accepted);
         hit_max
     }
-
 }
 
 #[cfg(all(test, not(feature = "mmap")))]
@@ -784,15 +817,15 @@ mod tests {
     use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
     use text_compression::{ProteinText, ProteinTextBackend as _};
 
-    use super::{SearchAllSuffixesResult, SearchTuning, TrypticQuery, MAX_VALIDATE_BATCH};
+    use super::{MAX_VALIDATE_BATCH, SearchAllSuffixesResult, SearchTuning, TrypticQuery};
     use crate::{
+        SuffixArray,
         array::OriginalSA,
         sa_searcher::{
-            test_helpers::{example_searcher, searcher_over_text},
             BoundSearchResult, Searcher,
+            test_helpers::{example_searcher, searcher_over_text}
         },
-        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
-        SuffixArray,
+        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
     };
 
     #[test]
@@ -846,7 +879,7 @@ mod tests {
         let proteins = Proteins::new(text, vec![Protein {
             uniprot_id: String::new(),
             taxon_id: 0,
-            functional_annotations: vec![],
+            functional_annotations: vec![]
         }]);
         let stp = BitVecSuffixToProtein::new(proteins.text());
         // check_tryptic_cut only reads the text, so the SA content is irrelevant here.
@@ -866,7 +899,7 @@ mod tests {
         let proteins = Proteins::new(protein_text, vec![Protein {
             uniprot_id: String::new(),
             taxon_id: 0,
-            functional_annotations: vec![],
+            functional_annotations: vec![]
         }]);
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let sa = SuffixArray::Original(OriginalSA((0..text.len() as i64).collect(), 1));
@@ -916,7 +949,8 @@ mod tests {
                 let expected = old_tryptic_predicate(&searcher, match_start, match_end);
                 let actual = searcher.check_tryptic_boundaries(text, match_start, match_end, query);
                 assert_eq!(
-                    actual, expected,
+                    actual,
+                    expected,
                     "mismatch at [{match_start}, {match_end}) for peptide {:?}",
                     String::from_utf8_lossy(&peptide)
                 );
@@ -929,16 +963,12 @@ mod tests {
                     .map(|&c| match c {
                         b'I' => b'L',
                         b'L' => b'I',
-                        other => other,
+                        other => other
                     })
                     .collect();
-                let swapped_actual = searcher.check_tryptic_boundaries(
-                    text, match_start, match_end, TrypticQuery::new(true, &swapped),
-                );
-                assert_eq!(
-                    swapped_actual, expected,
-                    "I/L swap changed the verdict at [{match_start}, {match_end})"
-                );
+                let swapped_actual =
+                    searcher.check_tryptic_boundaries(text, match_start, match_end, TrypticQuery::new(true, &swapped));
+                assert_eq!(swapped_actual, expected, "I/L swap changed the verdict at [{match_start}, {match_end})");
 
                 checked += 1;
                 accepted += expected as usize;
@@ -996,7 +1026,7 @@ mod tests {
 
         let flags = |peptide: &[u8]| match TrypticQuery::new(true, peptide) {
             TrypticQuery::On { first_not_proline, last_is_kr } => (first_not_proline, last_is_kr),
-            _ => panic!("expected TrypticQuery::On for {:?}", String::from_utf8_lossy(peptide)),
+            _ => panic!("expected TrypticQuery::On for {:?}", String::from_utf8_lossy(peptide))
         };
 
         // (first_not_proline, last_is_kr)
@@ -1075,7 +1105,7 @@ mod tests {
         let proteins = Proteins::new(text, vec![Protein {
             uniprot_id: String::new(),
             taxon_id: 0,
-            functional_annotations: vec![],
+            functional_annotations: vec![]
         }]);
         let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
         let stp = BitVecSuffixToProtein::new(proteins.text());
@@ -1107,7 +1137,7 @@ mod tests {
         let proteins = Proteins::new(text, vec![Protein {
             uniprot_id: String::new(),
             taxon_id: 0,
-            functional_annotations: vec![],
+            functional_annotations: vec![]
         }]);
         let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
         let stp = BitVecSuffixToProtein::new(proteins.text());
@@ -1163,8 +1193,24 @@ mod tests {
     /// 1–2 entries, so the straight scan), I/L-carrying and I/L-free ones, K/R- and
     /// P-terminated ones, and a total miss.
     const TUNING_PEPTIDES: &[&[u8]] = &[
-        b"A", b"AA", b"AAK", b"K", b"KR", b"IL", b"LI", b"AILK", b"CVAAR", b"KCRLY", b"AAKRAAIP",
-        b"PAAK", b"AAIP", b"MWYFQ", b"MWYFQDNTLHK", b"NTLHK", b"NTIHK", b"ZZ",
+        b"A",
+        b"AA",
+        b"AAK",
+        b"K",
+        b"KR",
+        b"IL",
+        b"LI",
+        b"AILK",
+        b"CVAAR",
+        b"KCRLY",
+        b"AAKRAAIP",
+        b"PAAK",
+        b"AAIP",
+        b"MWYFQ",
+        b"MWYFQDNTLHK",
+        b"NTLHK",
+        b"NTIHK",
+        b"ZZ"
     ];
 
     /// Runs the full pipeline — search then retrieval — over `peptides` on both the scalar
@@ -1184,38 +1230,30 @@ mod tests {
         searcher: &Searcher<SuffixArray>,
         peptides: &[&[u8]],
         equate_il: bool,
-        tryptic: bool,
+        tryptic: bool
     ) -> Vec<TuningRow> {
         let mut out = Vec::new();
         for mlp_batch in [1usize, 16] {
-            let results =
-                searcher.search_all_matching_suffixes(peptides, 64, equate_il, tryptic, mlp_batch);
+            let results = searcher.search_all_matching_suffixes(peptides, 64, equate_il, tryptic, mlp_batch);
             let tags: Vec<&'static str> = results
                 .iter()
                 .map(|r| match r {
                     SearchAllSuffixesResult::NoMatches => "none",
                     SearchAllSuffixesResult::MaxMatches(_) => "max",
-                    SearchAllSuffixesResult::SearchResult(_) => "hit",
+                    SearchAllSuffixesResult::SearchResult(_) => "hit"
                 })
                 .collect();
             let suffixes: Vec<Vec<i64>> = results
                 .iter()
                 .map(|r| match r {
                     SearchAllSuffixesResult::NoMatches => vec![],
-                    SearchAllSuffixesResult::MaxMatches(v)
-                    | SearchAllSuffixesResult::SearchResult(v) => v.clone(),
+                    SearchAllSuffixesResult::MaxMatches(v) | SearchAllSuffixesResult::SearchResult(v) => v.clone()
                 })
                 .collect();
 
             let proteins: Vec<Vec<(u32, String)>> = suffixes
                 .iter()
-                .map(|v| {
-                    searcher
-                        .retrieve_proteins(v)
-                        .iter()
-                        .map(|p| (p.taxon_id, p.uniprot_id.to_string()))
-                        .collect()
-                })
+                .map(|v| searcher.retrieve_proteins(v).iter().map(|p| (p.taxon_id, p.uniprot_id.to_string())).collect())
                 .collect();
 
             for i in 0..peptides.len() {
@@ -1240,7 +1278,7 @@ mod tests {
         let mut fixtures = [
             ("dense", searcher_over_text(&text, 1), 1usize),
             ("sparse", searcher_over_text(&text, 3), 3usize),
-            ("kmer", kmered, 1usize),
+            ("kmer", kmered, 1usize)
         ];
 
         // The fixture must actually reach both scan paths, otherwise sweeping validate_batch
@@ -1248,23 +1286,20 @@ mod tests {
         // threshold (and the largest swept batch, so the batch refills); "MWYFQ" must fall
         // below the smallest non-zero one.
         match fixtures[0].1.search_bounds(b"AA") {
-            BoundSearchResult::SearchResult((lo, hi)) => assert!(
-                hi - lo > MAX_VALIDATE_BATCH,
-                "fixture too small: 'AA' range is only {}",
-                hi - lo
-            ),
-            other => panic!("expected 'AA' to match, got {other:?}"),
+            BoundSearchResult::SearchResult((lo, hi)) => {
+                assert!(hi - lo > MAX_VALIDATE_BATCH, "fixture too small: 'AA' range is only {}", hi - lo)
+            }
+            other => panic!("expected 'AA' to match, got {other:?}")
         }
         match fixtures[0].1.search_bounds(b"MWYFQ") {
             BoundSearchResult::SearchResult((lo, hi)) => {
                 assert!(hi - lo < 8, "'MWYFQ' range {} is not below the threshold", hi - lo)
             }
-            other => panic!("expected 'MWYFQ' to match, got {other:?}"),
+            other => panic!("expected 'MWYFQ' to match, got {other:?}")
         }
 
         for (name, searcher, min_len) in fixtures.iter_mut() {
-            let peptides: Vec<&[u8]> =
-                TUNING_PEPTIDES.iter().copied().filter(|p| p.len() >= *min_len).collect();
+            let peptides: Vec<&[u8]> = TUNING_PEPTIDES.iter().copied().filter(|p| p.len() >= *min_len).collect();
 
             for equate_il in [false, true] {
                 for tryptic in [false, true] {
@@ -1283,7 +1318,7 @@ mod tests {
                                 let tuning = SearchTuning {
                                     validate_batch,
                                     validate_prefetch_threshold,
-                                    retrieval_prefetch_distance,
+                                    retrieval_prefetch_distance
                                 };
                                 searcher.tuning = tuning;
                                 assert_eq!(

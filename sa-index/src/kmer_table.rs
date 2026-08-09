@@ -14,7 +14,7 @@
 use std::{
     error::Error,
     io::{BufRead, Write},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering}
 };
 
 use rayon::prelude::*;
@@ -74,7 +74,7 @@ pub struct KmerTable {
     /// Flat `(min_bound, max_bound)` pairs indexed by `kmer_to_index(kmer)`.
     /// Absent k-mers are represented by `min_bound > max_bound`
     /// (sentinel: `(usize::MAX, 0)`).
-    bounds: Vec<(usize, usize)>,
+    bounds: Vec<(usize, usize)>
 }
 
 impl KmerTable {
@@ -88,12 +88,7 @@ impl KmerTable {
 
     /// Same as `build_from_sa` but accepts the raw suffix array as a plain slice
     /// and text access via closures — works regardless of whether the mmap feature is active.
-    pub fn build_from_raw_sa(
-        sa: &[i64],
-        text_len: usize,
-        get_char: impl Fn(usize) -> u8 + Sync,
-        k: usize
-    ) -> Self {
+    pub fn build_from_raw_sa(sa: &[i64], text_len: usize, get_char: impl Fn(usize) -> u8 + Sync, k: usize) -> Self {
         Self::build_kmer_table(sa.len(), |i| sa[i] as usize, text_len, get_char, k)
     }
 
@@ -114,17 +109,20 @@ impl KmerTable {
 
         // Sentinel: (MAX, 0) means "absent". AtomicUsize lets multiple threads update
         // min/max without locks; fetch_min/fetch_max are stable since Rust 1.45.
-        let atomic_bounds: Vec<(AtomicUsize, AtomicUsize)> = (0..table_size)
-            .map(|_| (AtomicUsize::new(usize::MAX), AtomicUsize::new(0)))
-            .collect();
+        let atomic_bounds: Vec<(AtomicUsize, AtomicUsize)> =
+            (0..table_size).map(|_| (AtomicUsize::new(usize::MAX), AtomicUsize::new(0))).collect();
 
         let kmer_index = |suffix_start: usize| -> Option<usize> {
             let mut idx = 0usize;
             for j in 0..k {
                 let pos = suffix_start + j;
-                if pos >= text_len { return None; }
+                if pos >= text_len {
+                    return None;
+                }
                 let char_idx = ascii_array[get_char(pos) as usize];
-                if char_idx == 0 { return None; }
+                if char_idx == 0 {
+                    return None;
+                }
                 idx = idx * AMINO_ACID_COUNT + (char_idx as usize - 1);
             }
             Some(idx)
@@ -140,10 +138,8 @@ impl KmerTable {
             }
         });
 
-        let bounds: Vec<(usize, usize)> = atomic_bounds
-            .into_iter()
-            .map(|(min, max)| (min.into_inner(), max.into_inner()))
-            .collect();
+        let bounds: Vec<(usize, usize)> =
+            atomic_bounds.into_iter().map(|(min, max)| (min.into_inner(), max.into_inner())).collect();
 
         Self { k, ascii_array, bounds }
     }
@@ -156,7 +152,9 @@ impl KmerTable {
         let mut idx = 0usize;
         for &c in kmer {
             let char_idx = self.ascii_array[c as usize];
-            if char_idx == 0 { return None; }
+            if char_idx == 0 {
+                return None;
+            }
             idx = idx * AMINO_ACID_COUNT + (char_idx as usize - 1);
         }
         Some(idx)
@@ -203,16 +201,13 @@ impl ReadBinary for KmerTable {
         let amino_acid_count = u64::from_le_bytes(buf8) as usize;
 
         if amino_acid_count != AMINO_ACID_COUNT {
-            return Err(format!(
-                "k-mer table: expected amino_acid_count={AMINO_ACID_COUNT}, got {amino_acid_count}"
-            )
-            .into());
+            return Err(
+                format!("k-mer table: expected amino_acid_count={AMINO_ACID_COUNT}, got {amino_acid_count}").into()
+            );
         }
 
         if k > MAX_KMER_K {
-            return Err(format!(
-                "k-mer table: k={k} exceeds MAX_KMER_K={MAX_KMER_K}"
-            ).into());
+            return Err(format!("k-mer table: k={k} exceeds MAX_KMER_K={MAX_KMER_K}").into());
         }
 
         let table_size = AMINO_ACID_COUNT.pow(k as u32);
@@ -233,7 +228,10 @@ impl ReadBinary for KmerTable {
 mod tests {
     use text_compression::InMemoryProteinText;
 
-    use crate::{kmer_table::KmerTable, array::{OriginalSA, InMemorySA}};
+    use crate::{
+        array::{InMemorySA, OriginalSA},
+        kmer_table::KmerTable
+    };
 
     fn build_test_table(input: &str, sa_values: Vec<i64>, k: usize) -> KmerTable {
         let text = InMemoryProteinText::from_string(input);
@@ -274,7 +272,8 @@ mod tests {
     #[test]
     fn test_roundtrip_serialization() {
         use std::io::{BufReader, BufWriter};
-        use crate::{WriteBinary, ReadBinary};
+
+        use crate::{ReadBinary, WriteBinary};
 
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
         let k = table.k;

@@ -13,8 +13,10 @@
 
 #[cfg(feature = "metrics")]
 mod imp {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Instant;
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::Instant
+    };
 
     /// A shared, monotonically increasing counter. Relaxed ordering throughout: the values are
     /// diagnostics, never used to synchronize anything.

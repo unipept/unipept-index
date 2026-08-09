@@ -25,7 +25,9 @@ pub(crate) fn read_words_into<R: BufRead>(data: &mut Vec<u64>, mut reader: R) ->
         for chunk in buffer[..bytes_read].chunks_exact(8) {
             data.push(u64::from_le_bytes(chunk.try_into().unwrap()));
         }
-        if finished { break; }
+        if finished {
+            break;
+        }
     }
     Ok(())
 }
@@ -43,7 +45,7 @@ pub(crate) fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> Resul
         match input.read(writable) {
             Ok(0) => return Ok((!writable.is_empty(), buffer_size - writable.len())),
             Ok(n) => writable = writable[n..].as_mut(),
-            Err(e) => return Err(e),
+            Err(e) => return Err(e)
         }
     }
 }

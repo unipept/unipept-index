@@ -6,18 +6,16 @@
 //!
 //! The alias [`Proteins`] resolves to the active backend.
 
-pub mod preloaded;
 #[cfg(feature = "mmap")]
 pub mod mmap;
+pub mod preloaded;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures {
     //! The shared TSV fixture. Both backends' tests build an index from the same rows so that
     //! their assertions are comparable; each picks how many rows it wants.
 
-    use std::fs::File;
-    use std::io::Write;
-    use std::path::PathBuf;
+    use std::{fs::File, io::Write, path::PathBuf};
 
     use tempdir::TempDir;
 
@@ -26,14 +24,11 @@ pub(crate) mod test_fixtures {
         ("P12345", 1, "MLPGLALLLLAAWTARALEV", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
         ("P54321", 2, "PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
         ("P67890", 6, "KWDSDPSGTKTCIDT", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
-        ("P13579", 17, "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
+        ("P13579", 17, "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH", "GO:0009279;IPR:IPR016364;IPR:IPR008816")
     ];
 
     /// Writes `proteins` as a UniProt TSV into `tmp_dir` and returns its path.
-    pub(crate) fn write_database_file(
-        tmp_dir: &TempDir,
-        proteins: &[(&str, u32, &str, &str)]
-    ) -> PathBuf {
+    pub(crate) fn write_database_file(tmp_dir: &TempDir, proteins: &[(&str, u32, &str, &str)]) -> PathBuf {
         let path = tmp_dir.path().join("database.tsv");
         let mut f = File::create(&path).unwrap();
         for (uid, taxon, sequence, annotations) in proteins {
@@ -43,9 +38,9 @@ pub(crate) mod test_fixtures {
     }
 }
 
-pub use preloaded::InMemoryProteins;
 #[cfg(feature = "mmap")]
 pub use mmap::MmapBackedProteins;
+pub use preloaded::InMemoryProteins;
 
 /// Type alias — resolves to the active backend for this build.
 #[cfg(feature = "mmap")]
@@ -55,12 +50,9 @@ pub type Proteins = MmapBackedProteins;
 pub type Proteins = InMemoryProteins;
 
 // Re-export I/O traits used by callers.
-pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
-
 // ── Shared types ──────────────────────────────────────────────────────────────
-
 use fa_compression::algorithm1::decode;
-pub use text_compression::ProteinTextBackend;
+pub use text_compression::{ProteinTextBackend, ReadBinary, ReadBinaryMmap, WriteBinary};
 
 /// Byte placed between consecutive protein sequences in the concatenated text.
 ///
@@ -88,7 +80,9 @@ pub trait ProteinsBackend: Send + Sync {
     /// Number of proteins.
     fn len(&self) -> usize;
     /// Whether there are no proteins.
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     /// Returns the metadata for protein `index`.
     ///
     /// # Panics
@@ -122,7 +116,7 @@ pub struct Protein {
     /// NCBI taxon id.
     pub taxon_id: u32,
     /// Functional annotations, encoded with `fa_compression`.
-    pub functional_annotations: Vec<u8>,
+    pub functional_annotations: Vec<u8>
 }
 
 /// One protein's metadata, borrowed.
@@ -136,7 +130,7 @@ pub struct ProteinRef<'a> {
     /// NCBI taxon id.
     pub taxon_id: u32,
     /// Functional annotations, still encoded; see [`Self::get_functional_annotations`].
-    pub functional_annotations: &'a [u8],
+    pub functional_annotations: &'a [u8]
 }
 
 impl ProteinRef<'_> {

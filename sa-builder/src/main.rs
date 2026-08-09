@@ -6,10 +6,11 @@ use std::{
 
 use clap::Parser;
 use sa_builder::{Arguments, SuffixToProteinMappingStyle, build_ssa};
-use sa_index::array::dump_compressed_suffix_array;
-use sa_index::array::dump_suffix_array;
-use sa_index::suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein};
-use sa_index::{KmerTable, WriteBinary};
+use sa_index::{
+    KmerTable, WriteBinary,
+    array::{dump_compressed_suffix_array, dump_suffix_array},
+    suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
+};
 use sa_mappings::proteins::{InMemoryProteins, ProteinsBackend as _};
 use text_compression::ProteinTextBackend as _;
 
@@ -24,12 +25,11 @@ fn main() {
         output_mapping,
         mapping_style,
         output_kmer_table,
-        kmer_size,
+        kmer_size
     } = Arguments::parse();
 
     let proteins = timed("loading the proteins", || {
-        InMemoryProteins::load_from_tsv(&database_file)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
+        InMemoryProteins::load_from_tsv(&database_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
     });
     let bits_per_value = (proteins.text().len() as f64).log2().ceil() as usize;
 
@@ -75,12 +75,15 @@ fn main() {
         // to be nameable, so the repetition is left explicit.
         let char_at = |i: usize| proteins.text().get(i);
         let result = match &mapping_style {
-            SuffixToProteinMappingStyle::Dense =>
-                DenseSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file),
-            SuffixToProteinMappingStyle::Sparse =>
-                SparseSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file),
-            SuffixToProteinMappingStyle::BitVec =>
-                BitVecSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file),
+            SuffixToProteinMappingStyle::Dense => {
+                DenseSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file)
+            }
+            SuffixToProteinMappingStyle::Sparse => {
+                SparseSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file)
+            }
+            SuffixToProteinMappingStyle::BitVec => {
+                BitVecSuffixToProtein::from_text_parts(text_len, char_at).write_binary(&mut mapping_file)
+            }
         };
         result.unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
         mapping_file.flush().unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
@@ -96,7 +99,9 @@ fn main() {
     // that then loads without complaint. Reported as a known issue rather than fixed here, since
     // this pass does not change behaviour.
     timed("writing proteins binary", || {
-        proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        proteins
+            .write_binary(&mut proteins_file)
+            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });
     eprintln!("\tOutput: {}", output_proteins);
 
@@ -105,8 +110,7 @@ fn main() {
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
         timed("writing k-mer table", || {
-            table.write_binary(&mut kmer_file)
-                .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+            table.write_binary(&mut kmer_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
         });
         eprintln!("\tOutput: {}", kmer_table_path);
     }

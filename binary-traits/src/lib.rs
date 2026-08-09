@@ -16,7 +16,11 @@
 //! These traits live in their own crate so that `sa-index`, `sa-mappings` and `text-compression`
 //! can implement them for each other's types without a dependency cycle.
 
-use std::{error::Error, io::{BufRead, Write}, path::Path};
+use std::{
+    error::Error,
+    io::{BufRead, Write},
+    path::Path
+};
 
 /// Serialises a structure to a byte stream.
 ///

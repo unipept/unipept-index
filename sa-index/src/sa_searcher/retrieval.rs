@@ -25,11 +25,8 @@
 
 use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
 
-use crate::array::SuffixArrayBackend;
-use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-use crate::Nullable;
-
 use super::Searcher;
+use crate::{Nullable, array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Returns all the proteins that correspond with the provided suffixes.
@@ -61,7 +58,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let mut res = Vec::with_capacity(suffixes.len());
         for (i, &protein_index) in protein_indices.iter().enumerate() {
             if let Some(&fpi) = protein_indices.get(i + distance) {
-                if !fpi.is_null() { self.proteins.prefetch(fpi as usize); }
+                if !fpi.is_null() {
+                    self.proteins.prefetch(fpi as usize);
+                }
             }
             if !protein_index.is_null() {
                 res.push(self.proteins.get(protein_index as usize));
@@ -69,7 +68,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         }
         res
     }
-
 }
 
 #[cfg(all(test, not(feature = "mmap")))]
@@ -78,10 +76,10 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
-        array::OriginalSA,
-        sa_searcher::{test_helpers::get_example_proteins, SearchAllSuffixesResult, Searcher},
-        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
         SuffixArray,
+        array::OriginalSA,
+        sa_searcher::{SearchAllSuffixesResult, Searcher, test_helpers::get_example_proteins},
+        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
     };
 
     #[test]
@@ -90,7 +88,7 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(OriginalSA(
             vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-            1,
+            1
         ));
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
@@ -99,7 +97,7 @@ mod tests {
         // (taxon 20), once in protein 2 (taxon 30); never in protein 3 (KCRLY).
         let suffixes = match searcher.search_matching_suffixes(b"A", usize::MAX, false, false) {
             SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
-            SearchAllSuffixesResult::NoMatches => vec![],
+            SearchAllSuffixesResult::NoMatches => vec![]
         };
 
         let found = searcher.retrieve_proteins(&suffixes);
@@ -114,7 +112,9 @@ mod tests {
     fn test_retrieve_proteins_empty() {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        ));
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
 
@@ -131,7 +131,7 @@ mod tests {
         let proteins = Proteins::new(text, vec![Protein {
             uniprot_id: String::new(),
             taxon_id: 5,
-            functional_annotations: vec![],
+            functional_annotations: vec![]
         }]);
         // SA of A^n$ is [n, n-1, …, 0].
         let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
@@ -140,7 +140,7 @@ mod tests {
 
         let suffixes = match searcher.search_matching_suffixes(b"A", usize::MAX, false, false) {
             SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
-            SearchAllSuffixesResult::NoMatches => vec![],
+            SearchAllSuffixesResult::NoMatches => vec![]
         };
         assert_eq!(suffixes.len(), n);
         let found = searcher.retrieve_proteins(&suffixes);
@@ -153,7 +153,9 @@ mod tests {
     fn test_retrieve_proteins_skips_separators() {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        ));
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
 

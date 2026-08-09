@@ -4,17 +4,19 @@
 //! `sa-builder` uses it to produce the `proteins.bin` that the mmap backend later reads. Only the
 //! reading half is configuration-specific.
 
-use std::{error::Error, fs::File};
-use std::io::{BufRead, BufReader, Write};
-use std::str::from_utf8;
+use std::{
+    error::Error,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    str::from_utf8
+};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::encode;
-pub use text_compression::{WriteBinary, ReadBinary};
 use text_compression::InMemoryProteinText;
+pub use text_compression::{ReadBinary, WriteBinary};
 
-use super::{Protein, ProteinRef, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use super::ProteinsBackend;
+use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 // ── InMemoryProteins ──────────────────────────────────────────────────────────
 
@@ -23,7 +25,7 @@ pub struct InMemoryProteins {
     /// The concatenated protein text the suffix array is built over.
     pub text: InMemoryProteinText,
     /// Metadata per protein, in the same order as the runs in `text`.
-    pub proteins: Vec<Protein>,
+    pub proteins: Vec<Protein>
 }
 
 impl InMemoryProteins {
@@ -58,7 +60,11 @@ impl InMemoryProteins {
             let functional_annotations: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
             input_string.push_str(&sequence.to_uppercase());
             input_string.push(SEPARATION_CHARACTER.into());
-            proteins.push(Protein { uniprot_id: uniprot_id.to_string(), taxon_id, functional_annotations });
+            proteins.push(Protein {
+                uniprot_id: uniprot_id.to_string(),
+                taxon_id,
+                functional_annotations
+            });
         }
         input_string.pop();
         input_string.push(TERMINATION_CHARACTER.into());
@@ -89,13 +95,21 @@ impl ProteinsBackend for InMemoryProteins {
     type Text = InMemoryProteinText;
 
     #[inline]
-    fn text(&self) -> &InMemoryProteinText { &self.text }
-    fn len(&self) -> usize { self.proteins.len() }
+    fn text(&self) -> &InMemoryProteinText {
+        &self.text
+    }
+    fn len(&self) -> usize {
+        self.proteins.len()
+    }
 
     #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         let p = &self.proteins[index];
-        ProteinRef { uniprot_id: &p.uniprot_id, taxon_id: p.taxon_id, functional_annotations: &p.functional_annotations }
+        ProteinRef {
+            uniprot_id: &p.uniprot_id,
+            taxon_id: p.taxon_id,
+            functional_annotations: &p.functional_annotations
+        }
     }
 
     /// Prefetches the `Protein` struct at `index`. Only the struct header is hinted; the
@@ -158,8 +172,12 @@ impl WriteBinary for InMemoryProteins {
             uid_offset += uid_len as u32;
             fa_offset += fa_len as u32;
         }
-        for protein in &self.proteins { writer.write_all(protein.uniprot_id.as_bytes())?; }
-        for protein in self.proteins { writer.write_all(&protein.functional_annotations)?; }
+        for protein in &self.proteins {
+            writer.write_all(protein.uniprot_id.as_bytes())?;
+        }
+        for protein in self.proteins {
+            writer.write_all(&protein.functional_annotations)?;
+        }
         Ok(())
     }
 }
@@ -175,7 +193,9 @@ impl ReadBinary for InMemoryProteins {
         reader.read_exact(&mut buf8)?;
         let fa_bytes_total = u64::from_le_bytes(buf8) as usize;
         let mut table = vec![[0u8; 16]; protein_count];
-        for entry in table.iter_mut() { reader.read_exact(entry)?; }
+        for entry in table.iter_mut() {
+            reader.read_exact(entry)?;
+        }
         let mut uid_data = vec![0u8; uid_bytes_total];
         reader.read_exact(&mut uid_data)?;
         let mut fa_data = vec![0u8; fa_bytes_total];
@@ -200,13 +220,20 @@ impl ReadBinary for InMemoryProteins {
 #[cfg(test)]
 mod tests {
     use tempdir::TempDir;
-    use super::*;
-    use super::super::test_fixtures::{TEST_PROTEINS, write_database_file};
     use text_compression::ProteinTextBackend as _;
+
+    use super::{
+        super::test_fixtures::{TEST_PROTEINS, write_database_file},
+        *
+    };
 
     #[test]
     fn test_new_protein() {
-        let protein = Protein { uniprot_id: "P12345".to_string(), taxon_id: 1, functional_annotations: vec![0xD1, 0x11] };
+        let protein = Protein {
+            uniprot_id: "P12345".to_string(),
+            taxon_id: 1,
+            functional_annotations: vec![0xD1, 0x11]
+        };
         assert_eq!(protein.uniprot_id, "P12345");
         assert_eq!(protein.taxon_id, 1);
     }
@@ -215,8 +242,16 @@ mod tests {
     fn test_new_proteins() {
         let text = InMemoryProteinText::from_string("MLPGLALLLLAAWTARALEV-PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG");
         let proteins = InMemoryProteins::new(text, vec![
-            Protein { uniprot_id: "P12345".to_string(), taxon_id: 1, functional_annotations: vec![0xD1, 0x11] },
-            Protein { uniprot_id: "P54321".to_string(), taxon_id: 2, functional_annotations: vec![0xD1, 0x11] },
+            Protein {
+                uniprot_id: "P12345".to_string(),
+                taxon_id: 1,
+                functional_annotations: vec![0xD1, 0x11]
+            },
+            Protein {
+                uniprot_id: "P54321".to_string(),
+                taxon_id: 2,
+                functional_annotations: vec![0xD1, 0x11]
+            },
         ]);
         assert_eq!(proteins.len(), 2);
         assert_eq!(proteins.get(0).uniprot_id, "P12345");
@@ -226,7 +261,8 @@ mod tests {
     #[test]
     fn test_get_taxon() {
         let tmp_dir = TempDir::new("test_get_taxon").unwrap();
-        let proteins = InMemoryProteins::load_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
+        let proteins =
+            InMemoryProteins::load_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
         for (i, &taxon) in [1u32, 2, 6, 17].iter().enumerate() {
             assert_eq!(proteins.get(i).taxon_id, taxon);
         }
@@ -235,7 +271,8 @@ mod tests {
     #[test]
     fn test_get_functional_annotations() {
         let tmp_dir = TempDir::new("test_get_fa").unwrap();
-        let proteins = InMemoryProteins::load_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
+        let proteins =
+            InMemoryProteins::load_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
         for i in 0..proteins.len() {
             assert_eq!(proteins.get(i).get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
         }
@@ -244,7 +281,8 @@ mod tests {
     #[test]
     fn test_get_concatenated_proteins() {
         let tmp_dir = TempDir::new("test_get_fa").unwrap();
-        let text = InMemoryProteins::text_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
+        let text =
+            InMemoryProteins::text_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
         assert_eq!(text.get(4), b'L');
     }
 

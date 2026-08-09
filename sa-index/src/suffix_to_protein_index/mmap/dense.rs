@@ -8,7 +8,7 @@ use super::super::SuffixToProteinMappingBackend;
 /// Format: [1 byte type=0x00] [8 bytes count (u64 LE)] [count × 4 bytes (u32 LE)]
 pub struct MmapDenseSuffixToProtein {
     mmap: Mmap,
-    data_offset: usize, // 9 = 1 (type) + 8 (count)
+    data_offset: usize // 9 = 1 (type) + 8 (count)
 }
 
 impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
@@ -46,14 +46,14 @@ mod tests {
     use std::io::Write as IoWrite;
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::InMemoryProteinText;
+    use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use text_compression::ProteinTextBackend;
-
-    use crate::{Nullable, ReadBinaryMmap, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-    use crate::suffix_to_protein_index::preloaded::DenseSuffixToProtein;
-    use crate::suffix_to_protein_index::mmap::MmapBackedSuffixToProteinMapping;
+    use crate::{
+        Nullable, ReadBinaryMmap, WriteBinary,
+        suffix_to_protein_index::{
+            SuffixToProteinMappingBackend, mmap::MmapBackedSuffixToProteinMapping, preloaded::DenseSuffixToProtein
+        }
+    };
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -79,12 +79,7 @@ mod tests {
 
         let original = DenseSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 

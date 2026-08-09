@@ -24,13 +24,13 @@
 
 pub use binary_traits::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
-pub mod preloaded;
 #[cfg(feature = "mmap")]
 pub mod mmap;
+pub mod preloaded;
 
-pub use preloaded::InMemoryProteinText;
 #[cfg(feature = "mmap")]
 pub use mmap::MmapBackedProteinText;
+pub use preloaded::InMemoryProteinText;
 
 /// Decode table shared by both backends: 5-bit index → ASCII amino acid byte.
 ///
@@ -75,7 +75,9 @@ pub trait ProteinTextBackend {
     fn len(&self) -> usize;
 
     /// Whether the text is empty.
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Issues a prefetch hint for the storage holding `index`, without reading it.
     ///
@@ -85,12 +87,18 @@ pub trait ProteinTextBackend {
     fn prefetch_at(&self, index: usize);
 
     /// Iterates the whole text, one residue at a time.
-    fn iter(&self) -> ProteinTextIterator<'_, Self> where Self: Sized {
+    fn iter(&self) -> ProteinTextIterator<'_, Self>
+    where
+        Self: Sized
+    {
         ProteinTextIterator { protein_text: self, index: 0 }
     }
 
     /// Borrows `start..end` (half-open) as a comparable slice.
-    fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_, Self> where Self: Sized {
+    fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_, Self>
+    where
+        Self: Sized
+    {
         ProteinTextSlice::new(self, start, end)
     }
 }
@@ -101,7 +109,7 @@ pub trait ProteinTextBackend {
 pub struct ProteinTextSlice<'a, T: ProteinTextBackend> {
     text: &'a T,
     start: usize,
-    end: usize,
+    end: usize
 }
 
 impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
@@ -112,11 +120,17 @@ impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
     }
 
     /// Returns the residue at `index`, counted from the start of the slice.
-    pub fn get(&self, index: usize) -> u8 { self.text.get(self.start + index) }
+    pub fn get(&self, index: usize) -> u8 {
+        self.text.get(self.start + index)
+    }
     /// Number of residues in the window.
-    pub fn len(&self) -> usize { self.end - self.start }
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
     /// Whether the window is empty.
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Compares this window against `other`, optionally treating I and L as equal.
     ///
@@ -131,9 +145,10 @@ impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
     #[inline]
     pub fn equals_slice(&self, other: &[u8], equate_il: bool) -> bool {
         if equate_il {
-            other.iter().zip(self.iter()).all(|(&s, t)| {
-                s == t || (s == b'I' && t == b'L') || (s == b'L' && t == b'I')
-            })
+            other
+                .iter()
+                .zip(self.iter())
+                .all(|(&s, t)| s == t || (s == b'I' && t == b'L') || (s == b'L' && t == b'I'))
         } else {
             other.iter().zip(self.iter()).all(|(&s, t)| s == t)
         }
@@ -155,7 +170,9 @@ impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
         for &il_location in il_locations {
             debug_assert!(il_location >= skip, "il_location {il_location} is below skip {skip}");
             let index = il_location - skip;
-            if search_string[index] != self.get(index) { return false; }
+            if search_string[index] != self.get(index) {
+                return false;
+            }
         }
         true
     }
@@ -171,21 +188,23 @@ impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
 /// Iterator over an entire [`ProteinTextBackend`].
 pub struct ProteinTextIterator<'a, T: ProteinTextBackend> {
     pub(crate) protein_text: &'a T,
-    pub(crate) index: usize,
+    pub(crate) index: usize
 }
 
 /// Iterator over a [`ProteinTextSlice`].
 pub struct ProteinTextSliceIterator<'a, T: ProteinTextBackend> {
     text: &'a T,
     pos: usize,
-    end: usize,
+    end: usize
 }
 
 impl<T: ProteinTextBackend> Iterator for ProteinTextSliceIterator<'_, T> {
     type Item = u8;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos >= self.end { return None; }
+        if self.pos >= self.end {
+            return None;
+        }
         let c = self.text.get(self.pos);
         self.pos += 1;
         Some(c)
@@ -196,7 +215,9 @@ impl<T: ProteinTextBackend> Iterator for ProteinTextIterator<'_, T> {
     type Item = u8;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.protein_text.len() { return None; }
+        if self.index >= self.protein_text.len() {
+            return None;
+        }
         self.index += 1;
         Some(self.protein_text.get(self.index - 1))
     }

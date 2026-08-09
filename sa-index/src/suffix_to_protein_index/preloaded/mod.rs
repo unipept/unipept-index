@@ -1,20 +1,20 @@
 use std::error::Error;
 
-use crate::ReadBinary;
 use super::SuffixToProteinMappingBackend;
+use crate::ReadBinary;
 
+pub mod bitvec;
 pub mod dense;
 pub mod sparse;
-pub mod bitvec;
 
+pub use bitvec::BitVecSuffixToProtein;
 pub use dense::DenseSuffixToProtein;
 pub use sparse::SparseSuffixToProtein;
-pub use bitvec::BitVecSuffixToProtein;
 
 pub enum InMemorySuffixToProteinMapping {
     Dense(DenseSuffixToProtein),
     Sparse(SparseSuffixToProtein),
-    BitVec(BitVecSuffixToProtein),
+    BitVec(BitVecSuffixToProtein)
 }
 
 impl SuffixToProteinMappingBackend for InMemorySuffixToProteinMapping {
@@ -23,7 +23,7 @@ impl SuffixToProteinMappingBackend for InMemorySuffixToProteinMapping {
         match self {
             Self::Dense(m) => m.suffix_to_protein(suffix),
             Self::Sparse(m) => m.suffix_to_protein(suffix),
-            Self::BitVec(m) => m.suffix_to_protein(suffix),
+            Self::BitVec(m) => m.suffix_to_protein(suffix)
         }
     }
 
@@ -32,7 +32,7 @@ impl SuffixToProteinMappingBackend for InMemorySuffixToProteinMapping {
         match self {
             Self::Dense(m) => m.prefetch_for_suffix(suffix),
             Self::Sparse(m) => m.prefetch_for_suffix(suffix),
-            Self::BitVec(m) => m.prefetch_for_suffix(suffix),
+            Self::BitVec(m) => m.prefetch_for_suffix(suffix)
         }
     }
 }
@@ -45,7 +45,7 @@ impl ReadBinary for InMemorySuffixToProteinMapping {
             0 => Ok(InMemorySuffixToProteinMapping::Dense(dense::read_dense_mapping(reader)?)),
             1 => Ok(InMemorySuffixToProteinMapping::Sparse(sparse::read_sparse_mapping(reader)?)),
             2 => Ok(InMemorySuffixToProteinMapping::BitVec(bitvec::read_bitvec_mapping(reader)?)),
-            t => Err(format!("Unknown mapping type byte: {}", t).into()),
+            t => Err(format!("Unknown mapping type byte: {}", t).into())
         }
     }
 }
@@ -55,10 +55,14 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use crate::{Nullable, ReadBinary, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-    use crate::suffix_to_protein_index::preloaded::{
-        InMemorySuffixToProteinMapping, DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein,
+    use crate::{
+        Nullable, ReadBinary, WriteBinary,
+        suffix_to_protein_index::{
+            SuffixToProteinMappingBackend,
+            preloaded::{
+                BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein
+            }
+        }
     };
 
     fn build_text() -> InMemoryProteinText {

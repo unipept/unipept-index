@@ -48,7 +48,9 @@ pub fn prefetch_read<T>(ptr: *const T) {
     // read.
     #[cfg(target_arch = "x86_64")]
     // SAFETY: `_mm_prefetch` is a pure hint — it never faults and never reads.
-    unsafe { std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0) }
+    unsafe {
+        std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0)
+    }
     #[cfg(target_arch = "aarch64")]
     // SAFETY: `prfm` is a pure hint — it never faults and never reads. `readonly` and `nostack`
     // hold because the instruction touches neither memory nor the stack.

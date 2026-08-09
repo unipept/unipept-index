@@ -1,11 +1,13 @@
-use std::io::{Read, Write};
-use std::error::Error;
+use std::{
+    error::Error,
+    io::{Read, Write}
+};
 
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
-use crate::{Nullable, WriteBinary};
 use super::super::SuffixToProteinMappingBackend;
+use crate::{Nullable, WriteBinary};
 
 /// Mapping that uses O(n) memory with n the size of the input text, but retrieval of the protein is
 /// in O(1)
@@ -86,9 +88,8 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::InMemoryProteinText;
 
-    use crate::{Nullable, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
     use super::{DenseSuffixToProtein, read_dense_mapping};
+    use crate::{Nullable, WriteBinary, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));

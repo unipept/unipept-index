@@ -6,15 +6,12 @@
 //!
 //! Only the reading half lives here; the file itself is written by `preloaded`'s `WriteBinary`.
 
-use std::error::Error;
-use std::io::Write;
-use std::sync::Arc;
-use std::{fs::File, path::Path};
-use binary_traits::{WriteBinary, ReadBinaryMmap};
+use std::{error::Error, fs::File, io::Write, path::Path, sync::Arc};
 
+use binary_traits::{ReadBinaryMmap, WriteBinary};
 use memmap2::Mmap;
 
-use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
+use crate::{BIT5_TO_CHAR, ProteinTextBackend, bit_array_byte_size};
 
 /// Page size assumed when warming a mapping. Touching one byte per this many bytes is enough to
 /// fault in every page; a larger real page size just means some touches are redundant.
@@ -63,7 +60,7 @@ pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) {
 pub struct MmapBackedProteinText {
     pub(crate) mmap: Arc<Mmap>,
     pub(crate) data_offset: usize,
-    pub(crate) len: usize,
+    pub(crate) len: usize
 }
 
 impl MmapBackedProteinText {
@@ -115,7 +112,9 @@ impl ProteinTextBackend for MmapBackedProteinText {
         BIT5_TO_CHAR[raw as usize]
     }
 
-    fn len(&self) -> usize { self.len }
+    fn len(&self) -> usize {
+        self.len
+    }
 
     #[inline]
     fn prefetch_at(&self, index: usize) {
@@ -155,8 +154,8 @@ impl ReadBinaryMmap for MmapBackedProteinText {
             return Err("File is too small to contain ProteinText header (8 bytes required)".into());
         }
 
-        let text_length = u64::from_le_bytes(mmap[0..8].try_into()
-            .map_err(|_| "Failed to parse ProteinText header")?) as usize;
+        let text_length =
+            u64::from_le_bytes(mmap[0..8].try_into().map_err(|_| "Failed to parse ProteinText header")?) as usize;
 
         if mmap.len() < 8 + bit_array_byte_size(text_length) {
             return Err("File is too small to contain ProteinText BitArray data for declared length".into());
@@ -171,15 +170,17 @@ impl ReadBinaryMmap for MmapBackedProteinText {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
     use memmap2::Mmap;
+
     use super::*;
     use crate::preloaded::InMemoryProteinText;
 
     fn write_protein_text_file(input: &str) -> tempfile::NamedTempFile {
-        use bitarray::{Binary, BitArray};
         use std::collections::HashMap;
-        let char_to_5bit: HashMap<u8, u8> = BIT5_TO_CHAR.iter().enumerate()
-            .map(|(i, &c)| (c, i as u8)).collect();
+
+        use bitarray::{Binary, BitArray};
+        let char_to_5bit: HashMap<u8, u8> = BIT5_TO_CHAR.iter().enumerate().map(|(i, &c)| (c, i as u8)).collect();
         let mut ba = BitArray::<5>::with_capacity(input.len());
         for (i, c) in input.bytes().enumerate() {
             ba.set(i, *char_to_5bit.get(&c).unwrap() as u64);
@@ -260,8 +261,11 @@ mod tests {
         assert_eq!(mapped.len(), preloaded.len());
         for i in 0..input.len() {
             assert_eq!(
-                mapped.get(i), preloaded.get(i),
-                "backends disagree at index {i} (alignment {} in word {})", (i * 5) % 64, (i * 5) / 64
+                mapped.get(i),
+                preloaded.get(i),
+                "backends disagree at index {i} (alignment {} in word {})",
+                (i * 5) % 64,
+                (i * 5) / 64
             );
         }
     }

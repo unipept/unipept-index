@@ -1,12 +1,14 @@
-use std::io::{Read, Write};
-use std::error::Error;
+use std::{
+    error::Error,
+    io::{Read, Write}
+};
 
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
 use text_compression::ProteinTextBackend;
 
-use crate::{Nullable, WriteBinary};
 use super::super::SuffixToProteinMappingBackend;
+use crate::{Nullable, WriteBinary};
 
 /// Mapping that uses O(n) memory (1-2 bits per suffix) with n the size of the input text, with retrieval
 /// of the protein in O(1)
@@ -151,9 +153,8 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use crate::{Nullable, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
     use super::{BitVecSuffixToProtein, read_bitvec_mapping};
+    use crate::{Nullable, WriteBinary, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));

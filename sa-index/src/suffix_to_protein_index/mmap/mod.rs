@@ -1,23 +1,22 @@
-use std::error::Error;
-use std::path::Path;
+use std::{error::Error, path::Path};
 
 use memmap2::MmapOptions;
 
-use crate::ReadBinaryMmap;
 use super::SuffixToProteinMappingBackend;
+use crate::ReadBinaryMmap;
 
+pub mod bitvec;
 pub mod dense;
 pub mod sparse;
-pub mod bitvec;
 
+pub use bitvec::MmapBitVecSuffixToProtein;
 pub use dense::MmapDenseSuffixToProtein;
 pub use sparse::MmapSparseSuffixToProtein;
-pub use bitvec::MmapBitVecSuffixToProtein;
 
 pub enum MmapBackedSuffixToProteinMapping {
     Dense(MmapDenseSuffixToProtein),
     Sparse(MmapSparseSuffixToProtein),
-    BitVec(MmapBitVecSuffixToProtein),
+    BitVec(MmapBitVecSuffixToProtein)
 }
 
 impl SuffixToProteinMappingBackend for MmapBackedSuffixToProteinMapping {
@@ -26,7 +25,7 @@ impl SuffixToProteinMappingBackend for MmapBackedSuffixToProteinMapping {
         match self {
             Self::Dense(m) => m.suffix_to_protein(suffix),
             Self::Sparse(m) => m.suffix_to_protein(suffix),
-            Self::BitVec(m) => m.suffix_to_protein(suffix),
+            Self::BitVec(m) => m.suffix_to_protein(suffix)
         }
     }
 
@@ -35,7 +34,7 @@ impl SuffixToProteinMappingBackend for MmapBackedSuffixToProteinMapping {
         match self {
             Self::Dense(m) => m.prefetch_for_suffix(suffix),
             Self::Sparse(m) => m.prefetch_for_suffix(suffix),
-            Self::BitVec(m) => m.prefetch_for_suffix(suffix),
+            Self::BitVec(m) => m.prefetch_for_suffix(suffix)
         }
     }
 
@@ -43,7 +42,7 @@ impl SuffixToProteinMappingBackend for MmapBackedSuffixToProteinMapping {
         match self {
             Self::Dense(m) => m.touch_all_pages(),
             Self::Sparse(m) => m.touch_all_pages(),
-            Self::BitVec(m) => m.touch_all_pages(),
+            Self::BitVec(m) => m.touch_all_pages()
         }
     }
 }
@@ -62,7 +61,7 @@ impl ReadBinaryMmap for MmapBackedSuffixToProteinMapping {
             0 => Ok(Self::Dense(dense::read_dense_mmap(mmap)?)),
             1 => Ok(Self::Sparse(sparse::read_sparse_mmap(mmap)?)),
             2 => Ok(Self::BitVec(bitvec::read_bitvec_mmap(mmap)?)),
-            t => Err(format!("Unknown mapping type byte: {}", t).into()),
+            t => Err(format!("Unknown mapping type byte: {}", t).into())
         }
     }
 }
@@ -74,10 +73,14 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::InMemoryProteinText;
 
-    use crate::{Nullable, ReadBinaryMmap, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-    use crate::suffix_to_protein_index::preloaded::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein};
     use super::MmapBackedSuffixToProteinMapping;
+    use crate::{
+        Nullable, ReadBinaryMmap, WriteBinary,
+        suffix_to_protein_index::{
+            SuffixToProteinMappingBackend,
+            preloaded::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
+        }
+    };
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));

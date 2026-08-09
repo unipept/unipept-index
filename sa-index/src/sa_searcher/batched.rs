@@ -11,15 +11,14 @@ use std::cmp::min;
 use sa_mappings::proteins::{ProteinsBackend, SEPARATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
-use crate::array::SuffixArrayBackend;
-use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-
-use super::metrics::Timer;
-use super::BoundSearch::{Maximum, Minimum};
 use super::{
-    tryptic_extension_chars, BoundSearch, BoundSearchResult, MAX_RESULT_PREALLOC,
-    SearchAllSuffixesResult, Searcher, TRYPTIC_EXTENSION_CHARS,
+    BoundSearch,
+    BoundSearch::{Maximum, Minimum},
+    BoundSearchResult, MAX_RESULT_PREALLOC, SearchAllSuffixesResult, Searcher, TRYPTIC_EXTENSION_CHARS,
+    metrics::Timer,
+    tryptic_extension_chars
 };
+use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Batched `binary_search_bound_in_range`, advancing many independent streams in
@@ -91,7 +90,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             s.res_found = s.found;
             s.res_bound = match bound {
                 Minimum => s.hi,
-                Maximum => s.lo,
+                Maximum => s.lo
             };
         }
     }
@@ -111,14 +110,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         self.search_bounds_batched_inner(strings, false)
     }
 
-    fn search_bounds_batched_inner(
-        &self,
-        strings: &[&[u8]],
-        use_kmer_table: bool,
-    ) -> Vec<BoundSearchResult> {
+    fn search_bounds_batched_inner(&self, strings: &[&[u8]], use_kmer_table: bool) -> Vec<BoundSearchResult> {
         let n = strings.len();
-        let mut out: Vec<BoundSearchResult> =
-            (0..n).map(|_| BoundSearchResult::NoMatches).collect();
+        let mut out: Vec<BoundSearchResult> = (0..n).map(|_| BoundSearchResult::NoMatches).collect();
 
         // Stage 1: initial range per stream (k-mer narrowing or full range).
         let mut ranges: Vec<Option<(usize, usize, usize)>> = vec![None; n];
@@ -128,10 +122,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 Some(table) if use_kmer_table && ss.len() >= table.k => {
                     match table.lookup(&ss[..table.k]) {
                         Some((lo, hi)) => (lo, hi + 1, table.k),
-                        None => continue, // out[i] stays NoMatches
+                        None => continue // out[i] stays NoMatches
                     }
                 }
-                _ => (0, self.sa.len(), 0),
+                _ => (0, self.sa.len(), 0)
             };
             ranges[i] = Some(range);
             min_streams.push(BsStream::new(i, ss, range.0, range.1, range.2));
@@ -170,17 +164,15 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         strings: &[&[u8]],
         max_matches: usize,
         equate_il: bool,
-        tryptic: bool,
+        tryptic: bool
     ) -> Vec<SearchAllSuffixesResult> {
         let n = strings.len();
         let sample = self.sa.sample_rate() as usize;
 
         // Per peptide, same cap as the scalar path — see `MAX_RESULT_PREALLOC`. It matters more
         // here: this allocates one result vector per peptide in the batch up front.
-        let mut matching: Vec<Vec<i64>> = strings
-            .iter()
-            .map(|_| Vec::with_capacity(max_matches.min(MAX_RESULT_PREALLOC)))
-            .collect();
+        let mut matching: Vec<Vec<i64>> =
+            strings.iter().map(|_| Vec::with_capacity(max_matches.min(MAX_RESULT_PREALLOC))).collect();
         let il_locs: Vec<Vec<usize>> = strings
             .iter()
             .map(|ss| {
@@ -213,7 +205,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             for (ai, &i) in active.iter().enumerate() {
                 let (min_bound, max_bound) = match &bounds[ai] {
                     BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
-                    BoundSearchResult::NoMatches => continue,
+                    BoundSearchResult::NoMatches => continue
                 };
                 let search_string = strings[i];
                 // See scalar.rs's search_matching_suffixes for the soundness argument: `compare`
@@ -224,8 +216,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 if (equate_il || il_locs[i].is_empty()) && !tryptic && skip == 0 {
                     let range_size = max_bound - min_bound;
                     if range_size >= max_matches {
-                        let result: Vec<i64> =
-                            self.sa.iter_range(min_bound, min_bound + max_matches).collect();
+                        let result: Vec<i64> = self.sa.iter_range(min_bound, min_bound + max_matches).collect();
                         done[i] = Some(SearchAllSuffixesResult::MaxMatches(result));
                     } else {
                         for s in self.sa.iter_range(min_bound, max_bound) {
@@ -233,8 +224,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         }
                     }
                 } else {
-                    let il_from_skip =
-                        &il_locs[i][il_locs[i].partition_point(|&x| x < skip)..];
+                    let il_from_skip = &il_locs[i][il_locs[i].partition_point(|&x| x < skip)..];
                     let prefix = &search_string[..skip];
                     let suffix_str = &search_string[skip..];
                     let text = self.proteins.text();
@@ -250,17 +240,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         equate_il,
                         tryptic,
                         &mut matching[i],
-                        max_matches,
+                        max_matches
                     );
                     if hit_max {
-                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(
-                            &mut matching[i],
-                        )));
+                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(&mut matching[i])));
                     }
                 }
             }
             self.match_iter_ns.add(t_iter.elapsed_ns());
-
         }
 
         // Left-extended phase. One batched bound search per extension character, so the streams
@@ -274,10 +261,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
             for &prefix_char in TRYPTIC_EXTENSION_CHARS.iter() {
                 let active: Vec<usize> = (0..n)
-                    .filter(|&i| {
-                        done[i].is_none()
-                            && tryptic_extension_chars(strings[i]).contains(&prefix_char)
-                    })
+                    .filter(|&i| done[i].is_none() && tryptic_extension_chars(strings[i]).contains(&prefix_char))
                     .collect();
                 if active.is_empty() {
                     continue;
@@ -291,8 +275,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     ext_buf.extend_from_slice(strings[i]);
                     ext_spans.push((start, ext_buf.len()));
                 }
-                let extended: Vec<&[u8]> =
-                    ext_spans.iter().map(|&(s, e)| &ext_buf[s..e]).collect();
+                let extended: Vec<&[u8]> = ext_spans.iter().map(|&(s, e)| &ext_buf[s..e]).collect();
 
                 let t_bounds = Timer::start();
                 // The separator is not representable in the k-mer table — routing it there would
@@ -308,7 +291,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 for (ai, &i) in active.iter().enumerate() {
                     let (min_bound, max_bound) = match &bounds[ai] {
                         BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
-                        BoundSearchResult::NoMatches => continue,
+                        BoundSearchResult::NoMatches => continue
                     };
                     let search_string = strings[i];
                     let last_is_kr = matches!(search_string.last(), Some(b'K' | b'R'));
@@ -321,12 +304,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         equate_il,
                         last_is_kr,
                         &mut matching[i],
-                        max_matches,
+                        max_matches
                     );
                     if hit_max {
-                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(
-                            &mut matching[i],
-                        )));
+                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(&mut matching[i])));
                     }
                 }
                 self.match_iter_ns.add(t_iter.elapsed_ns());
@@ -361,7 +342,7 @@ struct BsStream<'a> {
     suffix: i64,
     active: bool,
     res_found: bool,
-    res_bound: usize,
+    res_bound: usize
 }
 
 impl<'a> BsStream<'a> {
@@ -380,7 +361,7 @@ impl<'a> BsStream<'a> {
             suffix: 0,
             active: false,
             res_found: false,
-            res_bound: 0,
+            res_bound: 0
         }
     }
 }
@@ -391,15 +372,13 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
+        SuffixArray,
         array::OriginalSA,
         sa_searcher::{
-            test_helpers::{
-                get_example_proteins, searcher_over_text, tryptic_fixture_peptides, TRYPTIC_FIXTURE,
-            },
             SearchAllSuffixesResult, Searcher,
+            test_helpers::{TRYPTIC_FIXTURE, get_example_proteins, searcher_over_text, tryptic_fixture_peptides}
         },
-        suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
-        SuffixArray,
+        suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping}
     };
 
     #[test]
@@ -412,17 +391,18 @@ mod tests {
                 for &eq in &[false, true] {
                     for &tr in &[false, true] {
                         for &mm in &[usize::MAX, 1usize, 2usize] {
-                            let scalar: Vec<_> = $peptides
-                                .iter()
-                                .map(|p| $searcher.search_matching_suffixes(p, mm, eq, tr))
-                                .collect();
-                            let batched =
-                                $searcher.search_matching_suffixes_batched($peptides, mm, eq, tr);
+                            let scalar: Vec<_> =
+                                $peptides.iter().map(|p| $searcher.search_matching_suffixes(p, mm, eq, tr)).collect();
+                            let batched = $searcher.search_matching_suffixes_batched($peptides, mm, eq, tr);
                             for i in 0..$peptides.len() {
                                 assert_eq!(
-                                    batched[i], scalar[i],
+                                    batched[i],
+                                    scalar[i],
                                     "mismatch: peptide={:?} equate_il={} tryptic={} max_matches={}",
-                                    std::str::from_utf8($peptides[i]).unwrap(), eq, tr, mm
+                                    std::str::from_utf8($peptides[i]).unwrap(),
+                                    eq,
+                                    tr,
+                                    mm
                                 );
                             }
                         }
@@ -435,7 +415,7 @@ mod tests {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(OriginalSA(
             vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-            1,
+            1
         ));
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
@@ -448,8 +428,7 @@ mod tests {
         let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
         let stp = SparseSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(stp));
-        let peptides: Vec<&[u8]> =
-            vec![b"CLA", b"ACVAA", b"KCRLY", b"VAA", b"LACVAA", b"CVAA", b"CLACVAA", b"ZZZ"];
+        let peptides: Vec<&[u8]> = vec![b"CLA", b"ACVAA", b"KCRLY", b"VAA", b"LACVAA", b"CVAA", b"CLACVAA", b"ZZZ"];
         check_batched!(&searcher, &peptides);
     }
 
@@ -469,10 +448,7 @@ mod tests {
         let hits = peptides
             .iter()
             .filter(|p| {
-                !matches!(
-                    dense.search_matching_suffixes(p, usize::MAX, true, true),
-                    SearchAllSuffixesResult::NoMatches
-                )
+                !matches!(dense.search_matching_suffixes(p, usize::MAX, true, true), SearchAllSuffixesResult::NoMatches)
             })
             .count();
         assert!(hits >= 5, "fixture yields only {hits} tryptic hits");
@@ -480,8 +456,7 @@ mod tests {
         for &sparseness in &[2u8, 3] {
             let sparse = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
             for equate_il in [false, true] {
-                let batched =
-                    sparse.search_matching_suffixes_batched(&peptides, usize::MAX, equate_il, true);
+                let batched = sparse.search_matching_suffixes_batched(&peptides, usize::MAX, equate_il, true);
                 for (i, p) in peptides.iter().enumerate() {
                     assert_eq!(
                         batched[i],
@@ -516,7 +491,8 @@ mod tests {
         let kmer_res = kmered.search_matching_suffixes_batched(&peptides, usize::MAX, true, true);
         for (i, p) in peptides.iter().enumerate() {
             assert_eq!(
-                kmer_res[i], plain_res[i],
+                kmer_res[i],
+                plain_res[i],
                 "k-mer table changed the batched tryptic result for {:?}",
                 std::str::from_utf8(p).unwrap()
             );
@@ -527,7 +503,9 @@ mod tests {
     fn test_batched_empty() {
         let proteins = get_example_proteins();
         let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+            1
+        ));
         let stp = BitVecSuffixToProtein::new(proteins.text());
         let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
 
@@ -543,7 +521,9 @@ mod tests {
             let proteins = get_example_proteins();
             let stp = BitVecSuffixToProtein::new(proteins.text());
             let sa = SuffixArray::Original(OriginalSA(
-                vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
+                vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
+                1
+            ));
             Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
         };
         let reference = make();
@@ -556,7 +536,8 @@ mod tests {
             assert_eq!(
                 batched[i],
                 reference.search_matching_suffixes(p, usize::MAX, false, false),
-                "batched+kmer vs plain scalar mismatch for {:?}", std::str::from_utf8(p).unwrap()
+                "batched+kmer vs plain scalar mismatch for {:?}",
+                std::str::from_utf8(p).unwrap()
             );
         }
     }
@@ -575,7 +556,7 @@ mod tests {
         let proteins = Proteins::new(text, vec![Protein {
             uniprot_id: String::new(),
             taxon_id: 0,
-            functional_annotations: vec![],
+            functional_annotations: vec![]
         }]);
         let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
         let stp = BitVecSuffixToProtein::new(proteins.text());
@@ -583,10 +564,8 @@ mod tests {
 
         let peptides: Vec<&[u8]> = vec![b"A", b"A", b"A"];
         for &mm in &[usize::MAX, 10usize] {
-            let scalar: Vec<_> = peptides
-                .iter()
-                .map(|p| searcher.search_matching_suffixes(p, mm, false, false))
-                .collect();
+            let scalar: Vec<_> =
+                peptides.iter().map(|p| searcher.search_matching_suffixes(p, mm, false, false)).collect();
             let batched_false = searcher.search_matching_suffixes_batched(&peptides, mm, false, false);
             let batched_true = searcher.search_matching_suffixes_batched(&peptides, mm, true, false);
             assert_eq!(batched_false, scalar, "batched(equate_il=false) vs scalar mismatch at max_matches={mm}");

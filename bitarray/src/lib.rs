@@ -31,7 +31,10 @@ mod constant;
 mod dynamic;
 mod hugepages;
 
-use std::{cmp::max, io::{Result, Write}};
+use std::{
+    cmp::max,
+    io::{Result, Write}
+};
 
 pub use binary::Binary;
 pub use constant::{BitArray, BitArrayRangeIter};
@@ -55,7 +58,7 @@ pub fn data_to_writer(
     data: Vec<i64>,
     bits_per_value: usize,
     max_capacity: usize,
-    writer: &mut impl Write,
+    writer: &mut impl Write
 ) -> Result<()> {
     // Round the requested chunk size down to a multiple of gcd(bits_per_value, 64).
     //
@@ -76,7 +79,9 @@ pub fn data_to_writer(
 
     if data.len() <= capacity {
         let mut ba = DynBitArray::with_capacity(data.len(), bits_per_value);
-        for (i, &v) in data.iter().enumerate() { ba.set(i, v as u64); }
+        for (i, &v) in data.iter().enumerate() {
+            ba.set(i, v as u64);
+        }
         ba.write_binary(writer)?;
         return Ok(());
     }
@@ -86,13 +91,17 @@ pub fn data_to_writer(
     let remainder = chunks.remainder();
 
     for chunk in chunks {
-        for (i, &v) in chunk.iter().enumerate() { ba.set(i, v as u64); }
+        for (i, &v) in chunk.iter().enumerate() {
+            ba.set(i, v as u64);
+        }
         ba.write_binary(writer)?;
         ba.clear();
     }
 
     ba = DynBitArray::with_capacity(remainder.len(), bits_per_value);
-    for (i, &v) in remainder.iter().enumerate() { ba.set(i, v as u64); }
+    for (i, &v) in remainder.iter().enumerate() {
+        ba.set(i, v as u64);
+    }
     ba.write_binary(writer)?;
 
     Ok(())
@@ -100,7 +109,9 @@ pub fn data_to_writer(
 
 fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
-        if b < a { std::mem::swap(&mut b, &mut a); }
+        if b < a {
+            std::mem::swap(&mut b, &mut a);
+        }
         b %= a;
     }
     a
@@ -126,8 +137,8 @@ mod tests {
         let mut writer = Vec::new();
         data_to_writer(data, 40, 2, &mut writer).unwrap();
         assert_eq!(writer, vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
-            0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
+            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
         ]);
     }
 

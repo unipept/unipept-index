@@ -57,7 +57,7 @@
 //! Decisions that were measured and *rejected* are recorded next to the code they would have
 //! touched, so they are not rediscovered and retried. See `docs/design/` for the long form.
 
-pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
+pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
 pub mod array;
 pub mod kmer_table;
@@ -68,7 +68,7 @@ pub mod suffix_to_protein_index;
 pub use array::{SuffixArray, SuffixArrayBackend};
 pub use kmer_table::KmerTable;
 pub use sa_mappings::proteins::ProteinsBackend;
-pub use sa_searcher::{SearchTuning, MAX_VALIDATE_BATCH};
+pub use sa_searcher::{MAX_VALIDATE_BATCH, SearchTuning};
 
 /// Custom trait implemented by types that have a value that represents NULL
 pub trait Nullable<T> {

@@ -2,8 +2,8 @@ use std::error::Error;
 
 use memmap2::Mmap;
 
-use crate::Nullable;
 use super::super::SuffixToProteinMappingBackend;
+use crate::Nullable;
 
 /// Mapping backed by a memory-mapped BitVec binary file.
 ///
@@ -19,7 +19,7 @@ pub struct MmapBitVecSuffixToProtein {
     mmap: Mmap,
     bit_len: u64,
     bits_offset: usize,
-    counts_offset: usize,
+    counts_offset: usize
 }
 
 impl MmapBitVecSuffixToProtein {
@@ -43,11 +43,7 @@ impl MmapBitVecSuffixToProtein {
         let level1 = u64::from_le_bytes(self.mmap[cell_off..cell_off + 8].try_into().unwrap());
         let packed = u64::from_le_bytes(self.mmap[cell_off + 8..cell_off + 16].try_into().unwrap());
 
-        let level2 = if word_offset == 0 {
-            0u64
-        } else {
-            (packed >> ((word_offset - 1) * 9)) & 0x1FF
-        };
+        let level2 = if word_offset == 0 { 0u64 } else { (packed >> ((word_offset - 1) * 9)) & 0x1FF };
 
         let block_off = self.bits_offset + word_index * 8;
         let block = u64::from_le_bytes(self.mmap[block_off..block_off + 8].try_into().unwrap());
@@ -100,12 +96,9 @@ pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, 
     let block_count = u64::from_le_bytes(mmap[9..17].try_into()?) as usize;
     let expected_size = 17 + block_count * 8 + (block_count / 8 + 1) * 16;
     if mmap.len() < expected_size {
-        return Err(format!(
-            "Bitvec mapping file is truncated: expected {} bytes, got {}",
-            expected_size,
-            mmap.len()
-        )
-        .into());
+        return Err(
+            format!("Bitvec mapping file is truncated: expected {} bytes, got {}", expected_size, mmap.len()).into()
+        );
     }
     let bits_offset = 17;
     let counts_offset = bits_offset + block_count * 8;
@@ -119,10 +112,12 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use crate::{Nullable, ReadBinaryMmap, WriteBinary};
-    use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-    use crate::suffix_to_protein_index::preloaded::BitVecSuffixToProtein;
-    use crate::suffix_to_protein_index::mmap::MmapBackedSuffixToProteinMapping;
+    use crate::{
+        Nullable, ReadBinaryMmap, WriteBinary,
+        suffix_to_protein_index::{
+            SuffixToProteinMappingBackend, mmap::MmapBackedSuffixToProteinMapping, preloaded::BitVecSuffixToProtein
+        }
+    };
 
     fn build_text() -> InMemoryProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -148,12 +143,7 @@ mod tests {
 
         let original = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 
@@ -175,19 +165,16 @@ mod tests {
 
         let original = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 
     #[test]
     fn test_mmap_bitvec_random_equivalence() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{Hash, Hasher}
+        };
 
         let len = 2000usize;
         let mut raw: String = (0..len)
@@ -208,12 +195,7 @@ mod tests {
 
         let original = BitVecSuffixToProtein::new(&text);
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                mmap_idx.suffix_to_protein(i),
-                "mismatch at position {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), mmap_idx.suffix_to_protein(i), "mismatch at position {}", i);
         }
     }
 

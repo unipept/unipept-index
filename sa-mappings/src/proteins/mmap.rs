@@ -9,7 +9,7 @@
 use std::{error::Error, path::Path, sync::Arc};
 
 use memmap2::Mmap;
-use text_compression::{ReadBinaryMmap, ProteinText, bit_array_byte_size};
+use text_compression::{ProteinText, ReadBinaryMmap, bit_array_byte_size};
 
 use super::{ProteinRef, ProteinsBackend};
 
@@ -27,7 +27,7 @@ pub struct MmapBackedProteins {
     pub protein_count: usize,
     pub(crate) fixed_table_offset: usize,
     pub(crate) uid_data_offset: usize,
-    pub(crate) fa_data_offset: usize,
+    pub(crate) fa_data_offset: usize
 }
 
 /// Field layout of one fixed-size entry in the protein table.
@@ -36,15 +36,15 @@ pub struct MmapBackedProteins {
 /// this order; nothing but this comment ties the two together.
 mod entry_offsets {
     /// NCBI taxon id.
-    pub const TAXON_ID:   std::ops::Range<usize> = 0..4;
+    pub const TAXON_ID: std::ops::Range<usize> = 0..4;
     /// Byte offset of this protein's accession within the UID blob.
     pub const UID_OFFSET: std::ops::Range<usize> = 4..8;
     /// Length of the accession in bytes.
-    pub const UID_LEN:    std::ops::Range<usize> = 8..10;
+    pub const UID_LEN: std::ops::Range<usize> = 8..10;
     /// Byte offset of this protein's encoded annotations within the FA blob.
-    pub const FA_OFFSET:  std::ops::Range<usize> = 10..14;
+    pub const FA_OFFSET: std::ops::Range<usize> = 10..14;
     /// Length of the encoded annotations in bytes.
-    pub const FA_LEN:     std::ops::Range<usize> = 14..16;
+    pub const FA_LEN: std::ops::Range<usize> = 14..16;
     /// Total size of one entry. Entries are fixed-size so that `get` is O(1).
     pub const ENTRY_SIZE: usize = 16;
 }
@@ -65,8 +65,12 @@ impl ProteinsBackend for MmapBackedProteins {
     type Text = ProteinText;
 
     #[inline]
-    fn text(&self) -> &ProteinText { &self.text }
-    fn len(&self) -> usize { self.protein_count }
+    fn text(&self) -> &ProteinText {
+        &self.text
+    }
+    fn len(&self) -> usize {
+        self.protein_count
+    }
 
     fn touch_all_pages(&self) {
         // The whole file: the text, the entry table and both string blobs are all needed.
@@ -92,11 +96,15 @@ impl ProteinsBackend for MmapBackedProteins {
         let Some(entry) = self.entry(index) else { return };
         use entry_offsets as eo;
         let uid_off = u32::from_le_bytes(entry[eo::UID_OFFSET].try_into().unwrap()) as usize;
-        let fa_off  = u32::from_le_bytes(entry[eo::FA_OFFSET ].try_into().unwrap()) as usize;
+        let fa_off = u32::from_le_bytes(entry[eo::FA_OFFSET].try_into().unwrap()) as usize;
         let uid_ptr = self.uid_data_offset + uid_off;
-        let fa_ptr  = self.fa_data_offset  + fa_off;
-        if uid_ptr < self.mmap.len() { prefetch::prefetch_read(&self.mmap[uid_ptr] as *const u8); }
-        if fa_ptr  < self.mmap.len() { prefetch::prefetch_read(&self.mmap[fa_ptr]  as *const u8); }
+        let fa_ptr = self.fa_data_offset + fa_off;
+        if uid_ptr < self.mmap.len() {
+            prefetch::prefetch_read(&self.mmap[uid_ptr] as *const u8);
+        }
+        if fa_ptr < self.mmap.len() {
+            prefetch::prefetch_read(&self.mmap[fa_ptr] as *const u8);
+        }
     }
 
     /// Decodes the entry at `index` into slices borrowed from the mapping.
@@ -113,20 +121,20 @@ impl ProteinsBackend for MmapBackedProteins {
         debug_assert!(entry_off + eo::ENTRY_SIZE <= self.mmap.len(), "protein index {index} out of range");
         let entry = &self.mmap[entry_off..entry_off + eo::ENTRY_SIZE];
 
-        let taxon_id   = u32::from_le_bytes(entry[eo::TAXON_ID  ].try_into().unwrap());
+        let taxon_id = u32::from_le_bytes(entry[eo::TAXON_ID].try_into().unwrap());
         let uid_offset = u32::from_le_bytes(entry[eo::UID_OFFSET].try_into().unwrap()) as usize;
-        let uid_len    = u16::from_le_bytes(entry[eo::UID_LEN   ].try_into().unwrap()) as usize;
-        let fa_offset  = u32::from_le_bytes(entry[eo::FA_OFFSET ].try_into().unwrap()) as usize;
-        let fa_len     = u16::from_le_bytes(entry[eo::FA_LEN    ].try_into().unwrap()) as usize;
+        let uid_len = u16::from_le_bytes(entry[eo::UID_LEN].try_into().unwrap()) as usize;
+        let fa_offset = u32::from_le_bytes(entry[eo::FA_OFFSET].try_into().unwrap()) as usize;
+        let fa_len = u16::from_le_bytes(entry[eo::FA_LEN].try_into().unwrap()) as usize;
 
         let uid_start = self.uid_data_offset + uid_offset;
-        let fa_start  = self.fa_data_offset  + fa_offset;
+        let fa_start = self.fa_data_offset + fa_offset;
 
         ProteinRef {
             uniprot_id: std::str::from_utf8(&self.mmap[uid_start..uid_start + uid_len])
                 .expect("invalid UTF-8 in protein UID data"),
             taxon_id,
-            functional_annotations: &self.mmap[fa_start..fa_start + fa_len],
+            functional_annotations: &self.mmap[fa_start..fa_start + fa_len]
         }
     }
 }
@@ -144,37 +152,54 @@ impl ReadBinaryMmap for MmapBackedProteins {
         mmap.advise(memmap2::Advice::Random)?;
 
         let mmap_len = mmap.len();
-        if mmap_len < 8 { return Err("proteins file too short to contain text header".into()); }
+        if mmap_len < 8 {
+            return Err("proteins file too short to contain text header".into());
+        }
 
         let text_length = u64::from_le_bytes(mmap[0..8].try_into()?) as usize;
         let text_data_offset: usize = 8;
         let bit_array_bytes = bit_array_byte_size(text_length);
 
-        let meta_offset = text_data_offset.checked_add(bit_array_bytes)
+        let meta_offset = text_data_offset
+            .checked_add(bit_array_bytes)
             .ok_or_else(|| "overflow while computing metadata offset".to_string())?;
-        let meta_end = meta_offset.checked_add(24)
+        let meta_end = meta_offset
+            .checked_add(24)
             .ok_or_else(|| "overflow while computing metadata end offset".to_string())?;
-        if meta_end > mmap_len { return Err("proteins file too short to contain metadata section".into()); }
+        if meta_end > mmap_len {
+            return Err("proteins file too short to contain metadata section".into());
+        }
 
         let text = ProteinText::from_mmap(Arc::clone(&mmap), text_data_offset, text_length);
 
         let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
         let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?) as usize;
 
-        let fixed_table_offset = meta_offset.checked_add(24)
+        let fixed_table_offset = meta_offset
+            .checked_add(24)
             .ok_or_else(|| "overflow while computing fixed table offset".to_string())?;
-        let protein_entry_bytes = protein_count.checked_mul(16)
+        let protein_entry_bytes = protein_count
+            .checked_mul(16)
             .ok_or_else(|| "overflow while computing protein table size".to_string())?;
-        let uid_data_offset = fixed_table_offset.checked_add(protein_entry_bytes)
+        let uid_data_offset = fixed_table_offset
+            .checked_add(protein_entry_bytes)
             .ok_or_else(|| "overflow while computing uid data offset".to_string())?;
-        let fa_data_offset = uid_data_offset.checked_add(uid_bytes_total)
+        let fa_data_offset = uid_data_offset
+            .checked_add(uid_bytes_total)
             .ok_or_else(|| "overflow while computing fa data offset".to_string())?;
 
         if uid_data_offset > mmap_len || fa_data_offset > mmap_len {
             return Err("proteins file truncated: data section offsets exceed file length".into());
         }
 
-        Ok(Self { mmap, text, protein_count, fixed_table_offset, uid_data_offset, fa_data_offset })
+        Ok(Self {
+            mmap,
+            text,
+            protein_count,
+            fixed_table_offset,
+            uid_data_offset,
+            fa_data_offset
+        })
     }
 }
 
@@ -183,12 +208,16 @@ impl ReadBinaryMmap for MmapBackedProteins {
 #[cfg(test)]
 mod tests {
     use std::{fs::File, path::PathBuf};
+
     use tempdir::TempDir;
-    use text_compression::{ReadBinaryMmap, WriteBinary};
+    use text_compression::{ProteinTextBackend as _, ReadBinaryMmap, WriteBinary, bit_array_byte_size};
+
     use super::MmapBackedProteins;
-    use crate::proteins::{ProteinsBackend as _, preloaded::InMemoryProteins};
-    use crate::proteins::test_fixtures::{TEST_PROTEINS, write_database_file};
-    use text_compression::{ProteinTextBackend as _, bit_array_byte_size};
+    use crate::proteins::{
+        ProteinsBackend as _,
+        preloaded::InMemoryProteins,
+        test_fixtures::{TEST_PROTEINS, write_database_file}
+    };
 
     fn write_binary_to_tempfile(tmp_dir: &TempDir) -> PathBuf {
         let db = write_database_file(tmp_dir, &TEST_PROTEINS[..3]);
@@ -248,8 +277,7 @@ mod tests {
 
         let bin_path = tmp_dir.path().join("proteins.bin");
         let mut bin_file = File::create(&bin_path).unwrap();
-        InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap()
-            .write_binary(&mut bin_file).unwrap();
+        InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap().write_binary(&mut bin_file).unwrap();
         let mapped = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
 
         assert_eq!(mapped.len(), preloaded.len());
@@ -285,10 +313,8 @@ mod tests {
         // Recompute the section boundaries the way the reader does, rather than hard-coding them.
         let text_length = u64::from_le_bytes(full[0..8].try_into().unwrap()) as usize;
         let meta_offset = 8 + bit_array_byte_size(text_length);
-        let protein_count =
-            u64::from_le_bytes(full[meta_offset..meta_offset + 8].try_into().unwrap()) as usize;
-        let uid_bytes_total =
-            u64::from_le_bytes(full[meta_offset + 8..meta_offset + 16].try_into().unwrap()) as usize;
+        let protein_count = u64::from_le_bytes(full[meta_offset..meta_offset + 8].try_into().unwrap()) as usize;
+        let uid_bytes_total = u64::from_le_bytes(full[meta_offset + 8..meta_offset + 16].try_into().unwrap()) as usize;
         let fa_data_offset = meta_offset + 24 + protein_count * 16 + uid_bytes_total;
         assert!(fa_data_offset < full.len(), "fixture should have a non-empty FA blob");
 
@@ -297,7 +323,8 @@ mod tests {
             std::fs::write(&path, &full[..cut]).unwrap();
             assert!(
                 MmapBackedProteins::read_binary_mmap(&path).is_err(),
-                "{cut} of {} bytes should not load", full.len()
+                "{cut} of {} bytes should not load",
+                full.len()
             );
         }
     }

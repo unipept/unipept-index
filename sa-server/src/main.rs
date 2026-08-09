@@ -1,7 +1,5 @@
-use std::{
-    error::Error,
-    sync::Arc
-};
+use std::{error::Error, sync::Arc};
+
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -9,9 +7,13 @@ use axum::{
     routing::post
 };
 use clap::Parser;
-use sa_index::{peptide_search::{SearchResult, search_all_peptides}, sa_searcher::Searcher, SuffixArray, SuffixArrayBackend};
-use serde::Deserialize;
+use sa_index::{
+    SuffixArray, SuffixArrayBackend,
+    peptide_search::{SearchResult, search_all_peptides},
+    sa_searcher::Searcher
+};
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
+use serde::Deserialize;
 
 /// Serve peptide searches over a prebuilt suffix-array index.
 ///
@@ -35,7 +37,7 @@ pub struct Arguments {
     /// --output-kmer-table). When provided, the binary search starts from precomputed bounds
     /// instead of the whole array, which is a large saving on short peptides.
     #[arg(long)]
-    kmer_table_file: Option<String>,
+    kmer_table_file: Option<String>
 }
 
 /// Function used by serde to place a default value in the cutoff field of the input
@@ -104,7 +106,13 @@ async fn search(
 ///
 /// Returns any error occurring during the startup or uptime of the server
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
-    let Arguments { database_file, index_file, mapping_file, kmer_table_file, address } = args;
+    let Arguments {
+        database_file,
+        index_file,
+        mapping_file,
+        kmer_table_file,
+        address
+    } = args;
 
     // The backend is a compile-time choice with a large effect on memory use, and nothing else
     // at runtime reveals which one this binary has.

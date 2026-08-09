@@ -5,14 +5,16 @@
 //! backend later reads. Only the reading half is configuration-specific.
 //!
 //! See [`crate::mmap`] for the counterpart that decodes straight out of a mapping.
-use std::collections::HashMap;
-use std::error::Error;
-use std::io::{BufRead, Read, Write};
-
-use bitarray::{Binary, BitArray};
+use std::{
+    collections::HashMap,
+    error::Error,
+    io::{BufRead, Read, Write}
+};
 
 use binary_traits::{ReadBinary, WriteBinary};
-use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
+use bitarray::{Binary, BitArray};
+
+use crate::{BIT5_TO_CHAR, ProteinTextBackend, bit_array_byte_size};
 
 // ── InMemoryProteinText ───────────────────────────────────────────────────────
 
@@ -22,7 +24,7 @@ use crate::{bit_array_byte_size, BIT5_TO_CHAR, ProteinTextBackend};
 /// needs only [`crate::BIT5_TO_CHAR`].
 pub struct InMemoryProteinText {
     pub(crate) bit_array: BitArray<5>,
-    pub(crate) char_to_5bit: HashMap<u8, u8>,
+    pub(crate) char_to_5bit: HashMap<u8, u8>
 }
 
 impl InMemoryProteinText {
@@ -39,8 +41,8 @@ impl InMemoryProteinText {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
         let mut bit_array = BitArray::<5>::with_capacity(input_string.len());
         for (i, c) in input_string.chars().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(&(c as u8))
-                .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
+            let char_5bit: u8 =
+                *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
             bit_array.set(i, char_5bit as u64);
         }
         Self { bit_array, char_to_5bit }
@@ -56,8 +58,8 @@ impl InMemoryProteinText {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
         let mut bit_array = BitArray::<5>::with_capacity(input_vec.len());
         for (i, e) in input_vec.iter().enumerate() {
-            let char_5bit: u8 = *char_to_5bit.get(e)
-                .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
+            let char_5bit: u8 =
+                *char_to_5bit.get(e).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
             bit_array.set(i, char_5bit as u64);
         }
         Self { bit_array, char_to_5bit }
@@ -79,13 +81,17 @@ impl InMemoryProteinText {
     ///
     /// If `value` is outside the alphabet, or `index` is out of bounds.
     pub fn set(&mut self, index: usize, value: u8) {
-        let char_5bit: u8 = *self.char_to_5bit.get(&value)
+        let char_5bit: u8 = *self
+            .char_to_5bit
+            .get(&value)
             .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
         self.bit_array.set(index, char_5bit as u64);
     }
 
     /// Zeroes the text without reallocating.
-    pub fn clear(&mut self) { self.bit_array.clear(); }
+    pub fn clear(&mut self) {
+        self.bit_array.clear();
+    }
 }
 
 impl ProteinTextBackend for InMemoryProteinText {
@@ -95,7 +101,9 @@ impl ProteinTextBackend for InMemoryProteinText {
     }
 
     #[inline]
-    fn len(&self) -> usize { self.bit_array.len() }
+    fn len(&self) -> usize {
+        self.bit_array.len()
+    }
 
     /// Prefetches the backing word holding `index`.
     ///
@@ -140,9 +148,7 @@ impl ReadBinary for InMemoryProteinText {
         let n_bytes = bit_array_byte_size(text_length);
         let mut bit_array = BitArray::<5>::with_capacity(text_length);
         let mut limited = <&mut R as Read>::take(reader, n_bytes as u64);
-        bit_array
-            .read_binary(&mut limited)
-            .map_err(|_| "Could not parse BitArray data from binary file")?;
+        bit_array.read_binary(&mut limited).map_err(|_| "Could not parse BitArray data from binary file")?;
         // Preloaded text lives in anonymous RAM — request huge pages to cut page-walk cost.
         bit_array.advise_hugepages();
 
@@ -154,27 +160,42 @@ impl ReadBinary for InMemoryProteinText {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, BufRead};
+    use std::io::{BufRead, Read};
+
     use super::*;
 
-    pub struct FailingWriter { pub valid_write_count: usize }
+    pub struct FailingWriter {
+        pub valid_write_count: usize
+    }
     impl Write for FailingWriter {
         fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
-            if self.valid_write_count == 0 { return Err(std::io::Error::other("Write failed")); }
-            self.valid_write_count -= 1; Ok(1)
+            if self.valid_write_count == 0 {
+                return Err(std::io::Error::other("Write failed"));
+            }
+            self.valid_write_count -= 1;
+            Ok(1)
         }
-        fn flush(&mut self) -> Result<(), std::io::Error> { Ok(()) }
+        fn flush(&mut self) -> Result<(), std::io::Error> {
+            Ok(())
+        }
     }
 
-    pub struct FailingReader { pub valid_read_count: usize }
+    pub struct FailingReader {
+        pub valid_read_count: usize
+    }
     impl Read for FailingReader {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.valid_read_count == 0 { return Err(std::io::Error::other("Read failed")); }
-            self.valid_read_count -= 1; Ok(buf.len())
+            if self.valid_read_count == 0 {
+                return Err(std::io::Error::other("Read failed"));
+            }
+            self.valid_read_count -= 1;
+            Ok(buf.len())
         }
     }
     impl BufRead for FailingReader {
-        fn fill_buf(&mut self) -> std::io::Result<&[u8]> { Ok(&[]) }
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Ok(&[])
+        }
         fn consume(&mut self, _: usize) {}
     }
 
@@ -224,8 +245,12 @@ mod tests {
     fn test_build_with_capacity() {
         let input_string = "ACACA-CAC$";
         let mut text = InMemoryProteinText::with_capacity(input_string.len());
-        for (i, c) in "ACACA-CAC$".chars().enumerate() { text.set(i, c as u8); }
-        for (i, c) in "ACACA-CAC$".chars().enumerate() { assert_eq!(c as u8, text.get(i)); }
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            text.set(i, c as u8);
+        }
+        for (i, c) in "ACACA-CAC$".chars().enumerate() {
+            assert_eq!(c as u8, text.get(i));
+        }
     }
 
     #[test]
@@ -263,7 +288,9 @@ mod tests {
         text.write_binary(&mut buf).unwrap();
         let mut reader = std::io::BufReader::new(buf.as_slice());
         let loaded = InMemoryProteinText::read_binary(&mut reader).unwrap();
-        for (i, c) in input.chars().enumerate() { assert_eq!(loaded.get(i), c as u8); }
+        for (i, c) in input.chars().enumerate() {
+            assert_eq!(loaded.get(i), c as u8);
+        }
         assert_eq!(loaded.len(), input.len());
     }
 

@@ -83,16 +83,16 @@ macro_rules! bitarray_test_suite {
                 ba.write_binary(&mut buf).unwrap();
 
                 assert_eq!(buf, vec![
-                    0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45,
-                    0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
+                    0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01,
+                    0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
                 ]);
             }
 
             #[test]
             fn test_read_binary() {
                 let buf = [
-                    0xef_u8, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67,
-                    0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0,
+                    0xef_u8, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01,
+                    0x00, 0x00, 0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
                 ];
                 let mut ba = $new!(4, 40);
                 ba.read_binary(&buf[..]).unwrap();
@@ -125,7 +125,9 @@ macro_rules! bitarray_test_suite {
             #[test]
             fn test_iter_range_mid_block_start() {
                 let mut ba = $new!(8, 32);
-                for i in 0..8 { ba.set(i, (i as u64) * 111 + 7); }
+                for i in 0..8 {
+                    ba.set(i, (i as u64) * 111 + 7);
+                }
                 assert_eq!(
                     ba.iter_range(1, 6).collect::<Vec<i64>>(),
                     (1..6).map(|i| ba.get(i) as i64).collect::<Vec<i64>>()
@@ -135,7 +137,9 @@ macro_rules! bitarray_test_suite {
             #[test]
             fn test_iter_range_crosses_block_boundary() {
                 let mut ba = $new!(16, 40);
-                for i in 0..16 { ba.set(i, i as u64 * 0x100000001 + 3); }
+                for i in 0..16 {
+                    ba.set(i, i as u64 * 0x100000001 + 3);
+                }
                 for (start, end) in [(0, 16), (3, 13)] {
                     assert_eq!(
                         ba.iter_range(start, end).collect::<Vec<i64>>(),
@@ -147,7 +151,9 @@ macro_rules! bitarray_test_suite {
             #[test]
             fn test_iter_range_bits_per_value_64() {
                 let mut ba = $new!(8, 64);
-                for i in 0..8 { ba.set(i, i as u64 * 0xDEAD_BEEF + 1); }
+                for i in 0..8 {
+                    ba.set(i, i as u64 * 0xDEAD_BEEF + 1);
+                }
                 for (start, end) in [(0, 8), (2, 6)] {
                     assert_eq!(
                         ba.iter_range(start, end).collect::<Vec<i64>>(),
@@ -159,7 +165,9 @@ macro_rules! bitarray_test_suite {
             #[test]
             fn test_iter_range_bits_per_value_1() {
                 let mut ba = $new!(128, 1);
-                for i in (0..128).step_by(3) { ba.set(i, 1); }
+                for i in (0..128).step_by(3) {
+                    ba.set(i, 1);
+                }
                 for (start, end) in [(0, 128), (60, 70)] {
                     assert_eq!(
                         ba.iter_range(start, end).collect::<Vec<i64>>(),
@@ -171,7 +179,9 @@ macro_rules! bitarray_test_suite {
             #[test]
             fn test_iter_range_exact_size() {
                 let mut ba = $new!(10, 40);
-                for i in 0..10 { ba.set(i, i as u64 * 99); }
+                for i in 0..10 {
+                    ba.set(i, i as u64 * 99);
+                }
                 assert_eq!(ba.iter_range(2, 8).len(), 6);
             }
 
@@ -180,7 +190,9 @@ macro_rules! bitarray_test_suite {
             #[test]
             fn test_iter_range_matches_get_at_every_offset() {
                 let mut ba = $new!(64, 7);
-                for i in 0..64 { ba.set(i, (i as u64 * 37) & 0x7f); }
+                for i in 0..64 {
+                    ba.set(i, (i as u64 * 37) & 0x7f);
+                }
                 for start in 0..64 {
                     for end in start..64 {
                         assert_eq!(
@@ -210,8 +222,7 @@ macro_rules! assert_implementations_agree {
 
         let mask: u64 = if BITS == 64 { u64::MAX } else { (1u64 << BITS) - 1 };
         // Deterministic pseudo-random values; a plain counter would never exercise the high bits.
-        let values: Vec<u64> =
-            (0..N).map(|i| (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) & mask).collect();
+        let values: Vec<u64> = (0..N).map(|i| (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) & mask).collect();
 
         let mut constant = $crate::BitArray::<BITS>::with_capacity(N);
         let mut dynamic = $crate::DynBitArray::with_capacity(N, BITS);
@@ -254,9 +265,9 @@ mod parity {
     #[test]
     fn implementations_agree_at_every_width() {
         seq_bits!(
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-            47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+            30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+            57, 58, 59, 60, 61, 62, 63, 64
         );
     }
 }

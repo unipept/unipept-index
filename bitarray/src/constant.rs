@@ -26,7 +26,7 @@ use crate::binary::{self, Binary};
 /// a word boundary. `BITS` must be in `1..=64`; `BITS == 0` fails to compile at `MASK`.
 pub struct BitArray<const BITS: usize> {
     data: Vec<u64>,
-    len: usize,
+    len: usize
 }
 
 impl<const BITS: usize> BitArray<BITS> {
@@ -36,10 +36,7 @@ impl<const BITS: usize> BitArray<BITS> {
     /// Allocates room for `capacity` values, all zero.
     pub fn with_capacity(capacity: usize) -> Self {
         let extra = if (capacity * BITS).is_multiple_of(64) { 0 } else { 1 };
-        Self {
-            data: vec![0; capacity * BITS / 64 + extra],
-            len: capacity,
-        }
+        Self { data: vec![0; capacity * BITS / 64 + extra], len: capacity }
     }
 
     /// Requests transparent huge pages over the backing data (no-op off Linux).
@@ -94,13 +91,21 @@ impl<const BITS: usize> BitArray<BITS> {
 
     /// Bits stored per value, i.e. `BITS`. Present so callers can be generic over both
     /// implementations.
-    pub fn bits_per_value(&self) -> usize { BITS }
+    pub fn bits_per_value(&self) -> usize {
+        BITS
+    }
     /// Number of values stored.
-    pub fn len(&self) -> usize { self.len }
+    pub fn len(&self) -> usize {
+        self.len
+    }
     /// Whether the array holds no values.
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
     /// Zeroes every value without reallocating, so the buffer can be refilled.
-    pub fn clear(&mut self) { self.data.iter_mut().for_each(|x| *x = 0); }
+    pub fn clear(&mut self) {
+        self.data.iter_mut().for_each(|x| *x = 0);
+    }
 
     /// Borrows the raw backing words in `start_slice..end_slice`.
     ///
@@ -139,7 +144,7 @@ pub struct BitArrayRangeIter<'a, const BITS: usize> {
     next_word: u64,
     block_idx: usize,
     bit_off: usize,
-    remaining: usize,
+    remaining: usize
 }
 
 impl<'a, const BITS: usize> BitArrayRangeIter<'a, BITS> {
@@ -150,17 +155,20 @@ impl<'a, const BITS: usize> BitArrayRangeIter<'a, BITS> {
         if remaining == 0 {
             return Self {
                 data,
-                current_word: 0, next_word: 0,
-                block_idx: 0, bit_off: 0, remaining: 0,
+                current_word: 0,
+                next_word: 0,
+                block_idx: 0,
+                bit_off: 0,
+                remaining: 0
             };
         }
 
-        let bit_pos   = start * BITS;
+        let bit_pos = start * BITS;
         let block_idx = bit_pos / 64;
-        let bit_off   = bit_pos % 64;
+        let bit_off = bit_pos % 64;
 
         let current_word = data[block_idx];
-        let next_word    = if block_idx + 1 < data.len() { data[block_idx + 1] } else { 0 };
+        let next_word = if block_idx + 1 < data.len() { data[block_idx + 1] } else { 0 };
 
         Self { data, current_word, next_word, block_idx, bit_off, remaining }
     }
@@ -171,7 +179,9 @@ impl<const BITS: usize> Iterator for BitArrayRangeIter<'_, BITS> {
 
     #[inline]
     fn next(&mut self) -> Option<i64> {
-        if self.remaining == 0 { return None; }
+        if self.remaining == 0 {
+            return None;
+        }
         self.remaining -= 1;
 
         let val = if self.bit_off + BITS <= 64 {
@@ -183,14 +193,10 @@ impl<const BITS: usize> Iterator for BitArrayRangeIter<'_, BITS> {
 
         self.bit_off += BITS;
         if self.bit_off >= 64 {
-            self.bit_off   -= 64;
+            self.bit_off -= 64;
             self.block_idx += 1;
             self.current_word = self.next_word;
-            self.next_word = if self.block_idx + 1 < self.data.len() {
-                self.data[self.block_idx + 1]
-            } else {
-                0
-            };
+            self.next_word = if self.block_idx + 1 < self.data.len() { self.data[self.block_idx + 1] } else { 0 };
         }
 
         Some(val as i64)
@@ -209,7 +215,9 @@ impl<const BITS: usize> ExactSizeIterator for BitArrayRangeIter<'_, BITS> {}
 /// Constructor shim for the shared suite: the width is a const generic here.
 #[cfg(test)]
 macro_rules! new_bitarray {
-    ($capacity:expr, $bits:literal) => { BitArray::<$bits>::with_capacity($capacity) };
+    ($capacity:expr, $bits:literal) => {
+        BitArray::<$bits>::with_capacity($capacity)
+    };
 }
 
 #[cfg(test)]

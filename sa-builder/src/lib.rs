@@ -37,7 +37,7 @@ pub struct Arguments {
     pub output_kmer_table: Option<String>,
     /// The k-mer size used when building the k-mer bounds table (default 4).
     #[arg(long, default_value_t = 4)]
-    pub kmer_size: usize,
+    pub kmer_size: usize
 }
 
 /// Enum representing the two possible algorithms to construct the suffix array

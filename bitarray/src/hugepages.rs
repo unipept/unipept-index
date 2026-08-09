@@ -21,11 +21,7 @@ pub(crate) fn advise(data: &[u64]) {
         // SAFETY: advises a sub-range of a live, page-aligned allocation; MADV_HUGEPAGE is
         // a hint that never reads, frees, or moves the memory.
         unsafe {
-            libc::madvise(
-                aligned_start as *mut libc::c_void,
-                aligned_end - aligned_start,
-                libc::MADV_HUGEPAGE,
-            );
+            libc::madvise(aligned_start as *mut libc::c_void, aligned_end - aligned_start, libc::MADV_HUGEPAGE);
         }
     }
 }

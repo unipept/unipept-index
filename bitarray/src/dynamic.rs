@@ -23,7 +23,7 @@ pub struct DynBitArray {
     data: Vec<u64>,
     mask: u64,
     len: usize,
-    bits_per_value: usize,
+    bits_per_value: usize
 }
 
 impl DynBitArray {
@@ -36,7 +36,7 @@ impl DynBitArray {
             data: vec![0; capacity * bits_per_value / 64 + extra],
             mask: if bits_per_value == 64 { u64::MAX } else { (1 << bits_per_value) - 1 },
             len: capacity,
-            bits_per_value,
+            bits_per_value
         }
     }
 
@@ -86,13 +86,21 @@ impl DynBitArray {
     }
 
     /// Bits stored per value.
-    pub fn bits_per_value(&self) -> usize { self.bits_per_value }
+    pub fn bits_per_value(&self) -> usize {
+        self.bits_per_value
+    }
     /// Number of values stored.
-    pub fn len(&self) -> usize { self.len }
+    pub fn len(&self) -> usize {
+        self.len
+    }
     /// Whether the array holds no values.
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
     /// Zeroes every value without reallocating, so the buffer can be refilled.
-    pub fn clear(&mut self) { self.data.iter_mut().for_each(|x| *x = 0); }
+    pub fn clear(&mut self) {
+        self.data.iter_mut().for_each(|x| *x = 0);
+    }
 
     /// Borrows the raw backing words in `start_slice..end_slice`.
     ///
@@ -131,7 +139,7 @@ pub struct DynBitArrayRangeIter<'a> {
     next_word: u64,
     block_idx: usize,
     bit_off: usize,
-    remaining: usize,
+    remaining: usize
 }
 
 impl<'a> DynBitArrayRangeIter<'a> {
@@ -139,20 +147,34 @@ impl<'a> DynBitArrayRangeIter<'a> {
         let remaining = end.saturating_sub(start);
         if remaining == 0 {
             return Self {
-                data, bits_per_value, mask,
-                current_word: 0, next_word: 0,
-                block_idx: 0, bit_off: 0, remaining: 0,
+                data,
+                bits_per_value,
+                mask,
+                current_word: 0,
+                next_word: 0,
+                block_idx: 0,
+                bit_off: 0,
+                remaining: 0
             };
         }
 
-        let bit_pos   = start * bits_per_value;
+        let bit_pos = start * bits_per_value;
         let block_idx = bit_pos / 64;
-        let bit_off   = bit_pos % 64;
+        let bit_off = bit_pos % 64;
 
         let current_word = data[block_idx];
-        let next_word    = if block_idx + 1 < data.len() { data[block_idx + 1] } else { 0 };
+        let next_word = if block_idx + 1 < data.len() { data[block_idx + 1] } else { 0 };
 
-        Self { data, bits_per_value, mask, current_word, next_word, block_idx, bit_off, remaining }
+        Self {
+            data,
+            bits_per_value,
+            mask,
+            current_word,
+            next_word,
+            block_idx,
+            bit_off,
+            remaining
+        }
     }
 }
 
@@ -161,7 +183,9 @@ impl Iterator for DynBitArrayRangeIter<'_> {
 
     #[inline]
     fn next(&mut self) -> Option<i64> {
-        if self.remaining == 0 { return None; }
+        if self.remaining == 0 {
+            return None;
+        }
         self.remaining -= 1;
 
         let val = if self.bit_off + self.bits_per_value <= 64 {
@@ -173,14 +197,10 @@ impl Iterator for DynBitArrayRangeIter<'_> {
 
         self.bit_off += self.bits_per_value;
         if self.bit_off >= 64 {
-            self.bit_off   -= 64;
+            self.bit_off -= 64;
             self.block_idx += 1;
             self.current_word = self.next_word;
-            self.next_word = if self.block_idx + 1 < self.data.len() {
-                self.data[self.block_idx + 1]
-            } else {
-                0
-            };
+            self.next_word = if self.block_idx + 1 < self.data.len() { self.data[self.block_idx + 1] } else { 0 };
         }
 
         Some(val as i64)
@@ -199,7 +219,9 @@ impl ExactSizeIterator for DynBitArrayRangeIter<'_> {}
 /// Constructor shim for the shared suite: the width is a runtime argument here.
 #[cfg(test)]
 macro_rules! new_bitarray {
-    ($capacity:expr, $bits:literal) => { DynBitArray::with_capacity($capacity, $bits) };
+    ($capacity:expr, $bits:literal) => {
+        DynBitArray::with_capacity($capacity, $bits)
+    };
 }
 
 #[cfg(test)]

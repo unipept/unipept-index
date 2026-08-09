@@ -19,10 +19,8 @@
 use rayon::prelude::*;
 use sa_mappings::proteins::ProteinsBackend;
 
-use crate::array::SuffixArrayBackend;
-use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
-
 use super::{SearchAllSuffixesResult, Searcher};
+use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
 /// Default cross-query MLP batch size. Chosen from the full-DB sweep: batching is a win on
 /// long peptides (search-bound) and neutral on short/retrieval-bound ones; the gain plateaus
@@ -46,7 +44,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         max_matches: usize,
         equate_il: bool,
         tryptic: bool,
-        batch_size: usize,
+        batch_size: usize
     ) -> Vec<SearchAllSuffixesResult> {
         if batch_size > 1 {
             peptides
@@ -64,7 +62,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use crate::sa_searcher::{test_helpers::example_searcher, SearchAllSuffixesResult};
+    use crate::sa_searcher::{SearchAllSuffixesResult, test_helpers::example_searcher};
 
     /// Orchestrated multi-peptide search must be identical whether scalar (batch 1) or batched,
     /// across the equate_il × tryptic combinations, and independent of batch size.

@@ -4,12 +4,12 @@ use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
 use text_compression::ProteinText;
 
 use crate::{
+    SuffixArray,
     array::OriginalSA,
     sa_searcher::Searcher,
     suffix_to_protein_index::{
-        BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping,
-    },
-    SuffixArray,
+        BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping
+    }
 };
 
 /// Example protein set used across the search/batched/retrieval tests.
@@ -20,10 +20,26 @@ use crate::{
 pub(crate) fn get_example_proteins() -> Proteins {
     let text = ProteinText::from_string("AI-CLACVAA-AC-KCRLY$");
     Proteins::new(text, vec![
-        Protein { uniprot_id: "P0".to_string(), taxon_id: 10, functional_annotations: vec![] },
-        Protein { uniprot_id: "P1".to_string(), taxon_id: 20, functional_annotations: vec![] },
-        Protein { uniprot_id: "P2".to_string(), taxon_id: 30, functional_annotations: vec![] },
-        Protein { uniprot_id: "P3".to_string(), taxon_id: 40, functional_annotations: vec![] },
+        Protein {
+            uniprot_id: "P0".to_string(),
+            taxon_id: 10,
+            functional_annotations: vec![]
+        },
+        Protein {
+            uniprot_id: "P1".to_string(),
+            taxon_id: 20,
+            functional_annotations: vec![]
+        },
+        Protein {
+            uniprot_id: "P2".to_string(),
+            taxon_id: 30,
+            functional_annotations: vec![]
+        },
+        Protein {
+            uniprot_id: "P3".to_string(),
+            taxon_id: 40,
+            functional_annotations: vec![]
+        },
     ])
 }
 
@@ -31,8 +47,7 @@ pub(crate) fn get_example_proteins() -> Proteins {
 ///
 /// Precomputed rather than derived, because several tests assert against specific suffix
 /// positions; changing the fixture text means recomputing this.
-pub(crate) const EXAMPLE_SA_FULL: [i64; 20] =
-    [19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18];
+pub(crate) const EXAMPLE_SA_FULL: [i64; 20] = [19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18];
 
 /// The same text sampled at sparseness 3 — only positions divisible by 3 are indexed.
 pub(crate) const EXAMPLE_SA_SPARSE3: [i64; 7] = [9, 0, 3, 12, 15, 6, 18];
@@ -56,7 +71,7 @@ pub(crate) fn example_searcher_with(sa: &[i64], sparseness: u8, mapping: Mapping
     let stp = match mapping {
         Mapping::Dense => SuffixToProteinMapping::Dense(DenseSuffixToProtein::new(proteins.text())),
         Mapping::Sparse => SuffixToProteinMapping::Sparse(SparseSuffixToProtein::new(proteins.text())),
-        Mapping::BitVec => SuffixToProteinMapping::BitVec(BitVecSuffixToProtein::new(proteins.text())),
+        Mapping::BitVec => SuffixToProteinMapping::BitVec(BitVecSuffixToProtein::new(proteins.text()))
     };
     Searcher::new(SuffixArray::Original(OriginalSA(sa.to_vec(), sparseness)), proteins, stp)
 }
@@ -110,12 +125,10 @@ pub(crate) fn tryptic_fixture_peptides() -> Vec<Vec<u8>> {
 /// the sparse layout `search_matching_suffixes` compensates for with its `skip` loop.
 /// Each `-`-separated segment becomes a protein with taxon `10, 20, …`.
 pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> Searcher<SuffixArray> {
-    let normalised: Vec<u8> =
-        text.bytes().map(|c| if c == b'L' { b'I' } else { c }).collect();
+    let normalised: Vec<u8> = text.bytes().map(|c| if c == b'L' { b'I' } else { c }).collect();
 
-    let mut positions: Vec<i64> = (0..text.len() as i64)
-        .filter(|p| (*p as usize).is_multiple_of(sparseness as usize))
-        .collect();
+    let mut positions: Vec<i64> =
+        (0..text.len() as i64).filter(|p| (*p as usize).is_multiple_of(sparseness as usize)).collect();
     positions.sort_by(|&a, &b| normalised[a as usize..].cmp(&normalised[b as usize..]));
 
     let proteins = Proteins::new(
@@ -126,14 +139,14 @@ pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> Searcher<SuffixA
             .map(|(i, _)| Protein {
                 uniprot_id: format!("P{i}"),
                 taxon_id: (i as u32 + 1) * 10,
-                functional_annotations: vec![],
+                functional_annotations: vec![]
             })
-            .collect(),
+            .collect()
     );
     let stp = BitVecSuffixToProtein::new(proteins.text());
     Searcher::new(
         SuffixArray::Original(OriginalSA(positions, sparseness)),
         proteins,
-        SuffixToProteinMapping::BitVec(stp),
+        SuffixToProteinMapping::BitVec(stp)
     )
 }

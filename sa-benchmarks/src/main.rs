@@ -25,25 +25,27 @@
 //! the cost of perturbing what it measures — keep it off for timing runs.
 //! See `matrix_bench.sh` / `mlp_sweep.sh` next to this crate for the driver scripts.
 
-use std::collections::HashMap;
-use std::error::Error;
-use std::fs::{File, OpenOptions, create_dir_all};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    error::Error,
+    fs::{File, OpenOptions, create_dir_all},
+    io::{BufRead, BufReader, Read, Write},
+    path::{Path, PathBuf},
+    time::Instant
+};
 
 use clap::Parser;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
-use sa_index::kmer_table::AMINO_ACID_COUNT;
-use sa_index::{sa_searcher::{DEFAULT_MLP_BATCH, SearchAllSuffixesResult, Searcher}, KmerTable, SearchTuning, SuffixArray, SuffixArrayBackend};
+use sa_index::{
+    KmerTable, ProteinsBackend as _, SearchTuning, SuffixArray, SuffixArrayBackend,
+    kmer_table::AMINO_ACID_COUNT,
+    sa_searcher::{DEFAULT_MLP_BATCH, SearchAllSuffixesResult, Searcher},
+    suffix_to_protein_index::SuffixToProteinMappingBackend as _
+};
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
-use sa_index::ProteinsBackend as _;
-use sa_index::suffix_to_protein_index::SuffixToProteinMappingBackend as _;
 use text_compression::ProteinTextBackend as _;
 
 /// Schema version — increment when the output JSON format changes.
@@ -71,15 +73,18 @@ enum WarmupMode {
     Count(usize),
     /// Touch all pages, then run N peptides through the search + retrieval pipeline.
     /// Recommended for mmap: page-cache warmup alone leaves CPU caches and TLB cold.
-    AllThenCount(usize),
+    AllThenCount(usize)
 }
 
 impl std::str::FromStr for WarmupMode {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "all" { return Ok(WarmupMode::All); }
+        if s == "all" {
+            return Ok(WarmupMode::All);
+        }
         if let Some(rest) = s.strip_prefix("all:") {
-            return rest.parse::<usize>()
+            return rest
+                .parse::<usize>()
                 .map(WarmupMode::AllThenCount)
                 .map_err(|_| format!("expected 'all:<count>', got '{}'", s));
         }
@@ -231,7 +236,7 @@ struct Args {
     /// Print the planned config list for the matrix sweep and exit, without
     /// loading the index. Use this to eyeball a sweep before committing a multi-hour run.
     #[arg(long)]
-    dry_run: bool,
+    dry_run: bool
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +268,7 @@ struct BenchmarkConfig {
     retrieval_prefetch_distance: usize,
     /// Which sweep produced this record: "single" (non-matrix CLI run) or "grid" (the trimmed
     /// default matrix grid).
-    phase: String,
+    phase: String
 }
 
 #[derive(Serialize)]
@@ -289,7 +294,7 @@ struct BenchmarkResult {
     /// `candidates_accepted` and `Searcher::candidates_accepted`'s doc comment.
     candidates_examined: u64,
     /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `metrics`).
-    candidates_accepted: u64,
+    candidates_accepted: u64
 }
 
 /// Spread of throughput across the `runs` timed reps of a single config. Emitted in matrix
@@ -302,7 +307,7 @@ struct RunStats {
     qps_p10: f64,
     qps_p50: f64,
     qps_p90: f64,
-    qps_max: f64,
+    qps_max: f64
 }
 
 #[derive(Serialize)]
@@ -314,7 +319,7 @@ struct BenchmarkRecord {
     result: BenchmarkResult,
     /// Per-config throughput spread over all reps (matrix mode only; omitted otherwise).
     #[serde(skip_serializing_if = "Option::is_none")]
-    stats: Option<RunStats>,
+    stats: Option<RunStats>
 }
 
 /// Linear-interpolated percentile of an already-sorted (ascending) slice. `p` in [0, 1].
@@ -349,9 +354,7 @@ fn generate_peptides(rng: &mut impl Rng, count: usize, min_len: usize, max_len: 
     (0..count)
         .map(|_| {
             let len = rng.gen_range(min_len..=max_len);
-            (0..len)
-                .map(|_| AMINO_ACIDS[rng.gen_range(0..AMINO_ACIDS.len())] as char)
-                .collect()
+            (0..len).map(|_| AMINO_ACIDS[rng.gen_range(0..AMINO_ACIDS.len())] as char).collect()
         })
         .collect()
 }
@@ -389,7 +392,7 @@ fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, use_
 
     // Suffix-to-protein mapping (see suffix_to_protein_index/{dense,sparse,bitvec}.rs)
     let mapping_bytes = match mapping_type {
-        "dense" => text_len * 4, // Vec<u32> with one u32 per text character
+        "dense" => text_len * 4,             // Vec<u32> with one u32 per text character
         "sparse" => (protein_count + 2) * 8, // Vec<i64> with one i64 per protein boundary
         "bitvec" => {
             // One bit per text character + Rank9 superblock overhead (~16 bytes per 512 bits)
@@ -398,13 +401,11 @@ fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, use_
             let rank9_bytes = superblock_count * 16;
             bits_bytes + rank9_bytes
         }
-        _ => 0,
+        _ => 0
     };
 
     // k-mer table size: 16 bytes per entry, AMINO_ACID_COUNT^k entries total
-    let kmer_table_bytes = searcher.kmer_table.as_ref().map_or(0, |t| {
-        (AMINO_ACID_COUNT as u64).pow(t.k as u32) * 16
-    });
+    let kmer_table_bytes = searcher.kmer_table.as_ref().map_or(0, |t| (AMINO_ACID_COUNT as u64).pow(t.k as u32) * 16);
 
     sa_bytes + text_bytes + metadata_bytes + mapping_bytes + kmer_table_bytes
 }
@@ -422,7 +423,16 @@ fn measure_process_memory() -> u64 {
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matches: usize, equate_il: bool, tryptic: bool, mlp_batch: usize, theoretical_max_memory: u64, baseline_memory: u64) -> BenchmarkResult {
+fn run_benchmark(
+    searcher: &Searcher<SuffixArray>,
+    peptides: &[String],
+    max_matches: usize,
+    equate_il: bool,
+    tryptic: bool,
+    mlp_batch: usize,
+    theoretical_max_memory: u64,
+    baseline_memory: u64
+) -> BenchmarkResult {
     // Memory snapshot before any timing starts — captures index-resident pages only
     let index_memory = measure_process_memory().saturating_sub(baseline_memory);
 
@@ -456,15 +466,12 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
             SearchAllSuffixesResult::MaxMatches(suf) | SearchAllSuffixesResult::SearchResult(suf) => {
                 Some(suf.as_slice())
             }
-            SearchAllSuffixesResult::NoMatches => None,
+            SearchAllSuffixesResult::NoMatches => None
         })
         .collect();
 
     let retrieval_start = Instant::now();
-    let retrieved: Vec<Vec<_>> = matched_suffixes
-        .par_iter()
-        .map(|suf| searcher.retrieve_proteins(suf))
-        .collect();
+    let retrieved: Vec<Vec<_>> = matched_suffixes.par_iter().map(|suf| searcher.retrieve_proteins(suf)).collect();
     let retrieval_duration_ns = retrieval_start.elapsed().as_nanos() as u64;
 
     // Aggregate stats
@@ -476,11 +483,8 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
     let cutoff_reached = suffix_results.iter().any(|r| matches!(r, SearchAllSuffixesResult::MaxMatches(_)));
 
     let total_duration_ns = search_duration_ns + retrieval_duration_ns;
-    let throughput_qps = if total_duration_ns > 0 {
-        peptides.len() as f64 / (total_duration_ns as f64 / 1e9)
-    } else {
-        0.0
-    };
+    let throughput_qps =
+        if total_duration_ns > 0 { peptides.len() as f64 / (total_duration_ns as f64 / 1e9) } else { 0.0 };
 
     BenchmarkResult {
         search_duration_ns,
@@ -497,7 +501,7 @@ fn run_benchmark(searcher: &Searcher<SuffixArray>, peptides: &[String], max_matc
         search_bounds_ns,
         match_iter_ns,
         candidates_examined,
-        candidates_accepted,
+        candidates_accepted
     }
 }
 
@@ -511,7 +515,7 @@ struct GridCell {
     kmer_k: usize,
     equate_il: bool,
     tryptic: bool,
-    mlp_batch: usize,
+    mlp_batch: usize
 }
 
 /// The `SearchTuning` the CLI asks for. Defaults match `SearchTuning::default()`, so this is
@@ -520,7 +524,7 @@ fn tuning_from(args: &Args) -> SearchTuning {
     SearchTuning {
         validate_batch: args.validate_batch,
         validate_prefetch_threshold: args.validate_prefetch_threshold,
-        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
+        retrieval_prefetch_distance: args.retrieval_prefetch_distance
     }
 }
 
@@ -569,7 +573,12 @@ fn expand_cells(args: &Args, file_bucket: &str) -> Vec<GridCell> {
 /// Swaps the k-mer table of size `k` into `searcher.kmer_table`, returning whatever was
 /// previously attached to its owning slot (`table5`/`table6`) first. All swaps are `Option`
 /// moves (pointer-sized), so this is cheap to call once per cell regardless of sweep order.
-fn ensure_kmer_table(searcher: &mut Searcher<SuffixArray>, table5: &mut Option<KmerTable>, table6: &mut Option<KmerTable>, k: usize) {
+fn ensure_kmer_table(
+    searcher: &mut Searcher<SuffixArray>,
+    table5: &mut Option<KmerTable>,
+    table6: &mut Option<KmerTable>,
+    k: usize
+) {
     if let Some(t) = searcher.kmer_table.take() {
         match t.k {
             5 => *table5 = Some(t),
@@ -580,7 +589,7 @@ fn ensure_kmer_table(searcher: &mut Searcher<SuffixArray>, table5: &mut Option<K
     searcher.kmer_table = match k {
         5 => table5.take(),
         6 => table6.take(),
-        _ => None,
+        _ => None
     };
 }
 
@@ -607,7 +616,7 @@ struct CellSpec<'a> {
     tryptic: bool,
     mlp_batch: usize,
     kmer_k: usize,
-    phase: &'a str,
+    phase: &'a str
 }
 
 /// Runs one config for `args.runs` reps, prints the summary line, and appends one aggregated
@@ -617,12 +626,23 @@ fn run_cell(
     peptides: &[String],
     args: &Args,
     spec: CellSpec,
-    output_file: &mut File,
+    output_file: &mut File
 ) -> Result<(), Box<dyn Error>> {
     // Run every rep, then summarise: one record per config with a spread, and the median-qps
     // rep kept as the representative detailed `result`.
     let mut results: Vec<BenchmarkResult> = (0..args.runs)
-        .map(|_| run_benchmark(searcher, peptides, args.max_matches, spec.equate_il, spec.tryptic, spec.mlp_batch, spec.theoretical_max, spec.baseline_memory))
+        .map(|_| {
+            run_benchmark(
+                searcher,
+                peptides,
+                args.max_matches,
+                spec.equate_il,
+                spec.tryptic,
+                spec.mlp_batch,
+                spec.theoretical_max,
+                spec.baseline_memory
+            )
+        })
         .collect();
 
     let mut qps: Vec<f64> = results.iter().map(|r| r.throughput_qps).collect();
@@ -633,11 +653,9 @@ fn run_cell(
         qps_p10: percentile(&qps, 0.10),
         qps_p50: percentile(&qps, 0.50),
         qps_p90: percentile(&qps, 0.90),
-        qps_max: *qps.last().unwrap(),
+        qps_max: *qps.last().unwrap()
     };
-    let band = if stats.qps_p50 > 0.0 {
-        (stats.qps_p90 - stats.qps_p10) / 2.0 / stats.qps_p50 * 100.0
-    } else { 0.0 };
+    let band = if stats.qps_p50 > 0.0 { (stats.qps_p90 - stats.qps_p10) / 2.0 / stats.qps_p50 * 100.0 } else { 0.0 };
 
     // Representative rep = the one nearest the median throughput; also carries the detailed
     // per-phase metrics (search_bounds_ns / match_iter_ns / candidate counts) printed below.
@@ -657,10 +675,20 @@ fn run_cell(
 
     eprintln!(
         "  {} {} il={} tr={} batch={} kmer={} tuning{{vb={} vpt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
-        spec.source, spec.phase, spec.equate_il, spec.tryptic, spec.mlp_batch, spec.kmer_k,
-        searcher.tuning.validate_batch, searcher.tuning.validate_prefetch_threshold,
+        spec.source,
+        spec.phase,
+        spec.equate_il,
+        spec.tryptic,
+        spec.mlp_batch,
+        spec.kmer_k,
+        searcher.tuning.validate_batch,
+        searcher.tuning.validate_prefetch_threshold,
         searcher.tuning.retrieval_prefetch_distance,
-        stats.qps_p50, band, stats.qps_p10, stats.qps_p90, accept_note,
+        stats.qps_p50,
+        band,
+        stats.qps_p10,
+        stats.qps_p90,
+        accept_note,
     );
 
     let record = BenchmarkRecord {
@@ -685,10 +713,10 @@ fn run_cell(
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            phase: spec.phase.to_string(),
+            phase: spec.phase.to_string()
         },
         result: representative,
-        stats: Some(stats),
+        stats: Some(stats)
     };
     writeln!(output_file, "{}", serde_json::to_string(&record)?)?;
     Ok(())
@@ -726,7 +754,12 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
         println!();
     }
 
-    println!("TOTAL this backend: {} configs x {} runs = {} timed executions", grand_total, args.runs, grand_total * args.runs as usize);
+    println!(
+        "TOTAL this backend: {} configs x {} runs = {} timed executions",
+        grand_total,
+        args.runs,
+        grand_total * args.runs as usize
+    );
     println!("Run once per backend (preloaded, mmap) for the full sweep.");
     Ok(())
 }
@@ -753,7 +786,12 @@ fn warmup_touch_pages(searcher: &Searcher<SuffixArray>) {
 /// pipeline, in batches, discarding the results. Stops early if the file runs out.
 fn warmup_pipeline(searcher: &Searcher<SuffixArray>, args: &Args, count: usize) -> Result<(), Box<dyn Error>> {
     let warmup_path = args.index_dir.join("warmup.txt");
-    eprintln!("Warming up with {} peptides from {} (batch size {})...", count, warmup_path.display(), WARMUP_BATCH_SIZE);
+    eprintln!(
+        "Warming up with {} peptides from {} (batch size {})...",
+        count,
+        warmup_path.display(),
+        WARMUP_BATCH_SIZE
+    );
     let mut lines = BufReader::new(File::open(&warmup_path)?).lines();
     let mut remaining = count;
     while remaining > 0 {
@@ -768,11 +806,10 @@ fn warmup_pipeline(searcher: &Searcher<SuffixArray>, args: &Args, count: usize) 
                 peptide.trim_end().to_uppercase().as_bytes(),
                 args.max_matches,
                 args.equate_il,
-                args.tryptic,
+                args.tryptic
             );
             match result {
-                SearchAllSuffixesResult::SearchResult(ref suf)
-                | SearchAllSuffixesResult::MaxMatches(ref suf) => {
+                SearchAllSuffixesResult::SearchResult(ref suf) | SearchAllSuffixesResult::MaxMatches(ref suf) => {
                     let _ = searcher.retrieve_proteins(suf);
                 }
                 SearchAllSuffixesResult::NoMatches => {}
@@ -799,7 +836,7 @@ fn run_matrix(
     sa_type: &str,
     sample_rate: u8,
     bits_per_value: usize,
-    baseline_memory: u64,
+    baseline_memory: u64
 ) -> Result<(), Box<dyn Error>> {
     if args.matrix_files.is_empty() {
         return Err("--matrix requires at least one --matrix-files entry".into());
@@ -812,13 +849,25 @@ fn run_matrix(
     // difference (see expand_cells / --matrix-kmer6), it isn't worth the build/load cost
     // unless someone explicitly opts in.
     let mut table5: Option<KmerTable> = Some(match &args.kmer5_file {
-        Some(p) => { eprintln!("Loading 5-mer table from {}...", p.display()); load_kmer_table_file(p.to_str().unwrap())? }
-        None => { eprintln!("Building 5-mer table..."); KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), 5) }
+        Some(p) => {
+            eprintln!("Loading 5-mer table from {}...", p.display());
+            load_kmer_table_file(p.to_str().unwrap())?
+        }
+        None => {
+            eprintln!("Building 5-mer table...");
+            KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), 5)
+        }
     });
     let mut table6: Option<KmerTable> = if args.matrix_kmer6 {
         Some(match &args.kmer6_file {
-            Some(p) => { eprintln!("Loading 6-mer table from {}...", p.display()); load_kmer_table_file(p.to_str().unwrap())? }
-            None => { eprintln!("Building 6-mer table..."); KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), 6) }
+            Some(p) => {
+                eprintln!("Loading 6-mer table from {}...", p.display());
+                load_kmer_table_file(p.to_str().unwrap())?
+            }
+            None => {
+                eprintln!("Building 6-mer table...");
+                KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), 6)
+            }
         })
     } else {
         None
@@ -845,11 +894,20 @@ fn run_matrix(
 
     for pep_path in &args.matrix_files {
         let peptides: Vec<String> = BufReader::new(File::open(pep_path)?)
-            .lines().take(args.amount_of_peptides).collect::<Result<_, _>>()?;
+            .lines()
+            .take(args.amount_of_peptides)
+            .collect::<Result<_, _>>()?;
         if peptides.len() < args.amount_of_peptides {
-            return Err(format!("{} has only {} peptides, need {}", pep_path.display(), peptides.len(), args.amount_of_peptides).into());
+            return Err(format!(
+                "{} has only {} peptides, need {}",
+                pep_path.display(),
+                peptides.len(),
+                args.amount_of_peptides
+            )
+            .into());
         }
-        let (p_min, p_max) = peptides.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
+        let (p_min, p_max) =
+            peptides.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
         let source = pep_path.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
 
         // Everything the cells of this file share; the per-cell fields are filled in below.
@@ -869,7 +927,7 @@ fn run_matrix(
             tryptic: false,
             mlp_batch: 1,
             kmer_k: 0,
-            phase: "grid",
+            phase: "grid"
         };
 
         eprintln!("-- {} : grid --", source);
@@ -921,7 +979,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         0 => "dense",
         1 => "sparse",
         2 => "bitvec",
-        _ => "unknown",
+        _ => "unknown"
     };
 
     // Warm up the Rayon thread pool so its thread stacks are included in the baseline.
@@ -935,8 +993,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Load index
     eprintln!("Loading suffix array from {}...", sa_path.display());
     let suffix_array = load_suffix_array_file(sa_path.to_str().unwrap())?;
-    eprintln!("  {} items, {} bits/value, sample rate {}",
-        suffix_array.len(), suffix_array.bits_per_value(), suffix_array.sample_rate());
+    eprintln!(
+        "  {} items, {} bits/value, sample rate {}",
+        suffix_array.len(),
+        suffix_array.bits_per_value(),
+        suffix_array.sample_rate()
+    );
 
     eprintln!("Loading proteins from {}...", proteins_path.display());
     let proteins = load_proteins_file(proteins_path.to_str().unwrap())?;
@@ -975,9 +1037,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Load peptides: either all at once from a file (for sequential chunking across runs)
     // or generate fresh random peptides for each run.
     let all_peptides: Option<Vec<String>> = if let Some(ref path) = args.peptide_file {
-        let peptides: Vec<String> = BufReader::new(File::open(path)?)
-            .lines()
-            .collect::<Result<_, _>>()?;
+        let peptides: Vec<String> = BufReader::new(File::open(path)?).lines().collect::<Result<_, _>>()?;
         if peptides.is_empty() {
             return Err(format!("peptide file '{}' is empty", path.display()).into());
         }
@@ -990,7 +1050,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 args.runs,
                 args.amount_of_peptides,
                 required,
-            ).into());
+            )
+            .into());
         }
         eprintln!("Loaded {} peptides from {}", peptides.len(), path.display());
         Some(peptides)
@@ -1000,7 +1061,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let peptide_source = match &args.peptide_file {
         Some(p) => p.display().to_string(),
-        None => "random".to_string(),
+        None => "random".to_string()
     };
 
     // Optional warmup pass (not timed)
@@ -1025,11 +1086,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Prepare output file
     create_dir_all(&args.output)?;
     let output_path = args.output.join(format!("{}.jsonl", args.label));
-    let mut output_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&output_path)?;
+    let mut output_file = OpenOptions::new().create(true).write(true).truncate(true).open(&output_path)?;
 
     eprintln!();
     eprintln!("Starting {} benchmark run(s) — results → {}", args.runs, output_path.display());
@@ -1038,8 +1095,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // RNG for random mode. Seeded → reproducible stream across runs and invocations; otherwise
     // seeded from OS entropy. Unused in file mode (peptides come from disk).
     let mut rng = match args.seed {
-        Some(s) => { eprintln!("Random peptide seed: {}", s); StdRng::seed_from_u64(s) }
-        None => StdRng::from_entropy(),
+        Some(s) => {
+            eprintln!("Random peptide seed: {}", s);
+            StdRng::seed_from_u64(s)
+        }
+        None => StdRng::from_entropy()
     };
 
     for run in 1..=args.runs {
@@ -1050,18 +1110,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let start = (run as usize - 1) * args.amount_of_peptides;
                 all[start..start + args.amount_of_peptides].to_vec()
             }
-            None => generate_peptides(
-                &mut rng,
-                args.amount_of_peptides,
-                args.peptide_length_min,
-                args.peptide_length_max,
-            ),
+            None => {
+                generate_peptides(&mut rng, args.amount_of_peptides, args.peptide_length_min, args.peptide_length_max)
+            }
         };
 
-        let (p_min, p_max) = run_peptides.iter().fold(
-            (usize::MAX, 0usize),
-            |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())),
-        );
+        let (p_min, p_max) =
+            run_peptides.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
 
         let config = BenchmarkConfig {
             sa_type: sa_type.to_string(),
@@ -1081,10 +1136,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            phase: "single".to_string(),
+            phase: "single".to_string()
         };
 
-        let result = run_benchmark(&searcher, &run_peptides, args.max_matches, args.equate_il, args.tryptic, args.mlp_batch, theoretical_max, baseline_memory);
+        let result = run_benchmark(
+            &searcher,
+            &run_peptides,
+            args.max_matches,
+            args.equate_il,
+            args.tryptic,
+            args.mlp_batch,
+            theoretical_max,
+            baseline_memory
+        );
 
         let record = BenchmarkRecord {
             version: SCHEMA_VERSION,
@@ -1092,7 +1156,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             commit: env!("GIT_COMMIT_HASH").to_string(),
             config,
             result,
-            stats: None,
+            stats: None
         };
 
         let line = serde_json::to_string(&record)?;
