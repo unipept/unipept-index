@@ -122,6 +122,48 @@ impl ProteinsBackend for InMemoryProteins {
     }
 }
 
+/// Largest byte offset the fixed-size entry table can address, since offsets are stored as `u32`.
+const MAX_BLOB_BYTES: u64 = u32::MAX as u64;
+
+/// Rejects a database whose accession or annotation blob would overflow the `u32` entry offsets.
+///
+/// Kept separate from `write_binary` and pure in its arguments so it can be tested at the limit
+/// without materialising four gigabytes of input.
+fn check_blob_sizes(uid_bytes_total: u64, fa_bytes_total: u64) -> Result<(), String> {
+    for (what, total, flag) in
+        [("accession (UID)", uid_bytes_total, "uid_offset"), ("annotation (FA)", fa_bytes_total, "fa_offset")]
+    {
+        if total > MAX_BLOB_BYTES {
+            return Err(format!(
+                "the {what} blob is {total} bytes, which exceeds the {MAX_BLOB_BYTES} byte limit \
+                 imposed by the u32 `{flag}` field in the proteins.bin entry table. Writing it \
+                 would silently wrap the offsets and corrupt every entry past the wrap. Raising \
+                 this limit means widening the offsets to u64 and rebuilding existing indexes."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Rejects any single protein whose accession or annotations would overflow the `u16` lengths.
+fn check_entry_lengths(proteins: &[Protein]) -> Result<(), String> {
+    const MAX: usize = u16::MAX as usize;
+    for protein in proteins {
+        for (what, len) in
+            [("accession", protein.uniprot_id.len()), ("annotations", protein.functional_annotations.len())]
+        {
+            if len > MAX {
+                return Err(format!(
+                    "protein {}: {what} is {len} bytes, which exceeds the {MAX} byte limit \
+                     imposed by the u16 length field in the proteins.bin entry table.",
+                    protein.uniprot_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// On-disk format for `proteins.bin` — written here, read by both backends.
 ///
 /// ```text
@@ -144,24 +186,42 @@ impl ProteinsBackend for InMemoryProteins {
 ///
 /// The reader's copy of this layout is `mmap::entry_offsets` — keep the two in step.
 ///
-/// # Known limit
+/// # Size limits, and why they are checked
 ///
-/// `uid_offset` and `fa_offset` are `u32`, so the format cannot address blobs beyond 4 GiB, and
-/// the accumulators below wrap silently in release once they pass it. At full UniProt scale the
-/// UID blob is within an order of magnitude of that ceiling. Tracked as a known issue; fixing it
-/// means widening the fields and rebuilding every index.
+/// `uid_offset` and `fa_offset` are `u32`, so neither blob can exceed 4 GiB, and `uid_len` /
+/// `fa_len` are `u16`, so no single entry can exceed 64 KiB. Exceeding either used to be silent:
+/// the offset accumulators wrap in release builds and the length casts truncate, producing a
+/// file whose entries alias each other. Nothing detected it — the index simply returned the
+/// wrong accession and annotations for every protein past the wrap.
+///
+/// Both are now validated up front, before a single byte is written, so an over-large database
+/// fails the build loudly instead and leaves no partial file behind.
+///
+/// For scale: measured over a 573,911-protein UniProt release, accessions run 6.04 bytes and
+/// encoded annotations 41.58 bytes per protein. The accession blob therefore has room for ~711M
+/// proteins; the annotation blob for ~103M. Raising the annotation ceiling means widening the
+/// offsets to `u64` and rebuilding every index, so it is deliberately not done pre-emptively —
+/// the check exists so that the need announces itself.
 impl WriteBinary for InMemoryProteins {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
-        WriteBinary::write_binary(self.text, writer)?;
         let protein_count = self.proteins.len() as u64;
         let uid_bytes_total: u64 = self.proteins.iter().map(|p| p.uniprot_id.len() as u64).sum();
         let fa_bytes_total: u64 = self.proteins.iter().map(|p| p.functional_annotations.len() as u64).sum();
+
+        // Validate before writing anything, including the text section, so a rejected database
+        // leaves no partial file. Passing these two checks is what makes the `u32` accumulators
+        // and `u16` casts below provably safe.
+        check_blob_sizes(uid_bytes_total, fa_bytes_total)?;
+        check_entry_lengths(&self.proteins)?;
+
+        WriteBinary::write_binary(self.text, writer)?;
         writer.write_all(&protein_count.to_le_bytes())?;
         writer.write_all(&uid_bytes_total.to_le_bytes())?;
         writer.write_all(&fa_bytes_total.to_le_bytes())?;
         let mut uid_offset: u32 = 0;
         let mut fa_offset: u32 = 0;
         for protein in &self.proteins {
+            // Both casts are checked above.
             let uid_len = protein.uniprot_id.len() as u16;
             let fa_len = protein.functional_annotations.len() as u16;
             writer.write_all(&protein.taxon_id.to_le_bytes())?;
@@ -216,6 +276,105 @@ impl ReadBinary for InMemoryProteins {
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod size_limit_tests {
+    use text_compression::InMemoryProteinText;
+
+    use super::*;
+
+    // ── check_blob_sizes ──────────────────────────────────────────────────────
+    //
+    // Pure in its arguments precisely so the boundary can be tested without building a 4 GB
+    // database. The real write path cannot reach these values in any practical test.
+
+    #[test]
+    fn blob_exactly_at_the_limit_is_accepted() {
+        assert!(check_blob_sizes(MAX_BLOB_BYTES, MAX_BLOB_BYTES).is_ok());
+    }
+
+    #[test]
+    fn oversized_uid_blob_is_rejected_and_named() {
+        let err = check_blob_sizes(MAX_BLOB_BYTES + 1, 0).unwrap_err();
+        assert!(err.contains("accession"), "should name the offending blob: {err}");
+        assert!(err.contains("uid_offset"), "should name the field: {err}");
+        assert!(!err.contains("annotation"), "should not blame the other blob: {err}");
+    }
+
+    #[test]
+    fn oversized_fa_blob_is_rejected_and_named() {
+        let err = check_blob_sizes(0, MAX_BLOB_BYTES + 1).unwrap_err();
+        assert!(err.contains("annotation"), "should name the offending blob: {err}");
+        assert!(err.contains("fa_offset"), "should name the field: {err}");
+    }
+
+    /// The blobs are checked independently — a healthy one must not mask an over-large one.
+    #[test]
+    fn each_blob_is_checked_independently() {
+        assert!(check_blob_sizes(MAX_BLOB_BYTES, MAX_BLOB_BYTES + 1).is_err());
+        assert!(check_blob_sizes(MAX_BLOB_BYTES + 1, MAX_BLOB_BYTES).is_err());
+        assert!(check_blob_sizes(0, 0).is_ok());
+    }
+
+    // ── check_entry_lengths ───────────────────────────────────────────────────
+
+    fn protein_with(uid: &str, fa_len: usize) -> Protein {
+        Protein {
+            uniprot_id: uid.to_string(),
+            taxon_id: 1,
+            functional_annotations: vec![0u8; fa_len]
+        }
+    }
+
+    #[test]
+    fn annotation_at_the_u16_limit_is_accepted() {
+        assert!(check_entry_lengths(&[protein_with("P12345", u16::MAX as usize)]).is_ok());
+    }
+
+    #[test]
+    fn oversized_annotation_is_rejected_and_names_the_protein() {
+        let err = check_entry_lengths(&[protein_with("P12345", u16::MAX as usize + 1)]).unwrap_err();
+        assert!(err.contains("P12345"), "should name the protein: {err}");
+        assert!(err.contains("annotations"), "should name the field: {err}");
+    }
+
+    #[test]
+    fn oversized_accession_is_rejected() {
+        let err = check_entry_lengths(&[protein_with(&"A".repeat(u16::MAX as usize + 1), 0)]).unwrap_err();
+        assert!(err.contains("accession"), "should name the field: {err}");
+    }
+
+    // ── end to end ────────────────────────────────────────────────────────────
+
+    /// A rejected database must leave the writer untouched: validation runs before the text
+    /// section, so a failed build cannot produce a half-written index that later loads.
+    #[test]
+    fn rejection_writes_nothing_at_all() {
+        let proteins = InMemoryProteins::new(InMemoryProteinText::from_string("MA-$"), vec![protein_with(
+            "P12345",
+            u16::MAX as usize + 1
+        )]);
+
+        let mut buf: Vec<u8> = Vec::new();
+        let err = proteins.write_binary(&mut buf).unwrap_err().to_string();
+
+        assert!(err.contains("P12345"), "{err}");
+        assert!(buf.is_empty(), "a rejected database wrote {} bytes", buf.len());
+    }
+
+    /// The guards are inert for anything realistic — this is the case that must keep working.
+    #[test]
+    fn ordinary_database_is_unaffected() {
+        let proteins = InMemoryProteins::new(InMemoryProteinText::from_string("MA-CD$"), vec![
+            protein_with("P12345", 40),
+            protein_with("Q6GZX4", 120),
+        ]);
+
+        let mut buf: Vec<u8> = Vec::new();
+        proteins.write_binary(&mut buf).unwrap();
+        assert!(!buf.is_empty());
+    }
+}
 
 #[cfg(test)]
 mod tests {
