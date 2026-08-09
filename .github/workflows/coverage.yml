@@ -6,164 +6,38 @@ jobs:
   coverage:
     name: Codecov
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      
-      - name: Install minimal nightly toolchain
-        uses: actions-rs/toolchain@v1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+          components: llvm-tools-preview
 
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Run cargo test (bitarray)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -p bitarray
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+      # One instrumented run over the whole default workspace. No `--workspace`: that would
+      # override the root `default-members` and pull in the `sa-benchmarks` harness.
+      # `--all-features` makes this cover the mmap backend as well as the preloaded one.
+      - name: Generate coverage report
+        run: cargo llvm-cov --all-features --no-fail-fast --lcov --output-path lcov.info
 
-      - name: Gather coverage information (bitarray)
-        id: coverage-bitarray
-        uses: actions-rs/grcov@v0.1
-      
-      - name: Upload coverage reports to Codecov (bitarray)
-        uses: codecov/codecov-action@v4.0.1
+      # A single report, uploaded once. The per-package flags are declared in codecov.yml with
+      # `paths:` filters, so Codecov slices this one report per package for the per-flag
+      # project statuses.
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: ${{ steps.coverage-bitarray.outputs.report }}
-          flags: bitarray
-          verbose: true
-          fail_ci_if_error: true
-
-
-
-      - name: Run cargo test (fa-compression)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -p fa-compression
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-
-      - name: Gather coverage information (fa-compression)
-        id: coverage-fa-compression
-        uses: actions-rs/grcov@v0.1
-      
-      - name: Upload coverage reports to Codecov (fa-compression)
-        uses: codecov/codecov-action@v4.0.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ${{ steps.coverage-fa-compression.outputs.report }}
-          flags: fa-compression
-          verbose: true
-          fail_ci_if_error: true
-
-
-
-      - name: Run cargo test (sa-builder)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -p sa-builder
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-
-      - name: Gather coverage information (sa-builder)
-        id: coverage-sa-builder
-        uses: actions-rs/grcov@v0.1
-      
-      - name: Upload coverage reports to Codecov (sa-builder)
-        uses: codecov/codecov-action@v4.0.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ${{ steps.coverage-sa-builder.outputs.report }}
-          flags: sa-builder
-          verbose: true
-          fail_ci_if_error: true
-
-
-
-      - name: Run cargo test (sa-compression)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -p sa-compression
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-
-      - name: Gather coverage information (sa-compression)
-        id: coverage-sa-compression
-        uses: actions-rs/grcov@v0.1
-      
-      - name: Upload coverage reports to Codecov (sa-compression)
-        uses: codecov/codecov-action@v4.0.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ${{ steps.coverage-sa-compression.outputs.report }}
-          flags: sa-compression
-          verbose: true
-          fail_ci_if_error: true
-
-
-
-      - name: Run cargo test (sa-index)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -p sa-index
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-
-      - name: Gather coverage information (sa-index)
-        id: coverage-sa-index
-        uses: actions-rs/grcov@v0.1
-      
-      - name: Upload coverage reports to Codecov (sa-index)
-        uses: codecov/codecov-action@v4.0.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ${{ steps.coverage-sa-index.outputs.report }}
-          flags: sa-index
-          verbose: true
-          fail_ci_if_error: true
-
-
-      - name: Run cargo test (sa-mappings)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -p sa-mappings
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-
-      - name: Gather coverage information (sa-mappings)
-        id: coverage-sa-mappings
-        uses: actions-rs/grcov@v0.1
-      
-      - name: Upload coverage reports to Codecov (sa-mappings)
-        uses: codecov/codecov-action@v4.0.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ${{ steps.coverage-sa-mappings.outputs.report }}
-          flags: sa-mappings
+          files: lcov.info
+          flags: binary-traits,bitarray,fa-compression,prefetch,sa-builder,sa-index,sa-mappings,sa-server,text-compression
           verbose: true
           fail_ci_if_error: true

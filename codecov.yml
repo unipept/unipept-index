@@ -3,18 +3,21 @@ coverage:
     project:
       default:
         target: 90%
+      binary-traits:
+        flags:
+          - binary-traits
       bitarray:
         flags:
           - bitarray
       fa-compression:
         flags:
           - fa-compression
+      prefetch:
+        flags:
+          - prefetch
       sa-builder:
         flags:
           - sa-builder
-      sa-compression:
-        flags:
-          - sa-compression
       sa-index:
         target: 80%
         flags:
@@ -22,9 +25,19 @@ coverage:
       sa-mappings:
         flags:
           - sa-mappings
+      sa-server:
+        flags:
+          - sa-server
+      text-compression:
+        flags:
+          - text-compression
     patch: off
 
 flags:
+  binary-traits:
+    paths:
+      - binary-traits
+    carryforward: true
   bitarray:
     paths:
       - bitarray
@@ -33,13 +46,13 @@ flags:
     paths:
       - fa-compression
     carryforward: true
+  prefetch:
+    paths:
+      - prefetch
+    carryforward: true
   sa-builder:
     paths:
       - sa-builder
-    carryforward: true
-  sa-compression:
-    paths:
-      - sa-compression
     carryforward: true
   sa-index:
     paths:
@@ -48,6 +61,14 @@ flags:
   sa-mappings:
     paths:
       - sa-mappings
+    carryforward: true
+  sa-server:
+    paths:
+      - sa-server
+    carryforward: true
+  text-compression:
+    paths:
+      - text-compression
     carryforward: true
 
 ignore:

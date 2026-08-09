@@ -20,5 +20,31 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
+      # No `--workspace` here on purpose: it overrides the root `default-members`, which
+      # exists to keep `sa-benchmarks` out of the default build. That package is linted
+      # explicitly in the next step instead, so it cannot rot.
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run Clippy (sa-benchmarks)
+        run: cargo clippy -p sa-benchmarks --all-features -- -D warnings
+
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Nightly is REQUIRED here: .rustfmt.toml sets `unstable_features = true` together with
+      # `imports_granularity`, `group_imports`, `normalize_comments` and
+      # `normalize_doc_attributes`. Stable rustfmt silently ignores those options and would
+      # therefore accept (and produce) a different formatting than the one the repo targets.
+      - name: Install nightly Rust with rustfmt
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo +nightly fmt --all --check

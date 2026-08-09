@@ -4,27 +4,39 @@ name: Test
 
 jobs:
   test:
-    name: Check + test
+    # No crate in this workspace declares `default = [...]`, so a bare `cargo test` only ever
+    # compiles the *preloaded* backend. The `--all-features` cell is what covers the `mmap`
+    # backend (and sa-index's `metrics` instrumentation) end to end.
+    name: Check + test (${{ matrix.name }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: preloaded (default features)
+            features: ""
+          - name: all features (mmap + metrics)
+            features: "--all-features"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      
-      - name: Install minimal nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
 
-      - name: Run cargo check
-        uses: actions-rs/cargo@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          command: check
+          key: ${{ matrix.features }}
+
+      # Deliberately no `--workspace`: that would override the root `default-members`
+      # and drag `sa-benchmarks` (a heavy, long-running bench harness) into every CI run.
+      - name: Run cargo check
+        run: cargo check --all-targets ${{ matrix.features }}
 
       - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+        run: cargo test ${{ matrix.features }}
