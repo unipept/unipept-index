@@ -35,8 +35,8 @@ pub struct Arguments {
     /// When set, a k-mer lookup table is built and written to this path.
     #[arg(long)]
     pub output_kmer_table: Option<String>,
-    /// The k-mer size used when building the k-mer bounds table (default 4).
-    #[arg(long, default_value_t = 4)]
+    /// The k-mer size used when building the k-mer bounds table (default 5).
+    #[arg(long, default_value_t = 5)]
     pub kmer_size: usize
 }
 
