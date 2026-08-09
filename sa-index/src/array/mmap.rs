@@ -56,33 +56,13 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         }
     }
 
-    /// Warms the page cache by reading one byte from every page of the SA data.
-    ///
-    /// The three steps are all load-bearing:
-    ///
-    /// 1. `Advice::Sequential` tells the kernel to read far ahead, so the sweep below faults in
-    ///    long runs instead of one page at a time.
-    /// 2. Touching one byte per 4 KiB page is what actually forces the fault; the read must be
-    ///    laundered through `black_box`, or the optimizer deletes a loop whose result is unused
-    ///    and the warmup silently does nothing.
-    /// 3. `Advice::Random` restores the steady-state pattern. Search probes the array in an order
-    ///    the kernel cannot predict, so leaving readahead on would make every later miss drag in
-    ///    neighbouring pages that will not be used.
-    ///
-    /// Only the SA data is swept, not the whole mapping, so the 10-byte header does not skew the
-    /// chunking.
+    /// Warms the page cache over the SA data. See `text_compression::mmap::touch_all_pages` for
+    /// why the sweep is shaped the way it is.
     fn touch_all_pages(&self) {
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Sequential);
-
+        // Only the SA data, not the whole mapping: the 10-byte header would otherwise skew the
+        // range for no benefit.
         let byte_len = (self.len * self.bits_per_value).div_ceil(8);
-        let data = &self.mmap[self.data_offset..self.data_offset + byte_len];
-        for chunk in data.chunks(4096) {
-            std::hint::black_box(chunk[0]);
-        }
-
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Random);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len);
     }
 
     // Do not add a per-query `MADV_WILLNEED` over the k-mer SA range. It was tried and it

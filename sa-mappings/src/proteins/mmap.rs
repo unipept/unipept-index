@@ -69,11 +69,9 @@ impl ProteinsBackend for MmapBackedProteins {
     fn len(&self) -> usize { self.protein_count }
 
     fn touch_all_pages(&self) {
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Sequential);
-        for chunk in self.mmap.chunks(4096) { std::hint::black_box(chunk[0]); }
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Random);
+        // The whole file: the text, the entry table and both string blobs are all needed.
+        let end = self.mmap.len();
+        text_compression::mmap::touch_all_pages(&self.mmap, 0..end);
     }
 
     /// Prefetches the fixed-size table entry for `index`.

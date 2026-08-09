@@ -28,15 +28,8 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
     }
 
     fn touch_all_pages(&self) {
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Sequential);
-
-        for chunk in self.mmap[self.data_offset..].chunks(4096) {
-            std::hint::black_box(chunk[0]);
-        }
-
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Random);
+        let end = self.mmap.len();
+        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end);
     }
 }
 

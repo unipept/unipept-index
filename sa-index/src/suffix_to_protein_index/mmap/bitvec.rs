@@ -86,16 +86,9 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
     }
 
     fn touch_all_pages(&self) {
-        // bits and counts regions are contiguous from bits_offset to end of mmap
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Sequential);
-
-        for chunk in self.mmap[self.bits_offset..].chunks(4096) {
-            std::hint::black_box(chunk[0]);
-        }
-
-        #[cfg(unix)]
-        let _ = self.mmap.advise(memmap2::Advice::Random);
+        // The bits and counts regions are contiguous from `bits_offset` to the end of the file.
+        let end = self.mmap.len();
+        text_compression::mmap::touch_all_pages(&self.mmap, self.bits_offset..end);
     }
 }
 
