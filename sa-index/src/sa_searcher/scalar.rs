@@ -361,21 +361,19 @@ mod tests {
         array::OriginalSA,
         sa_searcher::{
             test_helpers::{
-                get_example_proteins, searcher_over_text, tryptic_fixture_peptides, TRYPTIC_FIXTURE,
+                example_searcher_with, get_example_proteins, searcher_over_text,
+                tryptic_fixture_peptides, Mapping, EXAMPLE_SA_FULL, EXAMPLE_SA_SPARSE3,
+                TRYPTIC_FIXTURE,
             },
             BoundSearchResult, SearchAllSuffixesResult, Searcher,
         },
-        suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping},
+        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
         SuffixArray,
     };
 
     #[test]
     fn test_search_simple() {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
-
-        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+                let searcher = example_searcher_with(&EXAMPLE_SA_FULL, 1, Mapping::BitVec);
 
         // search bounds 'A'
         let bounds_res = searcher.search_bounds(b"A");
@@ -392,11 +390,7 @@ mod tests {
 
     #[test]
     fn test_search_sparse() {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
-
-        let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(suffix_index_to_protein));
+                let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, Mapping::Sparse);
 
         // search suffix 'VAA'
         let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
@@ -409,11 +403,7 @@ mod tests {
 
     #[test]
     fn test_search_dense() {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
-
-        let suffix_index_to_protein = DenseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Dense(suffix_index_to_protein));
+                let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, Mapping::Dense);
 
         // search suffix 'VAA'
         let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
@@ -426,11 +416,7 @@ mod tests {
 
     #[test]
     fn test_il_equality() {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
-
-        let suffix_index_to_protein = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(suffix_index_to_protein));
+                let searcher = example_searcher_with(&EXAMPLE_SA_FULL, 1, Mapping::BitVec);
 
         let bounds_res = searcher.search_bounds(b"I");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
@@ -442,11 +428,7 @@ mod tests {
 
     #[test]
     fn test_il_equality_sparse() {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
-
-        let suffix_index_to_protein = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(suffix_index_to_protein));
+                let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, Mapping::Sparse);
 
         // search bounds 'RIZ' with equal I and L
         let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, true, false);

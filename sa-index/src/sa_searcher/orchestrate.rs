@@ -64,24 +64,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use sa_mappings::proteins::ProteinsBackend as _;
-
-    use crate::{
-        array::OriginalSA,
-        sa_searcher::{test_helpers::get_example_proteins, SearchAllSuffixesResult, Searcher},
-        suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
-        SuffixArray,
-    };
-
-    // SA of the example text "AI-CLACVAA-AC-KCRLY$" (L→I normalised is irrelevant here: no
-    // kmer table attached, so raw suffix search is used).
-    fn example_searcher() -> Searcher<SuffixArray> {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
-        let stp = BitVecSuffixToProtein::new(proteins.text());
-        Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
-    }
+    use crate::sa_searcher::{test_helpers::example_searcher, SearchAllSuffixesResult};
 
     /// Orchestrated multi-peptide search must be identical whether scalar (batch 1) or batched,
     /// across the equate_il × tryptic combinations, and independent of batch size.

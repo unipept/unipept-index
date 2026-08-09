@@ -6,7 +6,9 @@ use text_compression::ProteinText;
 use crate::{
     array::OriginalSA,
     sa_searcher::Searcher,
-    suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
+    suffix_to_protein_index::{
+        BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping,
+    },
     SuffixArray,
 };
 
@@ -23,6 +25,45 @@ pub(crate) fn get_example_proteins() -> Proteins {
         Protein { uniprot_id: "P2".to_string(), taxon_id: 30, functional_annotations: vec![] },
         Protein { uniprot_id: "P3".to_string(), taxon_id: 40, functional_annotations: vec![] },
     ])
+}
+
+/// Suffix array of [`get_example_proteins`]'s text at sparseness 1.
+///
+/// Precomputed rather than derived, because several tests assert against specific suffix
+/// positions; changing the fixture text means recomputing this.
+pub(crate) const EXAMPLE_SA_FULL: [i64; 20] =
+    [19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18];
+
+/// The same text sampled at sparseness 3 — only positions divisible by 3 are indexed.
+pub(crate) const EXAMPLE_SA_SPARSE3: [i64; 7] = [9, 0, 3, 12, 15, 6, 18];
+
+/// Which suffix-to-protein representation a fixture searcher should use.
+///
+/// All three answer identically; tests parameterise over them to check that the three
+/// implementations agree, and that search works with whichever the index was built with.
+pub(crate) enum Mapping {
+    Dense,
+    Sparse,
+    BitVec
+}
+
+/// Builds a searcher over [`get_example_proteins`] with an explicit suffix array and mapping.
+///
+/// Most search tests differ only in these three choices, so they share this rather than
+/// re-inlining the three-line construction.
+pub(crate) fn example_searcher_with(sa: &[i64], sparseness: u8, mapping: Mapping) -> Searcher<SuffixArray> {
+    let proteins = get_example_proteins();
+    let stp = match mapping {
+        Mapping::Dense => SuffixToProteinMapping::Dense(DenseSuffixToProtein::new(proteins.text())),
+        Mapping::Sparse => SuffixToProteinMapping::Sparse(SparseSuffixToProtein::new(proteins.text())),
+        Mapping::BitVec => SuffixToProteinMapping::BitVec(BitVecSuffixToProtein::new(proteins.text())),
+    };
+    Searcher::new(SuffixArray::Original(OriginalSA(sa.to_vec(), sparseness)), proteins, stp)
+}
+
+/// The common case: the full suffix array over the example proteins, with a BitVec mapping.
+pub(crate) fn example_searcher() -> Searcher<SuffixArray> {
+    example_searcher_with(&EXAMPLE_SA_FULL, 1, Mapping::BitVec)
 }
 
 /// Fixture for the left-extended tryptic search, positions annotated because the test cases

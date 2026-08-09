@@ -788,21 +788,12 @@ mod tests {
     use crate::{
         array::OriginalSA,
         sa_searcher::{
-            test_helpers::{get_example_proteins, searcher_over_text},
+            test_helpers::{example_searcher, searcher_over_text},
             BoundSearchResult, Searcher,
         },
         suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping},
         SuffixArray,
     };
-
-    // A full suffix array over the example proteins (positions never L/I-normalized here).
-    fn example_searcher() -> Searcher<SuffixArray> {
-        let proteins = get_example_proteins();
-        let stp = BitVecSuffixToProtein::new(proteins.text());
-        let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18], 1));
-        Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
-    }
 
     #[test]
     fn test_partial_eq_search_all_suffixes_result() {
