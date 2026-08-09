@@ -17,8 +17,8 @@ use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 use super::metrics::Timer;
 use super::BoundSearch::{Maximum, Minimum};
 use super::{
-    tryptic_extension_chars, BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher,
-    TRYPTIC_EXTENSION_CHARS,
+    tryptic_extension_chars, BoundSearch, BoundSearchResult, MAX_RESULT_PREALLOC,
+    SearchAllSuffixesResult, Searcher, TRYPTIC_EXTENSION_CHARS,
 };
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -175,8 +175,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let n = strings.len();
         let sample = self.sa.sample_rate() as usize;
 
-        let mut matching: Vec<Vec<i64>> =
-            strings.iter().map(|_| Vec::with_capacity(max_matches.min(4096))).collect();
+        // Per peptide, same cap as the scalar path — see `MAX_RESULT_PREALLOC`. It matters more
+        // here: this allocates one result vector per peptide in the batch up front.
+        let mut matching: Vec<Vec<i64>> = strings
+            .iter()
+            .map(|_| Vec::with_capacity(max_matches.min(MAX_RESULT_PREALLOC)))
+            .collect();
         let il_locs: Vec<Vec<usize>> = strings
             .iter()
             .map(|ss| {

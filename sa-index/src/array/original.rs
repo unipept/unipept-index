@@ -95,6 +95,25 @@ fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result
 }
 
 /// Writes the suffix array to a binary file.
+/// Writes an uncompressed suffix array.
+///
+/// # On-disk format for `sa.bin`
+///
+/// Shared by both packings and by all three readers — the compressed writer in
+/// `array::compressed` emits the same header, and `InMemorySA::read_binary` dispatches on the
+/// first byte:
+///
+/// ```text
+/// [ bits_per_value: u8 ]   64 here; the compressed width otherwise
+/// [ sparseness_factor: u8 ]
+/// [ item_count: u64 little-endian ]
+/// [ data ]                 item_count entries at bits_per_value each
+/// ```
+///
+/// At 64 bits the data is plain little-endian `i64`s. Below 64 it is `bitarray`'s packing:
+/// most-significant-bit first within each little-endian `u64` word, entries may straddle words.
+///
+/// Readers: `array::preloaded::InMemorySA::read_binary` and `array::mmap::MmapBackedSA`.
 pub fn dump_suffix_array(sa: Vec<i64>, sparseness_factor: u8, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     writer.write(&[64_u8]).map_err(|_| "Could not write the required bits to the writer")?;
     writer.write(&[sparseness_factor]).map_err(|_| "Could not write the sparseness factor to the writer")?;

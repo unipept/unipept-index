@@ -50,6 +50,11 @@ impl WriteBinary for CompressedSA {
 // ── I/O helpers ──────────────────────────────────────────────────────────────
 
 /// Writes the compressed suffix array to a writer.
+/// Writes a bit-packed suffix array.
+///
+/// Same header as [`super::original::dump_suffix_array`] — see there for the layout — with
+/// `bits_per_value` below 64 and the body packed by `bitarray`. Written in chunks so peak memory
+/// stays bounded at index-build scale.
 pub fn dump_compressed_suffix_array(
     sa: Vec<i64>,
     sparseness_factor: u8,

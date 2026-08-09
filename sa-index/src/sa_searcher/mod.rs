@@ -151,7 +151,20 @@ impl PartialEq for SearchAllSuffixesResult {
 
 /// Upper bound on `validate_batch` — sizes the on-stack candidate buffer in
 /// `iterate_sa_range`, so it must stay a compile-time constant.
+///
+/// 256 `i64`s is 2 KB of stack per call. The ceiling exists to bound that, not because the
+/// sweep found anything at 256: the measured optimum is 64 and the curve is flat above it, so
+/// this is headroom for re-tuning on other hardware rather than a value in use.
 pub const MAX_VALIDATE_BATCH: usize = 256;
+
+/// Cap on how much result space is pre-allocated per peptide, in suffixes.
+///
+/// Callers pass a `max_matches` cutoff that is an upper bound, not an estimate — the server's
+/// default is 10 000 — while the overwhelming majority of peptides match a handful of times.
+/// Reserving the full cutoff would allocate 80 KB per peptide and touch none of it; capping at
+/// 4096 entries (32 KB) keeps the common case to one allocation while letting rare high-hit
+/// peptides grow normally.
+pub(crate) const MAX_RESULT_PREALLOC: usize = 4096;
 
 /// Runtime-tunable batch and prefetch-lookahead sizes for the search and retrieval hot
 /// paths. Every field is a pure performance knob: results are identical for any setting
@@ -563,6 +576,21 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ///
     /// `last_is_kr` is the query-invariant stand-in for `text[match_end - 1]` — see
     /// [`TrypticQuery`] for why the substitution is sound.
+    ///
+    /// # On reading `text[match_end]`
+    ///
+    /// `match_end` is one past the match, so this reads the character *after* it. For a real
+    /// peptide that is always in bounds: the text ends with [`TERMINATION_CHARACTER`], and a
+    /// match reaching `text.len()` would have to have consumed the terminator — that is, the
+    /// query's own last character would be `$`, which no protein sequence contains.
+    ///
+    /// A caller *can* construct such a query, since `$` is in the alphabet. Both backends
+    /// tolerate the resulting `text.get(text.len())`: the preloaded one reads zero padding inside
+    /// the last allocated word, and the mmap one reads inside the page-rounded mapping. Neither
+    /// faults, and the value read cannot make the predicate accept, because such a query ends in
+    /// `$` and so has `last_is_kr == false`. It is nonetheless an unchecked read that happens to
+    /// land somewhere harmless rather than a designed guarantee — worth knowing before changing
+    /// how the text is stored or how far the query alphabet extends.
     #[inline]
     fn check_tryptic_c_term(&self, text: &P::Text, match_end: usize, last_is_kr: bool) -> bool {
         let after = text.get(match_end);

@@ -13,7 +13,8 @@ use crate::suffix_to_protein_index::SuffixToProteinMappingBackend;
 use super::metrics::Timer;
 use super::BoundSearch::{Maximum, Minimum};
 use super::{
-    tryptic_extension_chars, BoundSearch, BoundSearchResult, SearchAllSuffixesResult, Searcher,
+    tryptic_extension_chars, BoundSearch, BoundSearchResult, MAX_RESULT_PREALLOC,
+    SearchAllSuffixesResult, Searcher,
 };
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -173,9 +174,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // median, inside the 3.9% noise floor. The batched path keeps its call, where N
         // independent lookups genuinely do issue before any search runs.
 
-        // Cap pre-allocation at 4096 entries (32 KB) so callers passing large max_matches
-        // don't wastefully over-allocate for peptides that match rarely.
-        let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(4096));
+        let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(MAX_RESULT_PREALLOC));
         let mut il_locations = vec![];
         for (i, &character) in search_string.iter().enumerate() {
             if character == b'I' || character == b'L' {

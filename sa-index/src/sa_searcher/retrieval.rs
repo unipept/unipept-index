@@ -2,6 +2,26 @@
 //!
 //! Self-contained phase (no shared search internals), kept in its own `impl` block to
 //! separate it from the search machinery in the parent module.
+//!
+//! # Why this prefetches even in the preloaded build
+//!
+//! Prefetching reads like an mmap concern — hiding page faults — but the two-pass loop below is
+//! just as valuable when everything is in owned RAM, and the reason is that "loaded" is not
+//! "cached". At UniProt scale the structures this phase touches are orders of magnitude larger
+//! than any L3:
+//!
+//! * suffix-to-protein mapping: ~1.2 GB dense, a few hundred MB as a bit vector
+//! * protein metadata table: gigabytes
+//! * protein text: ~190 MB packed
+//!
+//! Retrieval walks them at positions the suffix array happened to produce, which is effectively
+//! random, so nearly every lookup is a last-level miss — ~80-100 ns, whether or not the page is
+//! resident. The mmap build additionally risks a page fault, so it gains more, but the preloaded
+//! build was leaving the same memory-level parallelism on the table by issuing one dependent load
+//! at a time.
+//!
+//! Hence the shape: pass 1 issues hints for a whole batch, pass 2 consumes it once the loads are
+//! in flight. The lookahead distance is `SearchTuning::retrieval_prefetch_distance`.
 
 use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
 

@@ -56,6 +56,21 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         }
     }
 
+    /// Warms the page cache by reading one byte from every page of the SA data.
+    ///
+    /// The three steps are all load-bearing:
+    ///
+    /// 1. `Advice::Sequential` tells the kernel to read far ahead, so the sweep below faults in
+    ///    long runs instead of one page at a time.
+    /// 2. Touching one byte per 4 KiB page is what actually forces the fault; the read must be
+    ///    laundered through `black_box`, or the optimizer deletes a loop whose result is unused
+    ///    and the warmup silently does nothing.
+    /// 3. `Advice::Random` restores the steady-state pattern. Search probes the array in an order
+    ///    the kernel cannot predict, so leaving readahead on would make every later miss drag in
+    ///    neighbouring pages that will not be used.
+    ///
+    /// Only the SA data is swept, not the whole mapping, so the 10-byte header does not skew the
+    /// chunking.
     fn touch_all_pages(&self) {
         #[cfg(unix)]
         let _ = self.mmap.advise(memmap2::Advice::Sequential);
@@ -84,6 +99,9 @@ impl super::SuffixArrayBackend for MmapBackedSA {
 impl ReadBinaryMmap for MmapBackedSA {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
+        // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
+        // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
+        // truncated or written underneath us.
         let mmap = unsafe { Mmap::map(&file)? };
 
         #[cfg(unix)]
@@ -122,6 +140,25 @@ pub(super) fn read_u64_le(mmap: &Mmap, byte_offset: usize) -> u64 {
 
 /// Streaming sequential iterator over a contiguous range of a compressed or uncompressed
 /// mmap-backed suffix array.
+/// Sequential reader over a range of SA entries, decoding straight from the mapping.
+///
+/// # Bit layout
+///
+/// Entries are packed **most-significant-bit first within each little-endian `u64` word**, and an
+/// entry may straddle a word boundary. That combination is unusual enough to be worth stating
+/// plainly, because the two conventions pull in opposite directions: the *bytes* of a word are
+/// read little-endian, but the *values* inside it are laid out from the top bit down. Hence
+/// `word >> (64 - bit_offset - bits)` rather than the `word >> bit_offset` a purely
+/// little-endian packing would use.
+///
+/// This must match `bitarray`'s packing exactly — the file is written through `DynBitArray` —
+/// and `MmapBackedSA::get`, which decodes the same layout for random access.
+///
+/// # Why this exists alongside `get`
+///
+/// It caches the current and next words, so consecutive entries sharing a word cost no reload and
+/// a straddling entry already has its second word to hand. Scanning a candidate range through
+/// `get` would re-derive and re-load both per entry.
 pub struct MmapSaRangeIter<'a> {
     mmap: &'a Mmap,
     data_offset: usize,

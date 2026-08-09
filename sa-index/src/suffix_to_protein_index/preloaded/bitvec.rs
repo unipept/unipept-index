@@ -42,6 +42,38 @@ impl BitVecSuffixToProtein {
     }
 }
 
+/// On-disk format for the BitVec mapping (type byte `0x02`).
+///
+/// ```text
+/// [ type: u8 = 0x02 ]
+/// [ bit_len: u64 LE ]        one bit per text position
+/// [ block_count: u64 LE ]
+/// [ blocks ]                 block_count * u64 LE, bit 0 = LSB of block 0
+/// [ superblocks ]            (block_count / 8 + 1) cells of 16 bytes:
+///                              [ level1: u64 LE ] [ packed_level2: u64 LE ]
+/// ```
+///
+/// # The rank structure
+///
+/// A bit marks each text position that is *not* part of a protein (a separator or the
+/// terminator). The protein index for a position is then the number of unset bits before it,
+/// which is what makes `rank1` the lookup. Answering that in constant time needs precomputed
+/// counts, stored in two levels:
+///
+/// * **level1** — the cumulative count before this superblock, i.e. before every one of its 8
+///   words (512 bits). A full `u64`, since it can reach `bit_len`.
+/// * **packed_level2** — seven 9-bit sub-counts, one per word after the first, each the
+///   cumulative count within the superblock before that word. Nine bits suffice because a count
+///   within a 512-bit superblock cannot exceed 512, and seven of them fit in a `u64` with a byte
+///   to spare, so the whole cell is exactly 16 bytes and one cache line holds four of them.
+///
+/// Hence the constants below: `& 0x1FF` masks a 9-bit sub-count, `(w - 1) * 9` places it, and
+/// the loop covers `w = 1..8` because word 0's sub-count is always zero and is not stored.
+///
+/// Only the mmap reader consumes this — the preloaded reader rebuilds `Rank9` from the raw bits
+/// and skips the superblocks entirely — so the layout must be kept in step by hand with
+/// `suffix_to_protein_index::mmap::bitvec`, which documents the same structure from the reading
+/// side.
 impl WriteBinary for BitVecSuffixToProtein {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         writer.write_all(&[2u8])?;
