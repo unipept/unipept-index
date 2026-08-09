@@ -196,18 +196,15 @@ impl Default for SearchTuning {
     }
 }
 
-/// Struct that contains all the elements needed to search a peptide in the suffix array
-/// This struct also contains all the functions used for search
+/// Everything needed to search a peptide against the index, plus the search itself.
 ///
-/// # Arguments
-/// * `sa` - The sparse suffix array representing the protein database
-/// * `sparseness_factor` - The sparseness factor used by the suffix array
-/// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix is
-///   part of
-/// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the
-///   taxonomic analysis provided by Unipept
-/// * `function_aggregator` - Object used to retrieve the functional annotations and to calculate
-///   the functional analysis provided by Unipept
+/// The three generic parameters are the storage backends, which the `mmap` feature resolves at
+/// compile time; see the crate docs. They default to the aliases for the active build, so most
+/// callers write `Searcher<SuffixArray>`.
+///
+/// Construct with [`Searcher::new`], then optionally attach a k-mer table with
+/// [`Searcher::with_kmer_table`]. The searcher is immutable during search and `Sync`, so one
+/// instance serves every request.
 pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM: SuffixToProteinMappingBackend = SuffixToProteinMapping> {
     pub sa: SA,
     pub proteins: P,
@@ -237,22 +234,16 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend = Proteins, STPM:
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
-    /// Creates a new Searcher object
+    /// Builds a searcher over the three index structures.
     ///
-    /// # Arguments
-    /// * `sa` - The sparse suffix array representing the protein database
-    /// * `sparseness_factor` - The sparseness factor used by the suffix array
-    /// * `suffix_index_to_protein` - Mapping from a suffix to the proteins to know which a suffix
-    ///   is part of
-    /// * `proteins` - List of all the proteins where the suffix array is build on
-    /// * `taxon_id_calculator` - Object representing the used taxonomy and that calculates the
-    ///   taxonomic analysis provided by Unipept
-    /// * `function_aggregator` - Object used to retrieve the functional annotations and to
-    ///   calculate the functional analysis provided by Unipept
+    /// All three must come from the same index build: the suffix array indexes positions in
+    /// `proteins`' text, and `suffix_index_to_protein` maps those same positions to indices into
+    /// `proteins`. Mixing builds produces wrong answers rather than errors.
     ///
-    /// # Returns
+    /// The sparseness factor is not passed in — it is read from the suffix array, which records
+    /// it in its file header.
     ///
-    /// Returns a new Searcher object
+    /// Starts with no k-mer table and default [`SearchTuning`].
     pub fn new(sa: SA, proteins: P, suffix_index_to_protein: STPM) -> Self {
         Self {
             sa,
@@ -513,8 +504,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         text.prefetch_at(me);
     }
 
-    /// Issues an early OS prefetch hint for the k-mer's SA range (skip=0 case), giving the OS
-    /// more lead time to load those pages into the page cache before binary search starts.
+    /// Was: an early OS readahead hint for the k-mer's SA range (skip=0 case).
+    ///
+    /// It no longer does that. `SuffixArrayBackend::prefetch_sa_range` is a no-op on every
+    /// backend — the `MADV_WILLNEED` it used to issue measured -16.8% and was removed — so all
+    /// this now costs is a k-mer table probe whose result is discarded. The scalar path already
+    /// dropped the equivalent call; see `scalar::search_matching_suffixes`. Retained only until
+    /// its removal is measured, since the discarded probe may incidentally warm the cache line
+    /// that the real bounds lookup reads next.
     #[inline]
     fn prefetch_kmer_range(&self, search_string: &[u8]) {
         if let Some(table) = &self.kmer_table {

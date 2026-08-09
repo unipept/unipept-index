@@ -1,3 +1,9 @@
+//! The public entry point: peptides in, proteins out.
+//!
+//! Wraps the searcher with the parts a caller actually wants — normalising the query, dropping
+//! peptides too short to be searchable, resolving suffixes to proteins, and decoding annotations.
+//! `sa-server` calls [`search_all_peptides`] and serialises the result directly.
+
 use rayon::prelude::*;
 use sa_mappings::proteins::ProteinRef;
 use serde::Serialize;
@@ -10,18 +16,26 @@ use crate::{
     suffix_to_protein_index::SuffixToProteinMappingBackend,
 };
 
+/// Everything found for one peptide. Serialised straight to JSON by the server.
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
+    /// The peptide as the caller wrote it, before normalisation.
     pub sequence: String,
+    /// Every protein containing the peptide.
     pub proteins: Vec<ProteinInfo>,
+    /// Whether the match cutoff was hit, meaning `proteins` is a truncated sample rather than the
+    /// complete set.
     pub cutoff_used: bool
 }
 
-/// Struct that represents all information known about a certain protein in our database
+/// One matching protein, with its annotations already decoded.
 #[derive(Debug, Serialize)]
 pub struct ProteinInfo {
+    /// NCBI taxon id.
     pub taxon: u32,
+    /// UniProt accession, e.g. `P12345`.
     pub uniprot_accession: String,
+    /// Functional annotations in their `GO:`/`EC:`/`IPR:` text form.
     pub functional_annotations: String
 }
 
@@ -42,8 +56,6 @@ impl From<ProteinRef<'_>> for ProteinInfo {
 /// * `peptide` - The peptide that is being searched in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
 /// * `equate_il` - Boolean indicating if we want to equate I and L during search
-/// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
-///   taxonomy
 /// * `tryptic` - Boolean indicating if we only want tryptic matches.
 ///
 /// # Returns
@@ -79,6 +91,12 @@ pub fn search_proteins_for_peptide<'a, SA: SuffixArrayBackend, P: ProteinsBacken
     Some((cutoff_used, proteins))
 }
 
+/// Searches one peptide and packages the result.
+///
+/// The single-peptide path. `sa-server` uses [`search_all_peptides`] instead, which batches the
+/// suffix searches across the whole request; this one is kept for callers with a single query.
+///
+/// Returns `None` when the peptide has no matches or is shorter than the sparseness factor.
 pub fn search_peptide<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
     searcher: &Searcher<SA, P, STPM>,
     peptide: &str,
@@ -103,8 +121,6 @@ pub fn search_peptide<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixTo
 /// * `peptides` - List of peptides we want to search in the index
 /// * `cutoff` - The maximum amount of matches we want to process from the index
 /// * `equate_il` - Boolean indicating if we want to equate I and L during search
-/// * `clean_taxa` - Boolean indicating if we want to filter out proteins that are invalid in the
-///   taxonomy
 /// * `tryptic` - Boolean indicating if we only want tryptic matches.
 ///
 /// # Returns

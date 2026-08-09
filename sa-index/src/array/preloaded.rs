@@ -1,4 +1,9 @@
-// Non-mmap builds only — handles the runtime Original-vs-Compressed decision.
+//! Runtime dispatch over the two owned-memory suffix-array packings.
+//!
+//! Compiled in *both* configurations, despite only being selected as `SuffixArray` in the
+//! preloaded one: `sa-builder` needs it to write the files the mmap backend reads, and the
+//! header-sniffing `read_binary` below is the single place that decides whether a file holds a
+//! 64-bit or a compressed array.
 use std::{error::Error, io::BufRead};
 
 use bitarray::DynBitArrayRangeIter;

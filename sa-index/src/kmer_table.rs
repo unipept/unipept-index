@@ -1,3 +1,16 @@
+//! A precomputed suffix-array bounds table for every k-mer.
+//!
+//! Binary searching the suffix array costs O(log n) dependent, cache-missing probes before the
+//! search has even narrowed to the right neighbourhood. This table skips that opening phase: for
+//! every possible k-mer it stores the SA range whose suffixes start with it, so a search for a
+//! peptide of at least k residues starts from those bounds instead of from the whole array.
+//!
+//! The table is dense — `alphabet_size^k` entries — so it is built once by `sa-builder` and
+//! loaded by the server. That density is why `k` is small; see [`MAX_KMER_K`].
+//!
+//! It is an accelerator only: results are identical with and without it, which the golden
+//! configuration matrix asserts.
+
 use std::{
     error::Error,
     io::{BufRead, Write},
@@ -73,7 +86,7 @@ impl KmerTable {
         Self::build_kmer_table(sa.len(), |i| sa.get(i) as usize, text.len(), |i| text.get(i), k)
     }
 
-    /// Same as [`build_from_sa`] but accepts the raw suffix array as a plain slice
+    /// Same as `build_from_sa` but accepts the raw suffix array as a plain slice
     /// and text access via closures — works regardless of whether the mmap feature is active.
     pub fn build_from_raw_sa(
         sa: &[i64],

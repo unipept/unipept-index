@@ -1,3 +1,22 @@
+//! Turning a text position into a protein index.
+//!
+//! Search yields positions in the concatenated text; results are about proteins. This module
+//! answers "which protein contains position i?", and returns `u32::NULL` for the separator and
+//! terminator bytes, which belong to no protein.
+//!
+//! Three representations, trading space against lookup cost, chosen at build time
+//! (`sa-builder --mapping-style`) and recorded in the file:
+//!
+//! * **Dense** — one `u32` per text position. One load per lookup, but ~4 bytes per residue,
+//!   which at UniProt scale is over a gigabyte.
+//! * **Sparse** — the start position of each protein, binary-searched. Smallest, but O(log n)
+//!   dependent loads per lookup, each likely a cache miss.
+//! * **BitVec** — a bit per text position marking separators, with a rank structure over it.
+//!   Near-dense speed at a fraction of the size; the default.
+//!
+//! Each has a preloaded and an mmap implementation, selected by the `mmap` feature through the
+//! [`SuffixToProteinMapping`] alias; see the crate docs.
+
 pub mod preloaded;
 #[cfg(feature = "mmap")]
 pub mod mmap;

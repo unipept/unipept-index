@@ -748,7 +748,8 @@ mod tests {
     }
 
     // Exercises iterate_sa_range's two-pass prefetch batching (range >= 32) and the batch
-    // refill (> BATCH_SIZE=64), using equate_il=false to force the generic (non-fast) path.
+    // refill (more candidates than `tuning.validate_batch`, which defaults to 64), using
+    // equate_il=false to force the generic (non-fast) path.
     #[test]
     fn test_iterate_sa_range_two_pass() {
         let n = 70usize;
