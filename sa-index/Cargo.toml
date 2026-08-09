@@ -15,7 +15,6 @@ mmap = ["dep:memmap2", "sa-mappings/mmap", "text-compression/mmap"]
 metrics = []
 
 [dev-dependencies]
-tempdir = "0.3.7"
 tempfile = "3"
 
 [dependencies]

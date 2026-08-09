@@ -22,7 +22,7 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
     fn prefetch_for_suffix(&self, suffix: i64) {
         let off = self.data_offset + suffix as usize * 4;
         if off < self.mmap.len() {
-            // safe: Mmap: Deref<Target=[u8]>, bounds checked above
+            // Bounds checked above, so this indexes the mapping directly (Mmap derefs to [u8]).
             prefetch::prefetch_read(&self.mmap[off] as *const u8);
         }
     }

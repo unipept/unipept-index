@@ -296,13 +296,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         self
     }
 
-    /// Overrides the hot-path batch and prefetch sizes. Pure performance knobs — results are
-    /// unaffected.
-    pub fn with_tuning(mut self, tuning: SearchTuning) -> Self {
-        self.tuning = tuning;
-        self
-    }
-
     /// Builds and attaches a k-mer table with the given `k` using the already-loaded index data.
     pub fn build_kmer_table(&mut self, k: usize) {
         self.kmer_table = Some(KmerTable::build_from_sa(&self.sa, self.proteins.text(), k));

@@ -237,3 +237,141 @@ impl Iterator for MmapSaRangeIter<'_> {
 
 impl ExactSizeIterator for MmapSaRangeIter<'_> {}
 
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use bitarray::DynBitArray;
+
+    use super::*;
+    use crate::array::{
+        dump_compressed_suffix_array, dump_suffix_array, CompressedSA, OriginalSA,
+        SuffixArrayBackend,
+    };
+
+    /// Builds the owned compressed backend directly, to compare against.
+    fn compressed_from(sa: &[i64], sparseness: u8, bits: usize) -> CompressedSA {
+        let mut ba = DynBitArray::with_capacity(sa.len(), bits);
+        for (i, &v) in sa.iter().enumerate() {
+            ba.set(i, v as u64);
+        }
+        CompressedSA(ba, sparseness)
+    }
+
+    /// Writes an SA through the production writer and maps it back.
+    fn write_and_map(sa: &[i64], sparseness: u8, bits: Option<usize>) -> (MmapBackedSA, tempfile::NamedTempFile) {
+        let mut buf: Vec<u8> = Vec::new();
+        match bits {
+            None => dump_suffix_array(sa.to_vec(), sparseness, &mut buf).unwrap(),
+            Some(b) => dump_compressed_suffix_array(sa.to_vec(), sparseness, b, &mut buf).unwrap(),
+        }
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&buf).unwrap();
+        tmp.flush().unwrap();
+        let mapped = MmapBackedSA::read_binary_mmap(tmp.path()).unwrap();
+        (mapped, tmp)
+    }
+
+    fn sample_sa(len: usize) -> Vec<i64> {
+        // Deterministic, spread across the whole value range so the high bits are exercised.
+        (0..len).map(|i| ((i as i64).wrapping_mul(2_654_435_761)) & 0x0fff_ffff).collect()
+    }
+
+    /// The mmap backend is the production storage layer and had no tests at all. It must agree
+    /// with the owned-memory backends that wrote the file, entry for entry.
+    #[test]
+    fn matches_the_uncompressed_backend() {
+        let sa = sample_sa(500);
+        let (mapped, _tmp) = write_and_map(&sa, 1, None);
+        let owned = OriginalSA(sa.clone(), 1);
+
+        assert_eq!(mapped.len(), owned.len());
+        assert_eq!(mapped.bits_per_value(), 64);
+        assert_eq!(mapped.sample_rate(), 1);
+        for i in 0..sa.len() {
+            assert_eq!(mapped.get(i), owned.get(i), "entry {i} differs");
+        }
+    }
+
+    /// Same, for every compressed width the builder can choose. This is the case that exercises
+    /// entries straddling a `u64` boundary, which is where a packing bug would hide.
+    #[test]
+    fn matches_the_compressed_backend_at_every_width() {
+        for bits in [8usize, 13, 17, 28, 29, 31, 32, 33, 40, 63] {
+            let mask = (u64::MAX >> (64 - bits)) as i64;
+            let sa: Vec<i64> = sample_sa(400).iter().map(|v| v & mask).collect();
+
+            let (mapped, _tmp) = write_and_map(&sa, 3, Some(bits));
+            let owned = compressed_from(&sa, 3, bits);
+
+            assert_eq!(mapped.len(), sa.len(), "length differs at {bits} bits");
+            assert_eq!(mapped.bits_per_value(), bits);
+            assert_eq!(mapped.sample_rate(), 3);
+            for (i, &expected) in sa.iter().enumerate() {
+                assert_eq!(mapped.get(i), owned.get(i), "entry {i} differs at {bits} bits");
+                assert_eq!(mapped.get(i), expected, "entry {i} lost at {bits} bits");
+            }
+        }
+    }
+
+    /// `iter_range` duplicates `get`'s unpacking with a cached word pair, so the two must agree
+    /// at every start offset and length — including ranges that begin mid-word.
+    #[test]
+    fn iter_range_agrees_with_get() {
+        for bits in [29usize, 32, 40] {
+            let mask = (u64::MAX >> (64 - bits)) as i64;
+            let sa: Vec<i64> = sample_sa(200).iter().map(|v| v & mask).collect();
+            let (mapped, _tmp) = write_and_map(&sa, 1, Some(bits));
+
+            for start in [0usize, 1, 7, 12, 63, 64, 65, 130] {
+                for end in [start, start + 1, start + 13, start + 64, 200] {
+                    if end > 200 || end < start { continue; }
+                    let by_iter: Vec<i64> = mapped.iter_range(start, end).collect();
+                    let by_get: Vec<i64> = (start..end).map(|i| mapped.get(i)).collect();
+                    assert_eq!(by_iter, by_get, "iter_range({start}, {end}) at {bits} bits");
+                    assert_eq!(mapped.iter_range(start, end).len(), end - start);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_files_error_rather_than_panicking() {
+        let sa = sample_sa(100);
+        let mut buf: Vec<u8> = Vec::new();
+        dump_compressed_suffix_array(sa.clone(), 1, 29, &mut buf).unwrap();
+
+        // The writer pads the body out to whole `u64` words, but the reader only requires
+        // `ceil(items * bits / 8)` bytes, so the last few bytes of the file are slack that a
+        // truncation can legitimately remove. Sweep up to the reader's actual requirement.
+        let required = 10 + (sa.len() * 29).div_ceil(8);
+        assert!(required <= buf.len());
+
+        for cut in 0..required {
+            let mut tmp = tempfile::NamedTempFile::new().unwrap();
+            tmp.write_all(&buf[..cut]).unwrap();
+            tmp.flush().unwrap();
+            let err = MmapBackedSA::read_binary_mmap(tmp.path())
+                .err()
+                .unwrap_or_else(|| panic!("{cut} of {required} required bytes should not load"));
+            assert!(err.to_string().contains("too small"), "unexpected error at {cut}: {err}");
+        }
+    }
+
+    /// A header claiming more entries than the file holds must be rejected, not trusted.
+    #[test]
+    fn overlong_declared_length_is_rejected() {
+        let sa = sample_sa(50);
+        let mut buf: Vec<u8> = Vec::new();
+        dump_compressed_suffix_array(sa, 1, 29, &mut buf).unwrap();
+        buf[2..10].copy_from_slice(&1_000_000_u64.to_le_bytes());
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&buf).unwrap();
+        tmp.flush().unwrap();
+        assert!(MmapBackedSA::read_binary_mmap(tmp.path()).is_err());
+    }
+}
