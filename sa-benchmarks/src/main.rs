@@ -18,7 +18,7 @@
 //! cargo build --release -p sa-benchmarks                  # preloaded backend
 //! cargo build --release -p sa-benchmarks --features mmap  # mmap backend
 //! ./target/release/sa-benchmarks --index-dir <idx> --output /tmp/bench --label smoke \
-//!     --peptide-file scripts/peptides.txt --amount-of-peptides 10000 --runs 20 --warmup all
+//!     --peptide-file <peptides.txt> --amount-of-peptides 10000 --runs 20 --warmup all
 //! ```
 //!
 //! The `metrics` feature adds the per-candidate counters and the internal phase breakdown, at

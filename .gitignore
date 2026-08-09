@@ -5,11 +5,10 @@ data/
 uniprot-*/
 benchmarks/
 
-# Dev harness. The shell scripts are tracked; the fixtures and captured
-# responses they produce (tens of MB each) are not.
-scripts/*.json
-scripts/*.txt
-scripts/benchmarks/
+# Developer tooling and design/benchmark write-ups. Deliberately not tracked: these are
+# machine-specific harnesses and historical notes, not part of what this repo ships.
+scripts/
+docs/
 sa-benchmarks/summary/
 *.log
 

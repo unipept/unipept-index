@@ -55,7 +55,7 @@
 //! it changes codegen and therefore needs its own measurement.
 //!
 //! Decisions that were measured and *rejected* are recorded next to the code they would have
-//! touched, so they are not rediscovered and retried. See `docs/design/` for the long form.
+//! touched, so they are not rediscovered and retried.
 
 pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 

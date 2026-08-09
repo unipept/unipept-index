@@ -155,11 +155,5 @@ Beware that `cargo build --workspace` *overrides* `default-members` and will inc
 
 ## Further reading
 
-* [`docs/design/`](docs/design/) — why the index is shaped the way it is: the optimization levers
-  that were measured, and the ones that were measured and rejected. Read
-  `mlp-batching-design.md` first.
-* [`scripts/`](scripts/) — dev tooling. `run_index.sh` boots a server and replays a peptide file;
-  `baseline.sh` sweeps the full configuration matrix and diffs two captures, which is how a
-  refactor is shown not to have changed any answer.
 * Crate-level `cargo doc` for `sa-index` explains the search pipeline and the feature axes in
-  detail.
+  detail, including why the two backends exist and which decisions were measured and rejected.
