@@ -48,11 +48,31 @@
 //! misses rather than to do less work.
 //!
 //! One consequence shows up everywhere and is easy to undo by accident: because the workspace
-//! sets no `[profile.release]`, there is **no LTO**, so a call into `bitarray`,
-//! `text-compression`, `sa-mappings` or `prefetch` is a real cross-crate call unless the callee
-//! is `#[inline]`. Those attributes on the small getters are load-bearing, not decoration.
-//! Enabling `lto = "thin"` would be the principled fix and would likely let many of them go, but
-//! it changes codegen and therefore needs its own measurement.
+//! sets no `[profile.release]`, there is **no cross-crate LTO**, so a call into `bitarray`,
+//! `text-compression`, `sa-mappings` or `prefetch` is a real cross-crate call unless the callee's
+//! body reaches the caller's codegen unit — which happens only when the callee is `#[inline]` or
+//! generic (both export their MIR). Those attributes on the small getters are load-bearing, not
+//! decoration.
+//!
+//! **Enabling LTO was measured and rejected** (2026-08-09, at c00cc53, full UniProt index on the
+//! benchmark server; n=200 timed reps per cell, ABBA-interleaved, both backends). Adding
+//! `[profile.release] lto = "thin", codegen-units = 1` moved median throughput by **-0.1% on
+//! mmap and -3.0% on preloaded** — no gain on either backend, in exchange for a materially
+//! slower clean release build.
+//!
+//! Neither delta is an effect. On mmap the two arms interleave and the base arm's own two
+//! invocations spread wider (1.7%) than the difference between arms. On preloaded the base
+//! arm's two invocations differ by **8.4%** — far more than the 3.0% gap — and all four
+//! invocations decline monotonically with position, i.e. the machine drifted over the ~50
+//! minutes the block ran. That drift decays rather than being linear, which the ABBA ordering
+//! does not cancel: base holds the two endpoint slots and LTO the two middle ones, and for a
+//! convex-decaying curve the endpoint average is the higher one. The preloaded arm therefore
+//! cannot resolve anything below roughly 8%, and there is no evidence of a real regression
+//! either.
+//!
+//! The likely reason for the null result is that this crate has already hand-annotated the hot
+//! path, so the bodies LTO would have inlined were reaching the caller anyway. Do not re-add the
+//! profile block without re-measuring on the full database.
 //!
 //! Decisions that were measured and *rejected* are recorded next to the code they would have
 //! touched, so they are not rediscovered and retried.

@@ -29,10 +29,17 @@
 /// # Why `inline(always)` rather than `#[inline]`
 ///
 /// The body is a single instruction, and every caller is in another crate. The workspace sets no
-/// `[profile.release]`, so there is no LTO and a cross-crate call is a real call unless the
-/// function is inlined. A `call`/`ret` pair around one hint instruction costs more than the hint
-/// saves, so an un-inlined `prefetch_read` is strictly worse than not prefetching at all — this
-/// attribute is load-bearing, not a micro-optimization.
+/// `[profile.release]`, so there is no cross-crate LTO: a call into this crate is a real call
+/// unless the callee's body reaches the caller's codegen unit. Being generic already achieves
+/// that much — a generic function's MIR is exported and monomorphised in the calling crate, so
+/// LLVM sees this body and would almost certainly inline it unprompted. What `inline(always)`
+/// adds is the *guarantee*, and at every opt-level rather than only where LLVM's cost model
+/// happens to agree. That guarantee is worth having: a `call`/`ret` pair around one hint
+/// instruction costs more than the hint saves, so an un-inlined `prefetch_read` would be
+/// strictly worse than not prefetching at all.
+///
+/// Note that LTO would not change this reasoning — it was measured on the full index and
+/// rejected; see the crate docs of `sa-index` for the numbers.
 #[inline(always)]
 pub fn prefetch_read<T>(ptr: *const T) {
     // The two architectures use different hint strengths on purpose.

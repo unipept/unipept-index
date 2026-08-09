@@ -49,8 +49,11 @@ impl<const BITS: usize> BitArray<BITS> {
     /// Returns the value at `index`.
     ///
     /// `#[inline]` is load-bearing: every caller is in another crate and the workspace sets no
-    /// `[profile.release]`, so without this the innermost loop of the index pays a cross-crate
-    /// call per residue. See the crate docs on `prefetch` for the same argument at length.
+    /// `[profile.release]`, so there is no cross-crate LTO to fall back on and the innermost loop
+    /// of the index would pay a call per residue. Being a method on a const-generic type already
+    /// exports the MIR, so LLVM would likely inline it anyway; the attribute makes that a
+    /// guarantee rather than a cost-model coincidence. See the crate docs on `prefetch` for the
+    /// same argument at length.
     ///
     /// # Panics
     ///
