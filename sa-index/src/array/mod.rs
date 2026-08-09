@@ -84,14 +84,6 @@ pub trait SuffixArrayBackend: Send + Sync {
     /// not pay the page faults.
     fn touch_all_pages(&self) {}
 
-    /// Hook for an OS-level readahead hint over the SA pages covering `lo..hi_exclusive`.
-    ///
-    /// **No backend implements this — it is a no-op everywhere.** The mmap backend deliberately
-    /// does not override it: issuing `MADV_WILLNEED` for k-mer SA ranges was measured at -16.8%
-    /// and reverted. See the note in `array::mmap`.
-    #[inline]
-    fn prefetch_sa_range(&self, _lo: usize, _hi_exclusive: usize) {}
-
     /// Whether the array is empty.
     fn is_empty(&self) -> bool { self.len() == 0 }
 }

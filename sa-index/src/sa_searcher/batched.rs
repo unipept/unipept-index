@@ -192,10 +192,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             .collect();
         let mut done: Vec<Option<SearchAllSuffixesResult>> = (0..n).map(|_| None).collect();
 
-        for &ss in strings {
-            self.prefetch_kmer_range(ss);
-        }
-
         // Mirrors the scalar path: for tryptic searches the skip = sample-1 pass is replaced by
         // left-extended searches, which cover the same positions with a ~20x smaller SA range.
         // See `search_matching_suffixes` in scalar.rs for the derivation.
@@ -265,13 +261,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             }
             self.match_iter_ns.add(t_iter.elapsed_ns());
 
-            if skip + 1 < skip_end {
-                for &i in &active {
-                    if done[i].is_none() {
-                        self.prefetch_kmer_range(&strings[i][skip + 1..]);
-                    }
-                }
-            }
         }
 
         // Left-extended phase. One batched bound search per extension character, so the streams

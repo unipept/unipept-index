@@ -1,7 +1,7 @@
 //! Scalar (one-peptide-at-a-time) search pipeline: narrow the SA window with a binary
 //! search, then collect matching suffixes. The memory-level-parallel counterpart lives in
-//! `super::batched`; both call the shared primitives (`compare`, `iterate_sa_range`,
-//! `prefetch_kmer_range`) that stay in the parent module.
+//! `super::batched`; both call the shared primitives (`compare`, `iterate_sa_range`) that stay
+//! in the parent module.
 
 use std::cmp::min;
 
@@ -167,12 +167,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
-        // No `prefetch_kmer_range` here, unlike the batched path. That call sat immediately
-        // before the `search_bounds` below that repeats the identical k-mer table lookup — no
-        // intervening work, so no latency to hide — and once the mmap `madvise` was removed it
-        // was a pure redundant probe. Measured over 6 (bucket, backend) combos in run3: +0.3%
-        // median, inside the 3.9% noise floor. The batched path keeps its call, where N
-        // independent lookups genuinely do issue before any search runs.
+        // There is no k-mer prefetch pass here, and there is no longer one in the batched path
+        // either. The call used to sit immediately before the `search_bounds` below that repeats
+        // the identical k-mer table lookup — no intervening work, so no latency to hide — and
+        // once the mmap `madvise` behind it was removed, the hint it issued became a no-op and
+        // only the discarded probe remained. Removing it from this path measured +0.3% median
+        // over 6 (bucket, backend) combos (run3, inside the 3.9% noise floor); removing it from
+        // the batched path measured neutral on both backends. See `super::batched`.
 
         let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(MAX_RESULT_PREALLOC));
         let mut il_locations = vec![];

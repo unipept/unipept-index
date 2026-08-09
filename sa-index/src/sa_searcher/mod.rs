@@ -510,25 +510,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         text.prefetch_at(me);
     }
 
-    /// Was: an early OS readahead hint for the k-mer's SA range (skip=0 case).
-    ///
-    /// It no longer does that. `SuffixArrayBackend::prefetch_sa_range` is a no-op on every
-    /// backend — the `MADV_WILLNEED` it used to issue measured -16.8% and was removed — so all
-    /// this now costs is a k-mer table probe whose result is discarded. The scalar path already
-    /// dropped the equivalent call; see `scalar::search_matching_suffixes`. Retained only until
-    /// its removal is measured, since the discarded probe may incidentally warm the cache line
-    /// that the real bounds lookup reads next.
-    #[inline]
-    fn prefetch_kmer_range(&self, search_string: &[u8]) {
-        if let Some(table) = &self.kmer_table {
-            if search_string.len() >= table.k {
-                if let Some((lo, hi)) = table.lookup(&search_string[..table.k]) {
-                    self.sa.prefetch_sa_range(lo, hi + 1);
-                }
-            }
-        }
-    }
-
     /// Checks whether the candidate suffix `raw` is a valid match for the current search
     /// parameters. Returns `Some(match_start)` when valid, `None` otherwise.
     ///
