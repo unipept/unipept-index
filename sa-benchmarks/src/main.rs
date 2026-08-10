@@ -59,7 +59,10 @@ use text_compression::ProteinTextBackend as _;
 /// v5: storage is chosen per structure, so the single `use_mmap` bool is replaced by
 ///     `sa_storage` / `text_storage` / `proteins_storage` / `mapping_storage`, each
 ///     "mmap" or "preloaded".
-const SCHEMA_VERSION: u32 = 5;
+/// v6: records carry a `startup` section timing each structure's load and the warmup pass.
+///     Preloading a structure moves cost from steady-state page faults to startup, and that
+///     trade was previously invisible.
+const SCHEMA_VERSION: u32 = 6;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -246,6 +249,30 @@ struct Args {
 // Output types
 // ---------------------------------------------------------------------------
 
+/// What the process paid before it could answer the first query.
+///
+/// Recorded per invocation (so every rep in a file repeats it) because it is a property of the
+/// build and the index, not of a rep. It exists because preloading a structure does not make its
+/// cost go away — it moves it from page faults spread across the steady state to one bulk copy at
+/// startup, and comparing configurations on throughput alone hides that entirely.
+#[derive(Clone, Copy, Serialize)]
+struct StartupTiming {
+    /// Reading `sa.bin`.
+    load_sa_ms: u64,
+    /// Reading `proteins.bin` — both the metadata table and the text, which may be stored
+    /// differently from each other.
+    load_proteins_ms: u64,
+    /// Reading `mapping.bin`.
+    load_mapping_ms: u64,
+    /// Loading or building the k-mer table, 0 when there is none. Also 0 in matrix mode, where
+    /// tables are swapped per cell rather than once at startup.
+    kmer_table_ms: u64,
+    /// The `--warmup` pass: touching pages and/or pushing peptides through. 0 without `--warmup`.
+    warmup_ms: u64,
+    /// The three index loads plus the k-mer table. Excludes warmup, which is opt-in.
+    load_total_ms: u64
+}
+
 #[derive(Clone, Serialize)]
 struct BenchmarkConfig {
     sa_type: String,
@@ -325,6 +352,8 @@ struct BenchmarkRecord {
     label: String,
     commit: String,
     config: BenchmarkConfig,
+    /// Absent in records written before schema v6.
+    startup: StartupTiming,
     result: BenchmarkResult,
     /// Per-config throughput spread over all reps (matrix mode only; omitted otherwise).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -616,6 +645,7 @@ fn ensure_kmer_table(
 #[derive(Clone, Copy)]
 struct CellSpec<'a> {
     // -- index-wide
+    startup: StartupTiming,
     mapping_type: &'a str,
     sa_type: &'a str,
     sample_rate: u8,
@@ -711,6 +741,7 @@ fn run_cell(
         version: SCHEMA_VERSION,
         label: args.label.clone(),
         commit: spec.commit.to_string(),
+        startup: spec.startup,
         config: BenchmarkConfig {
             sa_type: spec.sa_type.to_string(),
             mapping_type: spec.mapping_type.to_string(),
@@ -848,6 +879,9 @@ fn warmup_pipeline(searcher: &Searcher<SuffixArray>, args: &Args, count: usize) 
 /// table is built/loaded at most once (and only at all if `--matrix-kmer6` is set). Each
 /// config runs `runs` reps but writes a single aggregated record (median-qps rep as `result`,
 /// plus a `stats` spread) to <output>/<label>.jsonl.
+// Index-wide facts the caller already computed while loading; they are threaded through rather
+// than recomputed here, which is what pushes this past the argument limit.
+#[allow(clippy::too_many_arguments)]
 fn run_matrix(
     mut searcher: Searcher<SuffixArray>,
     args: &Args,
@@ -855,7 +889,8 @@ fn run_matrix(
     sa_type: &str,
     sample_rate: u8,
     bits_per_value: usize,
-    baseline_memory: u64
+    baseline_memory: u64,
+    mut startup: StartupTiming
 ) -> Result<(), Box<dyn Error>> {
     if args.matrix_files.is_empty() {
         return Err("--matrix requires at least one --matrix-files entry".into());
@@ -893,7 +928,15 @@ fn run_matrix(
 
     // Warm the page cache once (matters for mmap); CPU caches warm over the repeated runs.
     eprintln!("Warming up (touching all pages)...");
+    let warmup_start = Instant::now();
     warmup_touch_pages(&searcher);
+    startup.warmup_ms = warmup_start.elapsed().as_millis() as u64;
+    startup.load_total_ms =
+        startup.load_sa_ms + startup.load_proteins_ms + startup.load_mapping_ms + startup.kmer_table_ms;
+    eprintln!(
+        "Startup: load {} ms (sa {} / proteins {} / mapping {}), warmup {} ms",
+        startup.load_total_ms, startup.load_sa_ms, startup.load_proteins_ms, startup.load_mapping_ms, startup.warmup_ms
+    );
 
     // Theoretical memory footprint per k-mer table size — index-wide, independent of the
     // peptide file, so this is computed once per k value up front rather than per cell (it
@@ -930,6 +973,7 @@ fn run_matrix(
 
         // Everything the cells of this file share; the per-cell fields are filled in below.
         let base_spec = CellSpec {
+            startup,
             mapping_type,
             sa_type,
             sample_rate,
@@ -1007,21 +1051,40 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Baseline RSS after Rayon is warm but before any index data is loaded
     let baseline_memory = measure_process_memory();
 
-    // Load index
+    // Load index. Each load is timed separately: a `preloaded-*` feature only moves the cost of
+    // *its own* structure, so a single total would not say which one paid.
+    let mut startup = StartupTiming {
+        load_sa_ms: 0,
+        load_proteins_ms: 0,
+        load_mapping_ms: 0,
+        kmer_table_ms: 0,
+        warmup_ms: 0,
+        load_total_ms: 0
+    };
+
     eprintln!("Loading suffix array from {}...", sa_path.display());
+    let t0 = Instant::now();
     let suffix_array = load_suffix_array_file(sa_path.to_str().unwrap())?;
+    startup.load_sa_ms = t0.elapsed().as_millis() as u64;
     eprintln!(
-        "  {} items, {} bits/value, sample rate {}",
+        "  {} items, {} bits/value, sample rate {} ({} ms)",
         suffix_array.len(),
         suffix_array.bits_per_value(),
-        suffix_array.sample_rate()
+        suffix_array.sample_rate(),
+        startup.load_sa_ms
     );
 
     eprintln!("Loading proteins from {}...", proteins_path.display());
+    let t0 = Instant::now();
     let proteins = load_proteins_file(proteins_path.to_str().unwrap())?;
+    startup.load_proteins_ms = t0.elapsed().as_millis() as u64;
+    eprintln!("  {} ms", startup.load_proteins_ms);
 
     eprintln!("Loading mapping from {} (type: {})...", mapping_path.display(), mapping_type_str);
+    let t0 = Instant::now();
     let mapping = load_mapping_file(mapping_path.to_str().unwrap())?;
+    startup.load_mapping_ms = t0.elapsed().as_millis() as u64;
+    eprintln!("  {} ms", startup.load_mapping_ms);
 
     let sa_type = if suffix_array.bits_per_value() == 64 { "original" } else { "compressed" };
     let sample_rate = suffix_array.sample_rate();
@@ -1030,9 +1093,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut searcher = Searcher::new(suffix_array, proteins, mapping);
 
     if args.matrix {
-        return run_matrix(searcher, &args, mapping_type_str, sa_type, sample_rate, bits_per_value, baseline_memory);
+        return run_matrix(
+            searcher,
+            &args,
+            mapping_type_str,
+            sa_type,
+            sample_rate,
+            bits_per_value,
+            baseline_memory,
+            startup
+        );
     }
 
+    let t0 = Instant::now();
     if let Some(ref path) = args.kmer_table_file {
         eprintln!("Loading k-mer table from {}...", path.display());
         let table = load_kmer_table_file(path.to_str().unwrap())?;
@@ -1043,6 +1116,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         searcher.build_kmer_table(k);
         eprintln!("  done.");
     }
+    startup.kmer_table_ms = t0.elapsed().as_millis() as u64;
+    startup.load_total_ms =
+        startup.load_sa_ms + startup.load_proteins_ms + startup.load_mapping_ms + startup.kmer_table_ms;
 
     // Apply the SearchTuning knobs from the CLI (defaults match SearchTuning::default(), so
     // this is a no-op unless the caller overrides one of --validate-batch/etc).
@@ -1081,7 +1157,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "random".to_string()
     };
 
-    // Optional warmup pass (not timed)
+    // Optional warmup pass. Not part of the timed benchmark, but recorded: for mmap builds
+    // `--warmup all` faults in the whole index, and preloading a structure removes it from that
+    // sweep, so this is where part of the load cost reappears.
+    let warmup_start = Instant::now();
     match &args.warmup {
         None => {}
         Some(WarmupMode::All) => {
@@ -1099,6 +1178,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             warmup_pipeline(&searcher, &args, *warmup_count)?;
         }
     }
+    if args.warmup.is_some() {
+        startup.warmup_ms = warmup_start.elapsed().as_millis() as u64;
+        eprintln!("Warmup took {} ms.", startup.warmup_ms);
+    }
+    eprintln!(
+        "Startup: load {} ms (sa {} / proteins {} / mapping {} / kmer {}), warmup {} ms",
+        startup.load_total_ms,
+        startup.load_sa_ms,
+        startup.load_proteins_ms,
+        startup.load_mapping_ms,
+        startup.kmer_table_ms,
+        startup.warmup_ms
+    );
 
     // Prepare output file
     create_dir_all(&args.output)?;
@@ -1175,6 +1267,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             label: args.label.clone(),
             commit: env!("GIT_COMMIT_HASH").to_string(),
             config,
+            startup,
             result,
             stats: None
         };
