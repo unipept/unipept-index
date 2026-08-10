@@ -15,8 +15,8 @@ with `-` between and `$` at the end, which is the layout the suffix array is bui
 
 ## Two backends
 
-Like the rest of the index, the crate is built in one of two configurations, selected by the `mmap`
-feature. `proteins::Proteins` is a type alias that resolves to whichever is active:
+Like the rest of the index, the crate is built in one of several configurations, selected by
+features. `proteins::Proteins` is a type alias that resolves to whichever is active:
 
 * `InMemoryProteins` — accessions and encoded annotations held in owned memory. Always available,
   because it also owns the `WriteBinary` implementation that `sa-builder` uses to produce
@@ -28,6 +28,26 @@ Both implement `proteins::ProteinsBackend` and both hand out a borrowed `Protein
 code is written once and never copies per result. The on-disk format of `proteins.bin` is
 documented at its writer, on the `impl WriteBinary for InMemoryProteins` block in
 `src/proteins/preloaded.rs`.
+
+## Two axes, not one
+
+`proteins.bin` holds two things: the concatenated protein text and the metadata table. They are
+the hottest and the biggest structures in the index respectively, so the best storage for one is
+not the best storage for the other — and both structs above are generic over their text backend so
+the two can be chosen independently.
+
+| build | metadata | text |
+|---|---|---|
+| *(no features)* | owned | owned |
+| `mmap` | mapped | mapped |
+| `mmap,preloaded-text` | mapped | owned |
+| `mmap,preloaded-proteins` | owned | mapped |
+| `mmap,preloaded-text,preloaded-proteins` | owned | owned |
+
+All four load from the same file — the readers live in `src/proteins/mmap.rs`, sharing one header
+parser and one metadata parser so the combinations cannot drift apart. `preloaded-text` is the
+interesting one: it keeps the multi-gigabyte metadata table mapped while the ~190 MB text that
+search reads once per character compared sits in owned RAM.
 
 ## Example
 

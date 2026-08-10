@@ -14,8 +14,9 @@
 //! * **BitVec** — a bit per text position marking separators, with a rank structure over it.
 //!   Near-dense speed at a fraction of the size; the default.
 //!
-//! Each has a preloaded and an mmap implementation, selected by the `mmap` feature through the
-//! [`SuffixToProteinMapping`] alias; see the crate docs.
+//! Each has a preloaded and an mmap implementation, selected through the
+//! [`SuffixToProteinMapping`] alias: `mmap` maps it, and `preloaded-mapping` pulls this one
+//! structure back into owned memory while the rest of the index stays mapped. See the crate docs.
 
 #[cfg(feature = "mmap")]
 pub mod mmap;
@@ -29,9 +30,14 @@ pub use preloaded::{
     BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein
 };
 
-#[cfg(feature = "mmap")]
+/// Type alias — resolves to the active mapping backend for this build.
+#[cfg(all(feature = "mmap", not(feature = "preloaded-mapping")))]
 pub type SuffixToProteinMapping = MmapBackedSuffixToProteinMapping;
-#[cfg(not(feature = "mmap"))]
+/// Type alias — resolves to the active mapping backend for this build.
+///
+/// Owned memory either because this is a preloaded build, or because `preloaded-mapping` asked
+/// for this structure specifically.
+#[cfg(any(not(feature = "mmap"), feature = "preloaded-mapping"))]
 pub type SuffixToProteinMapping = InMemorySuffixToProteinMapping;
 
 /// Trait implemented by the SuffixToProtein mappings

@@ -5,8 +5,13 @@ name: Test
 jobs:
   test:
     # No crate in this workspace declares `default = [...]`, so a bare `cargo test` only ever
-    # compiles the *preloaded* backend. The `--all-features` cell is what covers the `mmap`
-    # backend (and sa-index's `metrics` instrumentation) end to end.
+    # compiles the fully *preloaded* configuration.
+    #
+    # Storage is chosen per structure, so there are nine configurations; these four cover both
+    # extremes, one mixture, and every loader implementation. Note in particular that
+    # `--all-features` turns on all three `preloaded-*` flags, so it is NOT the production
+    # configuration — it maps only the suffix array. The explicit `mmap` cell is what covers the
+    # way the server actually ships.
     name: Check + test (${{ matrix.name }})
     runs-on: ubuntu-latest
 
@@ -16,7 +21,11 @@ jobs:
         include:
           - name: preloaded (default features)
             features: ""
-          - name: all features (mmap + metrics)
+          - name: mmap (production configuration)
+            features: "--features mmap"
+          - name: mmap + preloaded text
+            features: "--features mmap,preloaded-text"
+          - name: all features (mmap SA only + metrics)
             features: "--all-features"
 
     steps:

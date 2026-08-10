@@ -10,28 +10,44 @@
 //! 3. [`suffix_to_protein_index`] maps surviving text positions to protein indices;
 //! 4. [`peptide_search`] turns those into results with accessions and annotations.
 //!
-//! # The `mmap` feature: two builds, one API
+//! # Storage features: one build, one API, four independent choices
 //!
 //! Every storage structure has two implementations — one holding owned memory, one borrowing a
-//! memory mapping — and the `mmap` feature picks which. The selection is a *type alias*, resolved
-//! at compile time, not a runtime branch:
+//! memory mapping — and features pick which. The selection is a *type alias*, resolved at compile
+//! time, so there is no runtime branch and no dispatch anywhere in the search path.
 //!
-//! | alias | preloaded (default) | with `mmap` |
-//! |---|---|---|
-//! | [`SuffixArray`] | `InMemorySA` | `MmapBackedSA` |
-//! | [`suffix_to_protein_index::SuffixToProteinMapping`] | `PreloadedSuffixToProteinMapping` | `MmapBackedSuffixToProteinMapping` |
-//! | `sa_mappings::proteins::Proteins` | `InMemoryProteins` | `MmapBackedProteins` |
-//! | `text_compression::ProteinText` | `InMemoryProteinText` | `MmapBackedProteinText` |
+//! `mmap` maps everything. Each `preloaded-*` feature then pulls **one** structure back into owned
+//! memory, leaving the rest mapped:
+//!
+//! | alias | owned | mapped | mapped when |
+//! |---|---|---|---|
+//! | [`SuffixArray`] | `InMemorySA` | `MmapBackedSA` | `mmap` |
+//! | `text_compression::ProteinText` | `InMemoryProteinText` | `MmapBackedProteinText` | `mmap` and not `preloaded-text` |
+//! | `sa_mappings::proteins::Proteins` | `InMemoryProteins<T>` | `MmapBackedProteins<T>` | `mmap` and not `preloaded-proteins` |
+//! | [`suffix_to_protein_index::SuffixToProteinMapping`] | `InMemorySuffixToProteinMapping` | `MmapBackedSuffixToProteinMapping` | `mmap` and not `preloaded-mapping` |
+//!
+//! Nine configurations in all: everything preloaded, everything mapped, and the seven mixtures.
+//! The point is that the best place for one structure is not the best place for another — the
+//! text is the hottest and the metadata table the biggest — so, for instance
+//! `--features mmap,preloaded-text` keeps the multi-gigabyte index mapped while the ~190 MB text
+//! the search reads once per character compared sits in owned RAM.
 //!
 //! Consequences worth knowing before reading further:
 //!
 //! * **No crate declares `default = [...]`**, so a plain `cargo build` or `cargo test` gives you
-//!   the *preloaded* configuration. The production server is built `--features mmap`.
-//! * The preloaded half is compiled in **both** configurations, because it owns the `WriteBinary`
+//!   the fully *preloaded* configuration. The production server is built `--features mmap`.
+//! * The suffix array follows `mmap` and has no override; there is no `preloaded-sa`.
+//! * A `preloaded-*` feature without `mmap` is a no-op — everything is preloaded already. Cargo
+//!   features are additive and cannot be negated by a dependent crate, so they only ever *remove*
+//!   mapping, never add it.
+//! * The protein text and the protein metadata share one file (`proteins.bin`) but are separate
+//!   axes, which is why `Proteins` is generic over its text type. All four pairings load from the
+//!   same file; see `sa_mappings::proteins::mmap`.
+//! * The preloaded half is compiled in **every** configuration, because it owns the `WriteBinary`
 //!   implementations that produce the files the mmap half reads.
-//! * The two are kept deliberately separate rather than sharing code, so that a tuning change to
-//!   one cannot perturb the other. Where that produces near-duplicate code it is marked as
-//!   intentional at the site.
+//! * The two halves are kept deliberately separate rather than sharing code, so that a tuning
+//!   change to one cannot perturb the other. Where that produces near-duplicate code it is marked
+//!   as intentional at the site.
 //!
 //! # The `metrics` feature
 //!

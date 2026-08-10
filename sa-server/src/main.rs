@@ -114,10 +114,10 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
         address
     } = args;
 
-    // The backend is a compile-time choice with a large effect on memory use, and nothing else
-    // at runtime reveals which one this binary has.
+    // Storage is a compile-time choice per structure, with a large effect on memory use, and
+    // nothing else at runtime reveals which combination this binary has.
     eprintln!();
-    eprintln!("Storage backend: {}", sa_server::BACKEND);
+    eprintln!("Storage backends: {}", sa_server::backend_summary());
 
     eprintln!();
     eprintln!("Started loading the suffix array...");

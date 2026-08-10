@@ -7,6 +7,9 @@ edition = "2021"
 
 [features]
 mmap = ["sa-index/mmap", "sa-mappings/mmap"]
+preloaded-text = ["sa-index/preloaded-text", "sa-mappings/preloaded-text"]
+preloaded-proteins = ["sa-index/preloaded-proteins", "sa-mappings/preloaded-proteins"]
+preloaded-mapping = ["sa-index/preloaded-mapping"]
 
 [dev-dependencies]
 tempfile = "3"

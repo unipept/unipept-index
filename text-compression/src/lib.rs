@@ -12,12 +12,17 @@
 //!
 //! # Two backends
 //!
-//! The `mmap` feature selects which one [`ProteinText`] resolves to:
+//! Which one [`ProteinText`] resolves to is decided by two features:
 //!
 //! * [`preloaded::InMemoryProteinText`] — the text decompressed into owned RAM. Faster per
-//!   access, but the process pays the full resident size.
+//!   access, but the process pays the full resident size. Selected without `mmap`, or with
+//!   `mmap` *and* `preloaded-text`.
 //! * [`mmap::MmapBackedProteinText`] — decoded straight out of a memory mapping, so the kernel
-//!   decides what stays resident.
+//!   decides what stays resident. Selected by `mmap` alone.
+//!
+//! `preloaded-text` exists because the text is the hottest structure in the index while the
+//! protein metadata sharing its file is the biggest, so the two are worth storing differently.
+//! It has no effect without `mmap` — everything is already preloaded then.
 //!
 //! `preloaded` is compiled in both configurations because it owns the `WriteBinary`
 //! implementation that produces the file both backends read.
@@ -43,11 +48,16 @@ pub use preloaded::InMemoryProteinText;
 /// bounds check from the hot path.
 pub const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
-/// Type alias — resolves to the single active backend for this build.
-#[cfg(feature = "mmap")]
+/// Type alias — resolves to the single active text backend for this build.
+///
+/// Mapped only when this is an `mmap` build that has not asked for the text back in RAM.
+#[cfg(all(feature = "mmap", not(feature = "preloaded-text")))]
 pub type ProteinText = MmapBackedProteinText;
-/// Type alias — resolves to the single active backend for this build.
-#[cfg(not(feature = "mmap"))]
+/// Type alias — resolves to the single active text backend for this build.
+///
+/// Owned memory either because this is a preloaded build, or because `preloaded-text` asked for
+/// the text specifically while the rest of the index stays mapped.
+#[cfg(any(not(feature = "mmap"), feature = "preloaded-text"))]
 pub type ProteinText = InMemoryProteinText;
 
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.

@@ -7,6 +7,8 @@ edition = "2021"
 
 [features]
 mmap = ["dep:memmap2"]
+# Keep the protein text in owned RAM even in an mmap build. No effect without `mmap`.
+preloaded-text = []
 
 [dependencies]
 binary-traits = { path = "../binary-traits" }

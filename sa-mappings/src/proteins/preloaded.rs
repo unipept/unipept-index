@@ -1,8 +1,12 @@
 //! Protein metadata held in owned memory, plus the TSV loader that builds an index.
 //!
-//! Compiled in *both* configurations: this module owns the `WriteBinary` implementation, so
+//! Compiled in *every* configuration: this module owns the `WriteBinary` implementation, so
 //! `sa-builder` uses it to produce the `proteins.bin` that the mmap backend later reads. Only the
 //! reading half is configuration-specific.
+//!
+//! The struct is generic over its text backend, so "owned metadata" does not imply "owned text" —
+//! see [`super`] for the two axes. The reader here handles the both-owned case; the pairings that
+//! involve the mapping live in [`super::mmap`], which has the mapping to hand.
 
 use std::{
     error::Error,
@@ -13,28 +17,36 @@ use std::{
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::encode;
-use text_compression::InMemoryProteinText;
+use text_compression::{InMemoryProteinText, ProteinTextBackend};
 pub use text_compression::{ReadBinary, WriteBinary};
 
 use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 // ── InMemoryProteins ──────────────────────────────────────────────────────────
 
-/// All protein metadata plus the concatenated text, held in owned memory.
-pub struct InMemoryProteins {
+/// All protein metadata held in owned memory, plus the concatenated text.
+///
+/// `T` is the text backend. It defaults to [`InMemoryProteinText`] — metadata and text both owned,
+/// which is the whole preloaded build — but an mmap build may instantiate it at
+/// `MmapBackedProteinText` to keep the (much larger) metadata in RAM while the text stays mapped.
+/// The two axes are independent; which pair this build uses is decided by the `Proteins` alias in
+/// [`super`].
+pub struct InMemoryProteins<T = InMemoryProteinText> {
     /// The concatenated protein text the suffix array is built over.
-    pub text: InMemoryProteinText,
+    pub text: T,
     /// Metadata per protein, in the same order as the runs in `text`.
     pub proteins: Vec<Protein>
 }
 
-impl InMemoryProteins {
+impl<T> InMemoryProteins<T> {
     /// Pairs an already-built text with the protein table describing it. The two must agree:
     /// `proteins[i]` describes the i-th `-`-separated run in `text`.
-    pub fn new(text: InMemoryProteinText, proteins: Vec<Protein>) -> Self {
+    pub fn new(text: T, proteins: Vec<Protein>) -> Self {
         Self { text, proteins }
     }
+}
 
+impl InMemoryProteins<InMemoryProteinText> {
     // ── TSV loader ────────────────────────────────────────────────────────────
 
     /// Builds an index from a UniProt TSV: `uniprot_id\ttaxon_id\tsequence\tannotations`.
@@ -74,11 +86,11 @@ impl InMemoryProteins {
     }
 }
 
-impl ProteinsBackend for InMemoryProteins {
-    type Text = InMemoryProteinText;
+impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T> {
+    type Text = T;
 
     #[inline]
-    fn text(&self) -> &InMemoryProteinText {
+    fn text(&self) -> &T {
         &self.text
     }
     fn len(&self) -> usize {
@@ -185,7 +197,7 @@ fn check_entry_lengths(proteins: &[Protein]) -> Result<(), String> {
 /// proteins; the annotation blob for ~103M. Raising the annotation ceiling means widening the
 /// offsets to `u64` and rebuilding every index, so it is deliberately not done pre-emptively —
 /// the check exists so that the need announces itself.
-impl WriteBinary for InMemoryProteins {
+impl<T: WriteBinary> WriteBinary for InMemoryProteins<T> {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         let protein_count = self.proteins.len() as u64;
         let uid_bytes_total: u64 = self.proteins.iter().map(|p| p.uniprot_id.len() as u64).sum();
@@ -225,35 +237,55 @@ impl WriteBinary for InMemoryProteins {
     }
 }
 
-impl ReadBinary for InMemoryProteins {
+/// Reads the metadata section — everything after the text — into owned `Protein`s.
+///
+/// Split out of [`ReadBinary::read_binary`] because the metadata half of `proteins.bin` is read
+/// the same way regardless of what the *text* half is doing. The mmap backend reads it straight
+/// out of a mapping (`&[u8]` is a `BufRead`) when the text is mapped but the metadata is not, so
+/// both storage choices share this one parser rather than each keeping a copy that could drift.
+///
+/// `reader` must be positioned at the start of the metadata section: immediately after the text,
+/// at the `protein_count` header. See the format documented on `impl WriteBinary` above.
+pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Protein>, Box<dyn Error>> {
+    let mut buf8 = [0u8; 8];
+    reader.read_exact(&mut buf8)?;
+    let protein_count = u64::from_le_bytes(buf8) as usize;
+    reader.read_exact(&mut buf8)?;
+    let uid_bytes_total = u64::from_le_bytes(buf8) as usize;
+    reader.read_exact(&mut buf8)?;
+    let fa_bytes_total = u64::from_le_bytes(buf8) as usize;
+    let mut table = vec![[0u8; 16]; protein_count];
+    for entry in table.iter_mut() {
+        reader.read_exact(entry)?;
+    }
+    let mut uid_data = vec![0u8; uid_bytes_total];
+    reader.read_exact(&mut uid_data)?;
+    let mut fa_data = vec![0u8; fa_bytes_total];
+    reader.read_exact(&mut fa_data)?;
+    let mut proteins = Vec::with_capacity(protein_count);
+    for entry in &table {
+        let taxon_id = u32::from_le_bytes(entry[0..4].try_into()?);
+        let uid_offset = u32::from_le_bytes(entry[4..8].try_into()?) as usize;
+        let uid_len = u16::from_le_bytes(entry[8..10].try_into()?) as usize;
+        let fa_offset = u32::from_le_bytes(entry[10..14].try_into()?) as usize;
+        let fa_len = u16::from_le_bytes(entry[14..16].try_into()?) as usize;
+        let uniprot_id = String::from_utf8(uid_data[uid_offset..uid_offset + uid_len].to_vec())?;
+        let functional_annotations = fa_data[fa_offset..fa_offset + fa_len].to_vec();
+        proteins.push(Protein { uniprot_id, taxon_id, functional_annotations });
+    }
+    Ok(proteins)
+}
+
+/// Reads the whole file into owned memory.
+///
+/// The bound admits only [`InMemoryProteinText`] in practice: the mmap text implements
+/// [`ReadBinaryMmap`](text_compression::ReadBinaryMmap) instead, since it needs a path to map
+/// rather than a stream to consume. The combination "mapped text, owned metadata" therefore lives
+/// in the mmap module, which has the mapping to hand.
+impl<T: ReadBinary> ReadBinary for InMemoryProteins<T> {
     fn read_binary<R: BufRead>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
-        let text = InMemoryProteinText::read_binary(reader)?;
-        let mut buf8 = [0u8; 8];
-        reader.read_exact(&mut buf8)?;
-        let protein_count = u64::from_le_bytes(buf8) as usize;
-        reader.read_exact(&mut buf8)?;
-        let uid_bytes_total = u64::from_le_bytes(buf8) as usize;
-        reader.read_exact(&mut buf8)?;
-        let fa_bytes_total = u64::from_le_bytes(buf8) as usize;
-        let mut table = vec![[0u8; 16]; protein_count];
-        for entry in table.iter_mut() {
-            reader.read_exact(entry)?;
-        }
-        let mut uid_data = vec![0u8; uid_bytes_total];
-        reader.read_exact(&mut uid_data)?;
-        let mut fa_data = vec![0u8; fa_bytes_total];
-        reader.read_exact(&mut fa_data)?;
-        let mut proteins = Vec::with_capacity(protein_count);
-        for entry in &table {
-            let taxon_id = u32::from_le_bytes(entry[0..4].try_into()?);
-            let uid_offset = u32::from_le_bytes(entry[4..8].try_into()?) as usize;
-            let uid_len = u16::from_le_bytes(entry[8..10].try_into()?) as usize;
-            let fa_offset = u32::from_le_bytes(entry[10..14].try_into()?) as usize;
-            let fa_len = u16::from_le_bytes(entry[14..16].try_into()?) as usize;
-            let uniprot_id = String::from_utf8(uid_data[uid_offset..uid_offset + uid_len].to_vec())?;
-            let functional_annotations = fa_data[fa_offset..fa_offset + fa_len].to_vec();
-            proteins.push(Protein { uniprot_id, taxon_id, functional_annotations });
-        }
+        let text = T::read_binary(reader)?;
+        let proteins = read_metadata_section(reader)?;
         Ok(Self { text, proteins })
     }
 }
@@ -429,7 +461,11 @@ mod tests {
         let mut bin_file = File::create(&bin_path).unwrap();
         original.write_binary(&mut bin_file).unwrap();
         drop(bin_file);
-        let loaded = InMemoryProteins::read_binary(&mut BufReader::new(File::open(&bin_path).unwrap())).unwrap();
+        // The text type has to be named: `read_binary` is generic over it, and inference will not
+        // pick the one type implementing `ReadBinary` on its own.
+        let loaded =
+            InMemoryProteins::<InMemoryProteinText>::read_binary(&mut BufReader::new(File::open(&bin_path).unwrap()))
+                .unwrap();
         assert_eq!(loaded.len(), original_save.len());
         for i in 0..original_save.len() {
             assert_eq!(original_save.get(i).uniprot_id, loaded.get(i).uniprot_id);

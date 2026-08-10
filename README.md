@@ -5,11 +5,11 @@
 The Unipept index, written entirely in `Rust`: given a peptide, find every protein that contains
 it. This repository is a Cargo workspace of several crates that depend on each other.
 
-## The one thing to know first: there are two builds
+## The one thing to know first: storage is a build-time choice
 
 Every storage structure in the index has two implementations — one holding **owned memory**, one
-borrowing a **memory mapping** — and which you get is a *compile-time* choice made by the `mmap`
-feature. There is no runtime switch.
+borrowing a **memory mapping** — and which you get is a *compile-time* choice made by features.
+There is no runtime switch, and no dispatch anywhere in the search path.
 
 **No crate declares `default = [...]`, so a plain `cargo build --release` gives you the preloaded
 backend.** The production server is built with `--features mmap`.
@@ -21,10 +21,29 @@ backend.** The production server is built with `--features mmap`.
 | Startup | slow: everything is read up front | fast, but the first queries pay the faults unless warmed |
 | Use when | the index comfortably fits in RAM | the index is large relative to available memory |
 
-A running server reports which one it is compiled as:
+### Mixing the two
+
+The choice is per structure, not per build. `mmap` maps all four; each `preloaded-*` feature then
+pulls **one** of them back into owned memory:
+
+| feature | structure it un-maps |
+|---|---|
+| `preloaded-text` | the concatenated protein text (~190 MB at UniProt scale) |
+| `preloaded-proteins` | the protein metadata table (accessions + annotations) |
+| `preloaded-mapping` | the suffix-to-protein mapping |
+
+The suffix array always follows `mmap`; there is no `preloaded-sa`. A `preloaded-*` feature has no
+effect without `mmap`, since everything is preloaded already.
+
+This exists because the structures are not alike: the text is read once per character compared
+while the metadata table is the largest thing in the index and read once per reported result. So
+`--features mmap,preloaded-text` keeps the index mapped but the hottest structure resident — worth
+measuring on your own data before choosing a default.
+
+A running server reports what it was compiled with:
 
 ```
-Storage backend: mmap
+Storage backends: sa=mmap text=preloaded proteins=mmap mapping=mmap
 ```
 
 ## Installation
@@ -39,6 +58,9 @@ cd unipept-index
 
 cargo build --release                    # preloaded backend
 cargo build --release --features mmap    # memory-mapped backend
+
+# ... or mix: map everything except the protein text
+cargo build --release --features mmap,preloaded-text
 ```
 
 ## Building an index

@@ -7,6 +7,10 @@ edition = "2021"
 
 [features]
 mmap = ["dep:memmap2", "sa-mappings/mmap", "text-compression/mmap"]
+# Per-structure overrides; see the crate docs. No-ops without `mmap`.
+preloaded-text = ["sa-mappings/preloaded-text", "text-compression/preloaded-text"]
+preloaded-proteins = ["sa-mappings/preloaded-proteins"]
+preloaded-mapping = []
 # Hot-path instrumentation (phase timings + candidate acceptance counters on `Searcher`).
 # Off by default: the clock reads and the atomic RMWs on searcher-wide cache lines perturb
 # the very measurement they exist to produce (~2% at mlp_batch=1). With the feature off the

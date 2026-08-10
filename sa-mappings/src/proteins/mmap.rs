@@ -5,29 +5,47 @@
 //! That is what keeps a multi-gigabyte protein table servable in bounded RSS.
 //!
 //! The file itself is written by `preloaded`'s `WriteBinary`; see there for the format.
+//!
+//! This module also owns every loader that needs the mapping — including the one producing an
+//! *owned* metadata table alongside a mapped text, which lives here rather than in `preloaded`
+//! because it is the mapping that has to be opened and kept alive. The three of them share
+//! [`layout`] for the header and `preloaded`'s `read_metadata_section` for the entries, so the
+//! storage combinations cannot drift apart in how they read the same file.
 
 use std::{error::Error, path::Path, sync::Arc};
 
 use memmap2::Mmap;
-use text_compression::{ProteinText, ReadBinaryMmap, bit_array_byte_size};
+use text_compression::{
+    InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, ReadBinary, ReadBinaryMmap, bit_array_byte_size
+};
 
-use super::{ProteinRef, ProteinsBackend};
+use super::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
 
 // ── MmapBackedProteins ────────────────────────────────────────────────────────
 
 /// Protein table borrowed from a memory mapping.
 ///
-/// The mapping is shared with [`Self::text`], which borrows the text section of the same file.
-pub struct MmapBackedProteins {
-    /// The mapping of `proteins.bin`, shared with `text`.
+/// `T` is the text backend. It defaults to [`MmapBackedProteinText`], which borrows the text
+/// section of the very same mapping, but it may be instantiated at [`InMemoryProteinText`] to copy
+/// the text into owned RAM while the much larger metadata table stays mapped. The text is the
+/// hottest structure in the index and the metadata the biggest, so that pairing is the point of
+/// the parameter; which one this build uses is decided by the `Proteins` alias in [`super`].
+pub struct MmapBackedProteins<T = MmapBackedProteinText> {
+    /// The mapping of `proteins.bin`, shared with `text` when the text is mapped too.
     pub mmap: Arc<Mmap>,
-    /// The concatenated protein text, borrowing the same mapping.
-    pub text: ProteinText,
+    /// The concatenated protein text.
+    pub text: T,
     /// Number of entries in the fixed-size table.
     pub protein_count: usize,
     pub(crate) fixed_table_offset: usize,
     pub(crate) uid_data_offset: usize,
-    pub(crate) fa_data_offset: usize
+    pub(crate) fa_data_offset: usize,
+    /// First byte [`ProteinsBackend::touch_all_pages`] warms.
+    ///
+    /// `0` when the text borrows the mapping, so the sweep covers the text section too; the start
+    /// of the metadata section when the text was copied into owned memory, since those text pages
+    /// are then never read again and faulting them in would be pure startup cost.
+    pub(crate) warm_from: usize
 }
 
 /// Field layout of one fixed-size entry in the protein table.
@@ -51,7 +69,7 @@ mod entry_offsets {
     pub const ENTRY_SIZE: usize = 16;
 }
 
-impl MmapBackedProteins {
+impl<T> MmapBackedProteins<T> {
     /// Borrows the fixed-size table entry for `index`, or `None` if it falls outside the mapping.
     ///
     /// Shared by [`Self::prefetch`] and [`Self::prefetch_strings`], which need the `Option`: a
@@ -66,11 +84,11 @@ impl MmapBackedProteins {
     }
 }
 
-impl ProteinsBackend for MmapBackedProteins {
-    type Text = ProteinText;
+impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins<T> {
+    type Text = T;
 
     #[inline]
-    fn text(&self) -> &ProteinText {
+    fn text(&self) -> &T {
         &self.text
     }
     fn len(&self) -> usize {
@@ -78,9 +96,10 @@ impl ProteinsBackend for MmapBackedProteins {
     }
 
     fn touch_all_pages(&self) {
-        // The whole file: the text, the entry table and both string blobs are all needed.
+        // Everything from `warm_from` on: the entry table and both string blobs always, and the
+        // text section too when the text is mapped rather than owned. See the field's doc.
         let end = self.mmap.len();
-        text_compression::mmap::touch_all_pages(&self.mmap, 0..end);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.warm_from..end);
     }
 
     /// Prefetches the fixed-size table entry for `index`.
@@ -156,67 +175,159 @@ impl ProteinsBackend for MmapBackedProteins {
     }
 }
 
-impl ReadBinaryMmap for MmapBackedProteins {
+// ── Loading ───────────────────────────────────────────────────────────────────
+
+/// Where each section of `proteins.bin` starts, once the header has been validated.
+///
+/// Every loader below needs these offsets, so they are computed once here rather than three times.
+struct Layout {
+    /// Residues in the text, i.e. its length before 5-bit packing.
+    text_length: usize,
+    /// Byte offset of the packed text data. Constant, but named so the loaders do not repeat it.
+    text_data_offset: usize,
+    /// Byte offset of the `protein_count` header, i.e. the start of the metadata section.
+    meta_offset: usize,
+    protein_count: usize,
+    fixed_table_offset: usize,
+    uid_data_offset: usize,
+    fa_data_offset: usize
+}
+
+/// Parses and bounds-checks the header of a mapped `proteins.bin`.
+///
+/// Split out of the loaders so that all three read the same header the same way — a divergence
+/// here would mean one storage combination validating less than another. It deliberately does
+/// *all* the checking before any loader builds a text or copies metadata, which is what keeps the
+/// guarantee that a truncated file errors rather than panicking.
+///
+/// The checking still stops at `fa_data_offset`; see `truncated_files_error_rather_than_panicking`
+/// for what is not validated beyond it.
+fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
+    let mmap_len = mmap.len();
+    if mmap_len < 8 {
+        return Err("proteins file too short to contain text header".into());
+    }
+
+    let text_length = u64::from_le_bytes(mmap[0..8].try_into()?) as usize;
+    let text_data_offset: usize = 8;
+    let bit_array_bytes = bit_array_byte_size(text_length);
+
+    let meta_offset = text_data_offset
+        .checked_add(bit_array_bytes)
+        .ok_or_else(|| "overflow while computing metadata offset".to_string())?;
+    let meta_end = meta_offset
+        .checked_add(24)
+        .ok_or_else(|| "overflow while computing metadata end offset".to_string())?;
+    if meta_end > mmap_len {
+        return Err("proteins file too short to contain metadata section".into());
+    }
+
+    let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
+    let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?) as usize;
+
+    let fixed_table_offset = meta_offset
+        .checked_add(24)
+        .ok_or_else(|| "overflow while computing fixed table offset".to_string())?;
+    let protein_entry_bytes = protein_count
+        .checked_mul(16)
+        .ok_or_else(|| "overflow while computing protein table size".to_string())?;
+    let uid_data_offset = fixed_table_offset
+        .checked_add(protein_entry_bytes)
+        .ok_or_else(|| "overflow while computing uid data offset".to_string())?;
+    let fa_data_offset = uid_data_offset
+        .checked_add(uid_bytes_total)
+        .ok_or_else(|| "overflow while computing fa data offset".to_string())?;
+
+    if uid_data_offset > mmap_len || fa_data_offset > mmap_len {
+        return Err("proteins file truncated: data section offsets exceed file length".into());
+    }
+
+    Ok(Layout {
+        text_length,
+        text_data_offset,
+        meta_offset,
+        protein_count,
+        fixed_table_offset,
+        uid_data_offset,
+        fa_data_offset
+    })
+}
+
+/// Maps `path` read-only and advises random access, the way every loader here wants it.
+fn map_file(path: &Path) -> Result<Arc<Mmap>, Box<dyn Error>> {
+    use std::fs::File;
+    let f = File::open(path)?;
+    // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
+    // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
+    // truncated or written underneath us.
+    let mmap = Arc::new(unsafe { Mmap::map(&f)? });
+
+    #[cfg(unix)]
+    mmap.advise(memmap2::Advice::Random)?;
+
+    Ok(mmap)
+}
+
+/// Metadata and text both borrowed from the mapping — the smallest resident footprint.
+impl ReadBinaryMmap for MmapBackedProteins<MmapBackedProteinText> {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
-        use std::fs::File;
-        let f = File::open(path)?;
-        // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
-        // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
-        // truncated or written underneath us.
-        let mmap = Arc::new(unsafe { Mmap::map(&f)? });
-
-        #[cfg(unix)]
-        mmap.advise(memmap2::Advice::Random)?;
-
-        let mmap_len = mmap.len();
-        if mmap_len < 8 {
-            return Err("proteins file too short to contain text header".into());
-        }
-
-        let text_length = u64::from_le_bytes(mmap[0..8].try_into()?) as usize;
-        let text_data_offset: usize = 8;
-        let bit_array_bytes = bit_array_byte_size(text_length);
-
-        let meta_offset = text_data_offset
-            .checked_add(bit_array_bytes)
-            .ok_or_else(|| "overflow while computing metadata offset".to_string())?;
-        let meta_end = meta_offset
-            .checked_add(24)
-            .ok_or_else(|| "overflow while computing metadata end offset".to_string())?;
-        if meta_end > mmap_len {
-            return Err("proteins file too short to contain metadata section".into());
-        }
-
-        let text = ProteinText::from_mmap(Arc::clone(&mmap), text_data_offset, text_length);
-
-        let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
-        let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?) as usize;
-
-        let fixed_table_offset = meta_offset
-            .checked_add(24)
-            .ok_or_else(|| "overflow while computing fixed table offset".to_string())?;
-        let protein_entry_bytes = protein_count
-            .checked_mul(16)
-            .ok_or_else(|| "overflow while computing protein table size".to_string())?;
-        let uid_data_offset = fixed_table_offset
-            .checked_add(protein_entry_bytes)
-            .ok_or_else(|| "overflow while computing uid data offset".to_string())?;
-        let fa_data_offset = uid_data_offset
-            .checked_add(uid_bytes_total)
-            .ok_or_else(|| "overflow while computing fa data offset".to_string())?;
-
-        if uid_data_offset > mmap_len || fa_data_offset > mmap_len {
-            return Err("proteins file truncated: data section offsets exceed file length".into());
-        }
+        let mmap = map_file(path)?;
+        let l = layout(&mmap)?;
+        let text = MmapBackedProteinText::from_mmap(Arc::clone(&mmap), l.text_data_offset, l.text_length);
 
         Ok(Self {
             mmap,
             text,
-            protein_count,
-            fixed_table_offset,
-            uid_data_offset,
-            fa_data_offset
+            protein_count: l.protein_count,
+            fixed_table_offset: l.fixed_table_offset,
+            uid_data_offset: l.uid_data_offset,
+            fa_data_offset: l.fa_data_offset,
+            // The text borrows the mapping, so its pages are worth warming.
+            warm_from: 0
         })
+    }
+}
+
+/// Metadata mapped, text copied into owned RAM.
+///
+/// The text is read through the ordinary [`ReadBinary`] path with the mapping itself as the
+/// source — `&[u8]` is a `BufRead`, and the text section starts at byte 0 — so the 5-bit unpacking
+/// and the huge-page advice come from the one implementation in `text_compression::preloaded`
+/// rather than a second copy here.
+impl ReadBinaryMmap for MmapBackedProteins<InMemoryProteinText> {
+    fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let mmap = map_file(path)?;
+        let l = layout(&mmap)?;
+        let text = InMemoryProteinText::read_binary(&mut &mmap[..])?;
+
+        Ok(Self {
+            mmap,
+            text,
+            protein_count: l.protein_count,
+            fixed_table_offset: l.fixed_table_offset,
+            uid_data_offset: l.uid_data_offset,
+            fa_data_offset: l.fa_data_offset,
+            // The text now lives in owned memory; warming its pages would fault in ~190 MB at
+            // UniProt scale that nothing reads again.
+            warm_from: l.meta_offset
+        })
+    }
+}
+
+/// Metadata copied into owned RAM, text mapped.
+///
+/// This is a `ReadBinaryMmap` impl on the *preloaded* struct, which reads oddly until you notice
+/// that its text still lives in the mapping: something has to hold the file open, and the metadata
+/// is what gets copied out. `read_metadata_section` is the same parser the fully-preloaded reader
+/// uses, applied to the mapping instead of a file handle.
+impl ReadBinaryMmap for super::InMemoryProteins<MmapBackedProteinText> {
+    fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let mmap = map_file(path)?;
+        let l = layout(&mmap)?;
+        let text = MmapBackedProteinText::from_mmap(Arc::clone(&mmap), l.text_data_offset, l.text_length);
+        let proteins = read_metadata_section(&mut &mmap[l.meta_offset..])?;
+
+        Ok(Self::new(text, proteins))
     }
 }
 
@@ -229,12 +340,20 @@ mod tests {
     use tempdir::TempDir;
     use text_compression::{ProteinTextBackend as _, ReadBinaryMmap, WriteBinary, bit_array_byte_size};
 
-    use super::MmapBackedProteins;
+    use super::{InMemoryProteinText, MmapBackedProteinText, MmapBackedProteins};
     use crate::proteins::{
-        ProteinsBackend as _,
+        ProteinsBackend,
         preloaded::InMemoryProteins,
         test_fixtures::{TEST_PROTEINS, write_database_file}
     };
+
+    /// The four ways `proteins.bin` can be loaded, named once so the tests read as prose.
+    ///
+    /// Default type parameters are not applied in expression position, and there are three
+    /// `ReadBinaryMmap` impls to choose between, so every call site has to say which it means.
+    type Mapped = MmapBackedProteins<MmapBackedProteinText>;
+    type MappedMetaOwnedText = MmapBackedProteins<InMemoryProteinText>;
+    type OwnedMetaMappedText = InMemoryProteins<MmapBackedProteinText>;
 
     fn write_binary_to_tempfile(tmp_dir: &TempDir) -> PathBuf {
         let db = write_database_file(tmp_dir, &TEST_PROTEINS[..3]);
@@ -249,7 +368,7 @@ mod tests {
     fn test_mmap_roundtrip_len() {
         let tmp_dir = TempDir::new("test_mmap_len").unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
-        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         assert_eq!(mmap.len(), 3);
     }
 
@@ -257,7 +376,7 @@ mod tests {
     fn test_mmap_roundtrip_taxon() {
         let tmp_dir = TempDir::new("test_mmap_taxon").unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
-        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         for (i, &taxon) in [1u32, 2, 6].iter().enumerate() {
             assert_eq!(mmap.get(i).taxon_id, taxon);
         }
@@ -267,7 +386,7 @@ mod tests {
     fn test_mmap_roundtrip_uniprot_id() {
         let tmp_dir = TempDir::new("test_mmap_uid").unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
-        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         assert_eq!(mmap.get(0).uniprot_id, "P12345");
         assert_eq!(mmap.get(1).uniprot_id, "P54321");
         assert_eq!(mmap.get(2).uniprot_id, "P67890");
@@ -277,15 +396,36 @@ mod tests {
     fn test_mmap_roundtrip_functional_annotations() {
         let tmp_dir = TempDir::new("test_mmap_fa").unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
-        let mmap = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
+        let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         for i in 0..mmap.len() {
             assert_eq!(mmap.get(i).get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
         }
     }
 
-    /// Every backend agrees on every field. This is the check that would catch a drift between
-    /// the writer's field order in `preloaded` and the reader's `entry_offsets` here, which are
-    /// two independent statements of the same 16-byte layout.
+    /// Asserts `actual` reports exactly what `expected` does, field by field and residue by
+    /// residue. `what` names the combination so a failure says which one broke.
+    fn assert_agrees_with<A: ProteinsBackend, E: ProteinsBackend>(what: &str, actual: &A, expected: &E) {
+        assert_eq!(actual.len(), expected.len(), "{what}: protein count differs");
+        for i in 0..expected.len() {
+            let (a, b) = (expected.get(i), actual.get(i));
+            assert_eq!(a.uniprot_id, b.uniprot_id, "{what}: uniprot_id differs at {i}");
+            assert_eq!(a.taxon_id, b.taxon_id, "{what}: taxon_id differs at {i}");
+            assert_eq!(a.functional_annotations, b.functional_annotations, "{what}: annotations differ at {i}");
+        }
+
+        assert_eq!(actual.text().len(), expected.text().len(), "{what}: text length differs");
+        for i in 0..expected.text().len() {
+            assert_eq!(actual.text().get(i), expected.text().get(i), "{what}: text differs at {i}");
+        }
+    }
+
+    /// Every combination agrees on every field. Two independent things ride on this:
+    ///
+    /// * the writer's field order in `preloaded` against the reader's `entry_offsets` here, which
+    ///   are two separate statements of the same 16-byte layout;
+    /// * the four text × metadata pairings against each other. They share `layout` and
+    ///   `read_metadata_section`, but each assembles the pieces itself, and a wrong offset in one
+    ///   would otherwise surface only as wrong answers from a differently-built server.
     #[test]
     fn matches_the_preloaded_backend_field_for_field() {
         let tmp_dir = TempDir::new("test_mmap_parity").unwrap();
@@ -295,20 +435,53 @@ mod tests {
         let bin_path = tmp_dir.path().join("proteins.bin");
         let mut bin_file = File::create(&bin_path).unwrap();
         InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap().write_binary(&mut bin_file).unwrap();
-        let mapped = MmapBackedProteins::read_binary_mmap(&bin_path).unwrap();
 
-        assert_eq!(mapped.len(), preloaded.len());
-        for i in 0..preloaded.len() {
-            let (a, b) = (preloaded.get(i), mapped.get(i));
-            assert_eq!(a.uniprot_id, b.uniprot_id, "uniprot_id differs at {i}");
-            assert_eq!(a.taxon_id, b.taxon_id, "taxon_id differs at {i}");
-            assert_eq!(a.functional_annotations, b.functional_annotations, "annotations differ at {i}");
-        }
+        assert_agrees_with("mapped metadata, mapped text", &Mapped::read_binary_mmap(&bin_path).unwrap(), &preloaded);
+        assert_agrees_with(
+            "mapped metadata, owned text",
+            &MappedMetaOwnedText::read_binary_mmap(&bin_path).unwrap(),
+            &preloaded
+        );
+        assert_agrees_with(
+            "owned metadata, mapped text",
+            &OwnedMetaMappedText::read_binary_mmap(&bin_path).unwrap(),
+            &preloaded
+        );
+    }
 
-        assert_eq!(mapped.text().len(), preloaded.text().len());
-        for i in 0..preloaded.text().len() {
-            assert_eq!(mapped.text().get(i), preloaded.text().get(i), "text differs at {i}");
-        }
+    /// The warm range must skip the text section exactly when the text is not in the mapping.
+    ///
+    /// Getting this wrong is silent: the pages fault in, nothing ever reads them again, and the
+    /// only symptoms are startup time and page-cache pressure — ~190 MB of it at UniProt scale.
+    /// That would quietly cancel the benefit `preloaded-text` exists to deliver.
+    #[test]
+    fn warm_range_skips_the_text_only_when_the_text_is_owned() {
+        let tmp_dir = TempDir::new("test_mmap_warm_from").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+
+        assert_eq!(Mapped::read_binary_mmap(&bin_path).unwrap().warm_from, 0, "mapped text: warm the whole file");
+
+        let owned_text = MappedMetaOwnedText::read_binary_mmap(&bin_path).unwrap();
+        let meta_offset = 8 + bit_array_byte_size(owned_text.text.len());
+        assert!(meta_offset > 8, "fixture should have a non-empty text section");
+        assert_eq!(owned_text.warm_from, meta_offset, "owned text: warming must start at the metadata section");
+    }
+
+    /// A named loader, reduced to "did it reject this file?" so the malformed-header tests can
+    /// hold all three in one list despite their different return types.
+    type RejectsFile = (&'static str, fn(&std::path::Path) -> bool);
+
+    /// Every loader that maps the file, so a malformed-header test covers all of them.
+    ///
+    /// They share `layout`, which is exactly why this matters: the shared header check has to run
+    /// *before* each loader touches the sections it owns, or one of them reads out of bounds on a
+    /// file the others reject.
+    fn mmap_loaders() -> Vec<RejectsFile> {
+        vec![
+            ("mapped metadata, mapped text", |p| Mapped::read_binary_mmap(p).is_err()),
+            ("mapped metadata, owned text", |p| MappedMetaOwnedText::read_binary_mmap(p).is_err()),
+            ("owned metadata, mapped text", |p| OwnedMetaMappedText::read_binary_mmap(p).is_err()),
+        ]
     }
 
     /// `read_binary_mmap` parses an untrusted header. Truncation anywhere up to the end of the
@@ -338,11 +511,9 @@ mod tests {
         for cut in 0..fa_data_offset {
             let path = tmp_dir.path().join(format!("truncated_{cut}.bin"));
             std::fs::write(&path, &full[..cut]).unwrap();
-            assert!(
-                MmapBackedProteins::read_binary_mmap(&path).is_err(),
-                "{cut} of {} bytes should not load",
-                full.len()
-            );
+            for (what, load_is_err) in mmap_loaders() {
+                assert!(load_is_err(&path), "{what}: {cut} of {} bytes should not load", full.len());
+            }
         }
     }
 
@@ -361,6 +532,8 @@ mod tests {
 
         let path = tmp_dir.path().join("overlong.bin");
         std::fs::write(&path, &bytes).unwrap();
-        assert!(MmapBackedProteins::read_binary_mmap(&path).is_err());
+        for (what, load_is_err) in mmap_loaders() {
+            assert!(load_is_err(&path), "{what}: an overlong protein count should be rejected");
+        }
     }
 }

@@ -10,6 +10,10 @@ tempdir = "0.3.7"
 
 [features]
 mmap = ["dep:memmap2", "text-compression/mmap"]
+# Per-structure overrides: keep this structure in owned RAM even in an mmap build.
+# All three are no-ops without `mmap`, where everything is preloaded already.
+preloaded-text = ["text-compression/preloaded-text"]
+preloaded-proteins = []
 
 [dependencies]
 fa-compression = { path = "../fa-compression" }

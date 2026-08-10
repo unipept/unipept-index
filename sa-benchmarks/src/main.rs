@@ -56,7 +56,10 @@ use text_compression::ProteinTextBackend as _;
 /// v4: the OFAT and confirm sweeps were retired once they had settled which knobs matter, so
 ///     `config.ofat_baseline` / `config.ofat_knob` are gone and `config.phase` is now only
 ///     "single" (non-matrix CLI run) or "grid" (matrix sweep).
-const SCHEMA_VERSION: u32 = 4;
+/// v5: storage is chosen per structure, so the single `use_mmap` bool is replaced by
+///     `sa_storage` / `text_storage` / `proteins_storage` / `mapping_storage`, each
+///     "mmap" or "preloaded".
+const SCHEMA_VERSION: u32 = 5;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -247,7 +250,13 @@ struct Args {
 struct BenchmarkConfig {
     sa_type: String,
     mapping_type: String,
-    use_mmap: bool,
+    /// Where each structure was stored, "mmap" or "preloaded". Independent per structure, and
+    /// fixed at compile time — two binaries from the same commit can differ here, so a record
+    /// without these four fields cannot be attributed to a configuration.
+    sa_storage: &'static str,
+    text_storage: &'static str,
+    proteins_storage: &'static str,
+    mapping_storage: &'static str,
     sample_rate: u8,
     bits_per_value: usize,
     equate_il: bool,
@@ -359,12 +368,20 @@ fn generate_peptides(rng: &mut impl Rng, count: usize, min_len: usize, max_len: 
         .collect()
 }
 
+/// Whether the protein metadata table is stored in the mapping rather than on the heap.
+///
+/// Only the metadata layout differs between the two, so this is the single axis
+/// [`theoretical_memory`] needs — the text is accounted for identically either way.
+fn proteins_mapped() -> bool {
+    sa_server::PROTEINS_BACKEND == "mmap"
+}
+
 /// Computes the theoretical in-memory footprint of the loaded index structures.
 ///
 /// This is derived from the actual data sizes, **not** from disk file sizes, so it remains
 /// accurate when new structures are added to the `Searcher`. When you add a new structure,
 /// extend this function with its memory calculation.
-fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, use_mmap: bool) -> u64 {
+fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, proteins_mapped: bool) -> u64 {
     let text_len = searcher.proteins.text().len() as u64;
     let protein_count = searcher.proteins.len() as u64;
 
@@ -381,7 +398,7 @@ fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, use_
             p.uniprot_id.len() as u64 + p.functional_annotations.len() as u64
         })
         .sum();
-    let metadata_bytes = if use_mmap {
+    let metadata_bytes = if proteins_mapped {
         // MmapBacked: 16-byte fixed table entry per protein + concatenated string blobs
         protein_count * 16 + string_bytes
     } else {
@@ -603,7 +620,6 @@ struct CellSpec<'a> {
     sa_type: &'a str,
     sample_rate: u8,
     bits_per_value: usize,
-    use_mmap: bool,
     baseline_memory: u64,
     commit: &'a str,
     // -- per peptide file
@@ -698,7 +714,10 @@ fn run_cell(
         config: BenchmarkConfig {
             sa_type: spec.sa_type.to_string(),
             mapping_type: spec.mapping_type.to_string(),
-            use_mmap: spec.use_mmap,
+            sa_storage: sa_server::SA_BACKEND,
+            text_storage: sa_server::TEXT_BACKEND,
+            proteins_storage: sa_server::PROTEINS_BACKEND,
+            mapping_storage: sa_server::MAPPING_BACKEND,
             sample_rate: spec.sample_rate,
             bits_per_value: spec.bits_per_value,
             equate_il: spec.equate_il,
@@ -841,7 +860,6 @@ fn run_matrix(
     if args.matrix_files.is_empty() {
         return Err("--matrix requires at least one --matrix-files entry".into());
     }
-    let use_mmap = cfg!(feature = "mmap");
     let kmers = matrix_kmers(args);
 
     // Build/load the 5-mer table (always in scope — the grid's default kmer set includes it)
@@ -883,7 +901,7 @@ fn run_matrix(
     let mut theoretical_by_k: HashMap<usize, u64> = HashMap::new();
     for &k in &kmers {
         ensure_kmer_table(&mut searcher, &mut table5, &mut table6, k);
-        theoretical_by_k.insert(k, theoretical_memory(&searcher, mapping_type, use_mmap));
+        theoretical_by_k.insert(k, theoretical_memory(&searcher, mapping_type, proteins_mapped()));
     }
 
     create_dir_all(&args.output)?;
@@ -916,7 +934,6 @@ fn run_matrix(
             sa_type,
             sample_rate,
             bits_per_value,
-            use_mmap,
             baseline_memory,
             commit: &commit,
             source: &source,
@@ -1031,7 +1048,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // this is a no-op unless the caller overrides one of --validate-batch/etc).
     searcher.tuning = tuning_from(&args);
 
-    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, cfg!(feature = "mmap"));
+    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, proteins_mapped());
     eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
 
     // Load peptides: either all at once from a file (for sequential chunking across runs)
@@ -1121,7 +1138,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let config = BenchmarkConfig {
             sa_type: sa_type.to_string(),
             mapping_type: mapping_type_str.to_string(),
-            use_mmap: cfg!(feature = "mmap"),
+            sa_storage: sa_server::SA_BACKEND,
+            text_storage: sa_server::TEXT_BACKEND,
+            proteins_storage: sa_server::PROTEINS_BACKEND,
+            mapping_storage: sa_server::MAPPING_BACKEND,
             sample_rate,
             bits_per_value,
             equate_il: args.equate_il,

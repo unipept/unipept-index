@@ -1,19 +1,28 @@
 //! End-to-end tests: run the real `sa-builder` binary and inspect what it writes.
 //!
-//! Only the read-back assertions need the `mmap` feature (they go through `read_binary_mmap`).
-//! The "did it produce the right files" test is backend-agnostic and runs in both
-//! configurations — previously a file-level `#![cfg(feature = "mmap")]` made the whole suite
-//! vanish from the default `cargo test`, so the preloaded builder was never exercised at all.
+//! Only the read-back assertions need a mapped index (they go through `read_binary_mmap`). The
+//! "did it produce the right files" test is backend-agnostic and runs in every configuration —
+//! previously a file-level `#![cfg(feature = "mmap")]` made the whole suite vanish from the
+//! default `cargo test`, so the preloaded builder was never exercised at all.
+//!
+//! Each read-back test is gated on *its own* structure being mapped, because storage is chosen
+//! per structure. Those predicates mirror the loaders in `sa-server`; if one drifts out of step
+//! the test stops compiling rather than silently testing the wrong reader, which is how the
+//! mismatch announces itself.
 
 use std::{io::Write, process::Command};
 
-#[cfg(feature = "mmap")]
+#[cfg(all(feature = "mmap", not(feature = "preloaded-mapping")))]
+use sa_index::Nullable;
+#[cfg(all(feature = "mmap", not(feature = "preloaded-mapping")))]
 use sa_index::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingBackend as _};
 #[cfg(feature = "mmap")]
-use sa_index::{Nullable, ReadBinaryMmap, SuffixArray, SuffixArrayBackend as _};
-#[cfg(feature = "mmap")]
+use sa_index::{ReadBinaryMmap, SuffixArray, SuffixArrayBackend as _};
+// `proteins.bin` holds the text and the metadata, so it is read through the mapping unless
+// *both* have been pulled into owned memory.
+#[cfg(all(feature = "mmap", not(all(feature = "preloaded-text", feature = "preloaded-proteins"))))]
 use sa_mappings::proteins::{Proteins, ProteinsBackend as _};
-#[cfg(feature = "mmap")]
+#[cfg(all(feature = "mmap", not(all(feature = "preloaded-text", feature = "preloaded-proteins"))))]
 use text_compression::ProteinTextBackend as _;
 
 /// Four proteins used as test input, matching the fixture in sa-mappings unit tests.
@@ -115,7 +124,7 @@ fn test_suffix_array_output() {
     }
 }
 
-#[cfg(feature = "mmap")]
+#[cfg(all(feature = "mmap", not(all(feature = "preloaded-text", feature = "preloaded-proteins"))))]
 #[test]
 fn test_proteins_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -153,7 +162,7 @@ fn test_proteins_output() {
     assert_eq!(proteins.text().len(), TEXT_LENGTH, "protein text length mismatch");
 }
 
-#[cfg(feature = "mmap")]
+#[cfg(all(feature = "mmap", not(feature = "preloaded-mapping")))]
 #[test]
 fn test_mapping_output() {
     let dir = tempfile::tempdir().unwrap();
