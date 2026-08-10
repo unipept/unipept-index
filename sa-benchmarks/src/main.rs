@@ -62,7 +62,10 @@ use text_compression::ProteinTextBackend as _;
 /// v6: records carry a `startup` section timing each structure's load and the warmup pass.
 ///     Preloading a structure moves cost from steady-state page faults to startup, and that
 ///     trade was previously invisible.
-const SCHEMA_VERSION: u32 = 6;
+/// v7: `result` gains `major_faults` / `minor_faults`, counted across the timed region. They are
+///     what separates "slow because it is waiting on I/O" from "slow for some other reason" when
+///     the index does not fit in RAM.
+const SCHEMA_VERSION: u32 = 7;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -242,7 +245,17 @@ struct Args {
     /// Print the planned config list for the matrix sweep and exit, without
     /// loading the index. Use this to eyeball a sweep before committing a multi-hour run.
     #[arg(long)]
-    dry_run: bool
+    dry_run: bool,
+
+    /// Skip the theoretical memory calculation, reporting `theoretical_max_memory: 0`.
+    ///
+    /// That calculation walks *every* protein's metadata (see `theoretical_memory`), which on an
+    /// mmap backend faults the entire metadata section in before anything is timed. Harmless when
+    /// the index fits in RAM, but under a cgroup memory cap it both pre-warms what the run is
+    /// supposed to be faulting on demand and spends the budget being measured. Off by default, so
+    /// ordinary runs still report the figure.
+    #[arg(long)]
+    no_theoretical_memory: bool
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +343,14 @@ struct BenchmarkResult {
     /// `candidates_accepted` and `Searcher::candidates_accepted`'s doc comment.
     candidates_examined: u64,
     /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `metrics`).
-    candidates_accepted: u64
+    candidates_accepted: u64,
+    /// Page faults taken across the timed region (search + retrieval), not for the whole process.
+    ///
+    /// `major_faults` are the ones that reached disk. On a box where the index fits they stay near
+    /// zero in both backends; when it does not fit they are the whole story, and a run that slows
+    /// down *without* them is slow for some other reason.
+    major_faults: u64,
+    minor_faults: u64
 }
 
 /// Spread of throughput across the `runs` timed reps of a single config. Emitted in matrix
@@ -456,6 +476,47 @@ fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, prot
     sa_bytes + text_bytes + metadata_bytes + mapping_bytes + kmer_table_bytes
 }
 
+/// Page faults this process has taken so far, as `(minor, major)`.
+///
+/// Major faults are the ones that went to disk; on an mmap backend whose index does not fit in
+/// RAM they are the dominant cost, and their absence in a slow run means the slowness is *not*
+/// residency. Counted around the timed region rather than for the whole process so warmup and
+/// index loading do not swamp the measurement.
+///
+/// Read straight from `/proc/self/stat` — `sysinfo` does not expose fault counts portably. Linux
+/// only; every other platform reports zeros, which keeps the crate building on macOS where these
+/// numbers are not the point.
+#[cfg(target_os = "linux")]
+fn page_faults() -> (u64, u64) {
+    std::fs::read_to_string("/proc/self/stat").map(|s| parse_proc_stat_faults(&s)).unwrap_or((0, 0))
+}
+
+/// Extracts `(minflt, majflt)` from the contents of `/proc/self/stat`.
+///
+/// Separate from the file read so it can be tested off Linux — the field arithmetic is the part
+/// that breaks, and it breaks by returning zeros, which is indistinguishable from a run that
+/// genuinely took no faults. That failure mode is why this is a pure function with tests rather
+/// than four lines inline.
+///
+/// Field 2 is the executable name in parentheses and may itself contain spaces and parentheses,
+/// so parsing starts after the **last** `)`, never at the first space.
+#[allow(dead_code)] // Only called on Linux; the tests below exercise it everywhere.
+fn parse_proc_stat_faults(stat: &str) -> (u64, u64) {
+    let Some((_, rest)) = stat.rsplit_once(')') else {
+        return (0, 0);
+    };
+    // `rest` begins at field 3 (state), so field 10 (minflt) is index 7 and field 12 (majflt) 9.
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let get = |i: usize| fields.get(i).and_then(|v| v.parse().ok()).unwrap_or(0);
+    (get(7), get(9))
+}
+
+/// Non-Linux stub — see the Linux implementation for why this is not worth emulating.
+#[cfg(not(target_os = "linux"))]
+fn page_faults() -> (u64, u64) {
+    (0, 0)
+}
+
 /// Returns the current process's resident set size in bytes via sysinfo.
 fn measure_process_memory() -> u64 {
     let pid = Pid::from(std::process::id() as usize);
@@ -485,6 +546,9 @@ fn run_benchmark(
     // Reset per-run timing/candidate accumulators before the search phase.
     searcher.drain_timing_ns();
     searcher.drain_candidate_counts();
+
+    // Fault counters bracket the timed region only, so index loading and warmup are excluded.
+    let (minflt_before, majflt_before) = page_faults();
 
     // Phase 1: suffix array search (parallel), via the same orchestrator production uses.
     // mlp_batch > 1 interleaves that many peptides per rayon task for memory-level parallelism;
@@ -529,6 +593,8 @@ fn run_benchmark(
     let cutoff_reached = suffix_results.iter().any(|r| matches!(r, SearchAllSuffixesResult::MaxMatches(_)));
 
     let total_duration_ns = search_duration_ns + retrieval_duration_ns;
+    let (minflt_after, majflt_after) = page_faults();
+
     let throughput_qps =
         if total_duration_ns > 0 { peptides.len() as f64 / (total_duration_ns as f64 / 1e9) } else { 0.0 };
 
@@ -547,7 +613,9 @@ fn run_benchmark(
         search_bounds_ns,
         match_iter_ns,
         candidates_examined,
-        candidates_accepted
+        candidates_accepted,
+        major_faults: majflt_after.saturating_sub(majflt_before),
+        minor_faults: minflt_after.saturating_sub(minflt_before)
     }
 }
 
@@ -944,7 +1012,9 @@ fn run_matrix(
     let mut theoretical_by_k: HashMap<usize, u64> = HashMap::new();
     for &k in &kmers {
         ensure_kmer_table(&mut searcher, &mut table5, &mut table6, k);
-        theoretical_by_k.insert(k, theoretical_memory(&searcher, mapping_type, proteins_mapped()));
+        let m =
+            if args.no_theoretical_memory { 0 } else { theoretical_memory(&searcher, mapping_type, proteins_mapped()) };
+        theoretical_by_k.insert(k, m);
     }
 
     create_dir_all(&args.output)?;
@@ -1124,8 +1194,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // this is a no-op unless the caller overrides one of --validate-batch/etc).
     searcher.tuning = tuning_from(&args);
 
-    let theoretical_max = theoretical_memory(&searcher, mapping_type_str, proteins_mapped());
-    eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", theoretical_max, theoretical_max as f64 / 1_048_576.0);
+    let theoretical_max = if args.no_theoretical_memory {
+        eprintln!("Theoretical max memory: skipped (--no-theoretical-memory)");
+        0
+    } else {
+        let m = theoretical_memory(&searcher, mapping_type_str, proteins_mapped());
+        eprintln!("Theoretical max memory: {} bytes ({:.1} MB)", m, m as f64 / 1_048_576.0);
+        m
+    };
 
     // Load peptides: either all at once from a file (for sequential chunking across runs)
     // or generate fresh random peptides for each run.
@@ -1287,7 +1363,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         eprintln!(
             "Run {:>3}/{}: {:.1} qps  |  total {:.1} ms  (search {:.1} ms [bounds {:.1} ms + iter {:.1} ms] + retrieval {:.1} ms)  \
-             |  hits: {} queries, {} suffixes, {} proteins{}{}",
+             |  hits: {} queries, {} suffixes, {} proteins{}{}{}",
             run,
             args.runs,
             record.result.throughput_qps,
@@ -1301,6 +1377,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             record.result.protein_hit_count,
             if record.result.cutoff_reached { "  [cutoff reached]" } else { "" },
             accept_note,
+            if record.result.major_faults > 0 {
+                format!("  |  {} major faults", record.result.major_faults)
+            } else {
+                String::new()
+            },
         );
     }
 
@@ -1308,4 +1389,40 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("Done. {} lines written to {}", args.runs, output_path.display());
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real `/proc/self/stat` prefix. The fault counters are the whole instrument of the
+    /// RAM-scaling sweep, and a mis-indexed parse returns zeros — which reads as "this run took
+    /// no page faults", a perfectly plausible result. Nothing else would catch that.
+    #[test]
+    fn parses_fault_counts_from_proc_stat() {
+        let stat = "1234 (sa-benchmarks) R 1200 1234 1234 0 -1 4194304 6789 0 12 0 5 3 0 0 20 0 8 0 123456";
+        assert_eq!(parse_proc_stat_faults(stat), (6789, 12));
+    }
+
+    /// The process name can contain spaces and parentheses, which is why the parse starts after
+    /// the last `)` rather than at the first space. Splitting on whitespace first would shift
+    /// every field and silently report the wrong numbers.
+    #[test]
+    fn comm_field_with_spaces_and_parens_does_not_shift_the_fields() {
+        let stat = "42 (my (weird) proc) S 1 42 42 0 -1 4194304 111 0 222 0 5 3 0 0 20 0 8 0 99";
+        assert_eq!(parse_proc_stat_faults(stat), (111, 222));
+    }
+
+    /// Truncated or unexpected input reports zeros rather than panicking mid-benchmark. The
+    /// counters are diagnostic, so losing them must not take a multi-hour run down with them.
+    #[test]
+    fn malformed_input_reports_zeros() {
+        assert_eq!(parse_proc_stat_faults(""), (0, 0));
+        assert_eq!(parse_proc_stat_faults("1234 (no-close-paren 1 2 3"), (0, 0));
+        assert_eq!(parse_proc_stat_faults("1234 (short) R 1 2"), (0, 0));
+    }
 }
