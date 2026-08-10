@@ -2,41 +2,20 @@
 //!
 //! Submodules:
 //! - [`preloaded`] — [`InMemoryProteins`] (always available)
-//! - [`mmap`]      — [`MmapBackedProteins`] (mmap builds only)
+//! - `mmap` — `MmapBackedProteins` (mmap builds only)
 //!
 //! The alias [`Proteins`] resolves to the active backend.
+//!
+//! Everything both backends share lives here rather than in a submodule: the [`ProteinsBackend`]
+//! trait they implement, the [`Protein`] / [`ProteinRef`] pair a lookup returns, and the
+//! [`SEPARATION_CHARACTER`] and [`TERMINATION_CHARACTER`] delimiters that give the concatenated
+//! text its structure.
 
 #[cfg(feature = "mmap")]
 pub mod mmap;
 pub mod preloaded;
-
 #[cfg(test)]
-pub(crate) mod test_fixtures {
-    //! The shared TSV fixture. Both backends' tests build an index from the same rows so that
-    //! their assertions are comparable; each picks how many rows it wants.
-
-    use std::{fs::File, io::Write, path::PathBuf};
-
-    use tempdir::TempDir;
-
-    /// `(uniprot_id, taxon_id, sequence, annotations)`, in the order they appear in the file.
-    pub(crate) const TEST_PROTEINS: [(&str, u32, &str, &str); 4] = [
-        ("P12345", 1, "MLPGLALLLLAAWTARALEV", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
-        ("P54321", 2, "PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
-        ("P67890", 6, "KWDSDPSGTKTCIDT", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
-        ("P13579", 17, "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH", "GO:0009279;IPR:IPR016364;IPR:IPR008816")
-    ];
-
-    /// Writes `proteins` as a UniProt TSV into `tmp_dir` and returns its path.
-    pub(crate) fn write_database_file(tmp_dir: &TempDir, proteins: &[(&str, u32, &str, &str)]) -> PathBuf {
-        let path = tmp_dir.path().join("database.tsv");
-        let mut f = File::create(&path).unwrap();
-        for (uid, taxon, sequence, annotations) in proteins {
-            writeln!(f, "{uid}\t{taxon}\t{sequence}\t{annotations}").unwrap();
-        }
-        path
-    }
-}
+pub(crate) mod test_fixtures;
 
 #[cfg(feature = "mmap")]
 pub use mmap::MmapBackedProteins;
@@ -49,9 +28,11 @@ pub type Proteins = MmapBackedProteins;
 #[cfg(not(feature = "mmap"))]
 pub type Proteins = InMemoryProteins;
 
-// Re-export I/O traits used by callers.
 // ── Shared types ──────────────────────────────────────────────────────────────
+
 use fa_compression::algorithm1::decode;
+// The I/O traits callers need, re-exported so they do not have to depend on `binary-traits`
+// directly. `text-compression` re-exports them from there for the same reason.
 pub use text_compression::{ProteinTextBackend, ReadBinary, ReadBinaryMmap, WriteBinary};
 
 /// Byte placed between consecutive protein sequences in the concatenated text.
@@ -61,8 +42,12 @@ pub use text_compression::{ProteinTextBackend, ReadBinary, ReadBinaryMmap, Write
 pub static SEPARATION_CHARACTER: u8 = b'-';
 /// Byte marking the end of the concatenated text.
 ///
-/// Every search relies on this: it guarantees a candidate comparison always terminates before
-/// running off the end of the text, so the hot loops need no explicit end-of-text bounds check.
+/// It sorts below every residue, so the final suffix orders correctly against its own prefixes,
+/// and it gives the tryptic C-terminus predicate a sentinel to read at the last position instead
+/// of a special case. It is *not* what keeps the comparison loops in bounds — those check the
+/// text length explicitly; see `Searcher::compare` in `sa-index`.
+///
+/// Must not appear in any sequence.
 pub static TERMINATION_CHARACTER: u8 = b'$';
 
 // ── ProteinsBackend trait ─────────────────────────────────────────────────────
@@ -95,7 +80,8 @@ pub trait ProteinsBackend: Send + Sync {
     #[inline]
     fn touch_all_pages(&self) {}
 
-    /// Non-blocking hardware prefetch for the fixed-table entry at `index`.
+    /// Non-blocking hardware prefetch for the metadata record at `index`.
+    /// What that record is differs per backend; each impl says which bytes it hints.
     /// Default is a no-op; backends override when a prefetch is meaningful.
     #[inline]
     fn prefetch(&self, _index: usize) {}

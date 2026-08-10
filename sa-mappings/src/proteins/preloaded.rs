@@ -35,7 +35,7 @@ impl InMemoryProteins {
         Self { text, proteins }
     }
 
-    // ── TSV loaders (non-mmap only) ───────────────────────────────────────────
+    // ── TSV loader ────────────────────────────────────────────────────────────
 
     /// Builds an index from a UniProt TSV: `uniprot_id\ttaxon_id\tsequence\tannotations`.
     ///
@@ -71,23 +71,6 @@ impl InMemoryProteins {
         proteins.shrink_to_fit();
         let text = InMemoryProteinText::from_string(&input_string);
         Ok(Self { text, proteins })
-    }
-
-    /// Builds only the concatenated text from a TSV, skipping the protein metadata.
-    pub fn text_from_tsv(database_file: &str) -> Result<InMemoryProteinText, Box<dyn Error>> {
-        Ok(InMemoryProteinText::from_string(&Self::read_sequences_from_tsv(database_file)?))
-    }
-
-    fn read_sequences_from_tsv(database_file: &str) -> Result<String, Box<dyn Error>> {
-        let mut input_string = String::new();
-        let file = File::open(database_file)?;
-        let mut lines = ByteLines::new(BufReader::new(file));
-        while let Some(Ok(line)) = lines.next() {
-            let sequence = from_utf8(line.split(|b| *b == b'\t').nth(2).unwrap())?;
-            input_string.push_str(&sequence.to_uppercase());
-            input_string.push(SEPARATION_CHARACTER.into());
-        }
-        Ok(input_string)
     }
 }
 
@@ -381,10 +364,8 @@ mod tests {
     use tempdir::TempDir;
     use text_compression::ProteinTextBackend as _;
 
-    use super::{
-        super::test_fixtures::{TEST_PROTEINS, write_database_file},
-        *
-    };
+    use super::*;
+    use crate::proteins::test_fixtures::{TEST_PROTEINS, write_database_file};
 
     #[test]
     fn test_new_protein() {
@@ -435,14 +416,6 @@ mod tests {
         for i in 0..proteins.len() {
             assert_eq!(proteins.get(i).get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
         }
-    }
-
-    #[test]
-    fn test_get_concatenated_proteins() {
-        let tmp_dir = TempDir::new("test_get_fa").unwrap();
-        let text =
-            InMemoryProteins::text_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
-        assert_eq!(text.get(4), b'L');
     }
 
     #[test]

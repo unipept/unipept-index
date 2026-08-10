@@ -33,7 +33,9 @@ pub struct MmapBackedProteins {
 /// Field layout of one fixed-size entry in the protein table.
 ///
 /// Must stay in lockstep with the writer in [`super::preloaded`], which emits these fields in
-/// this order; nothing but this comment ties the two together.
+/// this order. The two are independent statements of the same 16-byte layout; what catches a
+/// drift between them is the `matches_the_preloaded_backend_field_for_field` test below, which
+/// writes a file with one backend and reads it back with the other.
 mod entry_offsets {
     /// NCBI taxon id.
     pub const TAXON_ID: std::ops::Range<usize> = 0..4;
@@ -52,8 +54,11 @@ mod entry_offsets {
 impl MmapBackedProteins {
     /// Borrows the fixed-size table entry for `index`, or `None` if it falls outside the mapping.
     ///
-    /// Both `get` and `prefetch_strings` used to compute this offset independently, in two
-    /// different indexing styles; keeping it in one place is what stops them drifting apart.
+    /// Shared by [`Self::prefetch`] and [`Self::prefetch_strings`], which need the `Option`: a
+    /// hint is speculative and must skip an index it cannot address rather than fault on it.
+    /// [`Self::get`] computes the same offset itself instead of going through here, because it
+    /// wants the panicking slice — an unaddressable entry there means a corrupt file, which is
+    /// not something to pass over silently.
     #[inline]
     fn entry(&self, index: usize) -> Option<&[u8]> {
         let off = self.fixed_table_offset + index * entry_offsets::ENTRY_SIZE;
@@ -88,9 +93,14 @@ impl ProteinsBackend for MmapBackedProteins {
 
     /// Prefetches the accession and annotation bytes for `index`.
     ///
-    /// Separate from [`Self::prefetch`] because they are two extra dependent loads: the entry has
-    /// to arrive before its offsets can be followed. Retrieval issues this one batch ahead so the
-    /// string data is in flight while the current batch is being decoded.
+    /// Separate from [`Self::prefetch`] because they are two extra *dependent* loads: the entry
+    /// has to arrive before its offsets can be followed.
+    ///
+    /// That dependency is why nothing calls this today. `Searcher::retrieve_proteins` in
+    /// `sa-index/src/sa_searcher/retrieval.rs` deliberately issues only [`Self::prefetch`]: at its
+    /// look-ahead distance the entry has usually not landed yet when this would read it, so the
+    /// call stalls on the very load it is meant to hide. Its doc comment records the reasoning.
+    /// A caller with a longer look-ahead could use this; the current one cannot.
     #[inline]
     fn prefetch_strings(&self, index: usize) {
         let Some(entry) = self.entry(index) else { return };
@@ -111,9 +121,16 @@ impl ProteinsBackend for MmapBackedProteins {
     ///
     /// # Panics
     ///
-    /// If `index` is out of range, or the file's offsets point outside the mapping. The bounds
-    /// are only `debug_assert`ed, so a corrupt file panics in release rather than erroring —
-    /// tracked as a known issue.
+    /// Three ways, all of them on a corrupt or truncated file rather than on bad input:
+    ///
+    /// * `index` is out of range. Only `debug_assert`ed, so a release build panics on the slice
+    ///   below instead of erroring.
+    /// * the entry's `uid_offset` / `fa_offset` point past the end of the mapping.
+    /// * the accession bytes are not valid UTF-8.
+    ///
+    /// All three panic inside a request handler, since `read_binary_mmap` does not validate this
+    /// far — see `truncated_files_error_rather_than_panicking` for exactly where its checking
+    /// stops. Tracked as a known issue.
     #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;

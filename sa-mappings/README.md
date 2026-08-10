@@ -4,10 +4,49 @@
 ![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=sa-mappings&logo=codecov)
 ![Static Badge](https://img.shields.io/badge/doc-rustdoc-blue)
 
-A suffix array returns a range of matches. This range has to be mapped to some informational data. The `sa-mappings` library 
-offers a few utilities to build these mapping tables. The library offers functionality to map each SA output onto its 
-proteins, taxonomy and functional annotations.
+A suffix array search returns positions in the concatenated protein text, and the suffix-to-protein
+mapping turns those positions into protein indices. The `sa-mappings` library is the last step: it
+turns an index into the metadata a search result actually reports — the UniProt accession, the NCBI
+taxon id, and the functional annotations.
 
-- `sa_mappings::taxonomy::TaxonAggregator` can aggregate a list of taxa.
-- `sa_mappings::functionality::FunctionAggregator` can aggregate a list of functional annotations.
-- `sa_mappings::proteins::Proteins` can map an SA entry to a protein and all its information
+It also owns the concatenated text itself. `InMemoryProteins::load_from_tsv` reads a UniProt TSV
+(`uniprot_id`, `taxon_id`, `sequence`, `annotations`), upper-cases every sequence and joins them
+with `-` between and `$` at the end, which is the layout the suffix array is built over.
+
+## Two backends
+
+Like the rest of the index, the crate is built in one of two configurations, selected by the `mmap`
+feature. `proteins::Proteins` is a type alias that resolves to whichever is active:
+
+* `InMemoryProteins` — accessions and encoded annotations held in owned memory. Always available,
+  because it also owns the `WriteBinary` implementation that `sa-builder` uses to produce
+  `proteins.bin` for *both* backends to read.
+* `MmapBackedProteins` — the same fields decoded straight out of a memory mapping of that file,
+  which is what keeps a multi-gigabyte protein table servable in bounded RSS.
+
+Both implement `proteins::ProteinsBackend` and both hand out a borrowed `ProteinRef`, so reading
+code is written once and never copies per result. The on-disk format of `proteins.bin` is
+documented at its writer, on the `impl WriteBinary for InMemoryProteins` block in
+`src/proteins/preloaded.rs`.
+
+## Example
+
+```rust
+use sa_mappings::proteins::{InMemoryProteins, ProteinsBackend};
+
+fn main() {
+    let proteins = InMemoryProteins::load_from_tsv("database.tsv").unwrap();
+
+    let protein = proteins.get(0);
+
+    // "P12345"
+    println!("{}", protein.uniprot_id);
+
+    // 1
+    println!("{}", protein.taxon_id);
+
+    // Annotations are stored encoded and decoded on demand, once per reported result:
+    // "GO:0009279;IPR:IPR016364;IPR:IPR008816"
+    println!("{}", protein.get_functional_annotations());
+}
+```
