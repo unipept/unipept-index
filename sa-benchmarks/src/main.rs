@@ -247,6 +247,15 @@ struct Args {
     #[arg(long)]
     dry_run: bool,
 
+    /// Issue madvise(MADV_WILLNEED) over each SA range before scanning it.
+    ///
+    /// Off by default and it has regressed before — -16.8% qps with the index resident, from
+    /// mmap_lock contention across rayon threads (see MmapBackedSA::advise_willneed_range). It is
+    /// exposed to test the opposite regime: under a memory ceiling a CPU prefetch hint cannot help
+    /// (it cannot fault), so the syscall may replace a real disk stall rather than nothing.
+    #[arg(long)]
+    willneed: bool,
+
     /// Skip the theoretical memory calculation, reporting `theoretical_max_memory: 0`.
     ///
     /// That calculation walks *every* protein's metadata (see `theoretical_memory`), which on an
@@ -315,6 +324,8 @@ struct BenchmarkConfig {
     validate_batch: usize,
     validate_prefetch_threshold: usize,
     retrieval_prefetch_distance: usize,
+    /// Whether madvise(MADV_WILLNEED) was issued over each SA range before scanning.
+    willneed: bool,
     /// Which sweep produced this record: "single" (non-matrix CLI run) or "grid" (the trimmed
     /// default matrix grid).
     phase: String
@@ -638,7 +649,8 @@ fn tuning_from(args: &Args) -> SearchTuning {
     SearchTuning {
         validate_batch: args.validate_batch,
         validate_prefetch_threshold: args.validate_prefetch_threshold,
-        retrieval_prefetch_distance: args.retrieval_prefetch_distance
+        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
+        willneed: args.willneed
     }
 }
 
@@ -831,6 +843,7 @@ fn run_cell(
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
+            willneed: searcher.tuning.willneed,
             phase: spec.phase.to_string()
         },
         result: representative,
@@ -1324,6 +1337,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             validate_batch: searcher.tuning.validate_batch,
             validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
             retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
+            willneed: searcher.tuning.willneed,
             phase: "single".to_string()
         };
 

@@ -207,6 +207,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
                     BoundSearchResult::NoMatches => continue
                 };
+                self.advise_sa_range(min_bound, max_bound);
                 let search_string = strings[i];
                 // See scalar.rs's search_matching_suffixes for the soundness argument: `compare`
                 // always normalizes L->I on both sides (the index is built with L replaced by
@@ -293,6 +294,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
                         BoundSearchResult::NoMatches => continue
                     };
+                    self.advise_sa_range(min_bound, max_bound);
                     let search_string = strings[i];
                     let last_is_kr = matches!(search_string.last(), Some(b'K' | b'R'));
                     let hit_max = self.iterate_extended_sa_range(

@@ -71,14 +71,41 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len);
     }
 
-    // Do not add a per-query `MADV_WILLNEED` over the k-mer SA range. It was tried and it
-    // *regressed* the mmap backend by -16.8% qps (5-mer, 26-50aa, batch=16) even though the
-    // pages were already resident. Average range size for a 5-mer is ~54 KB vs ~2.7 KB for a
-    // 6-mer (37.2e9 SA entries / 20^5 vs 20^6), and every rayon thread contends on the same
-    // VMA's mmap_lock to issue the advice — the penalty scales with range size, matching the
-    // observed 5-mer-hurts / 6-mer-roughly-even split. On an index whose pages are already
-    // touched (see `touch_all_pages`), the syscall buys nothing and the lock contention is pure
-    // cost. The `prefetch_sa_range` hook that once carried it has since been removed entirely.
+    /// Queues asynchronous readahead over the pages holding entries `start..end`.
+    ///
+    /// # This regressed badly once already — read before enabling it
+    ///
+    /// A per-query `MADV_WILLNEED` over the k-mer SA range was tried and *regressed* the mmap
+    /// backend by **-16.8% qps** (5-mer, 26-50aa, batch=16) even though the pages were already
+    /// resident. Average range size is ~54 KB for a 5-mer vs ~2.7 KB for a 6-mer (37.2e9 SA
+    /// entries / 20^5 vs 20^6), and every rayon thread contends on the same VMA's `mmap_lock` to
+    /// issue the advice — the penalty scales with range size, matching the observed
+    /// 5-mer-hurts / 6-mer-roughly-even split. On an index whose pages are already touched the
+    /// syscall buys nothing and the lock contention is pure cost.
+    ///
+    /// It is back only because that measurement was taken with the whole index **resident**,
+    /// which is the one regime where readahead cannot help. Under a memory ceiling the trade is
+    /// different: the syscall may replace a real ~100 µs fault rather than nothing. That is a
+    /// hypothesis, not a result — hence `SearchTuning::willneed` defaults to off, and it must be
+    /// measured under a cap before anyone turns it on.
+    ///
+    /// Two things make the contention worse now than when it was first measured: the fault path
+    /// itself takes `mmap_lock`, and the thread count that makes memory pressure survivable is
+    /// ~96 rather than the core count. If this regresses again, that is why, and the next thing
+    /// to try is `process_madvise` (Linux 5.10+) to collapse a batch of ranges into one call.
+    #[cfg(unix)]
+    fn advise_willneed_range(&self, start: usize, end: usize) {
+        if start >= end || end > self.len {
+            return;
+        }
+        let lo = self.data_offset + (start * self.bits_per_value) / 8;
+        // +8 so a value straddling the final u64 boundary is covered; see `get`.
+        let hi = (self.data_offset + (end * self.bits_per_value).div_ceil(8) + 8).min(self.mmap.len());
+        if hi > lo {
+            // Advisory only: a failure costs nothing but the missed readahead.
+            let _ = self.mmap.advise_range(memmap2::Advice::WillNeed, lo, hi - lo);
+        }
+    }
 }
 
 impl ReadBinaryMmap for MmapBackedSA {

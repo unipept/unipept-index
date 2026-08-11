@@ -191,7 +191,17 @@ pub struct SearchTuning {
     ///
     /// Swept over {8, 16, 32, 64}: median full-range swing +1.2%, inside the noise floor
     /// everywhere. Same caveat as `validate_prefetch_threshold`.
-    pub retrieval_prefetch_distance: usize
+    pub retrieval_prefetch_distance: usize,
+    /// Issue `madvise(MADV_WILLNEED)` over an SA range before scanning it.
+    ///
+    /// **Off by default, and it has regressed before**: -16.8% qps with the index resident, from
+    /// `mmap_lock` contention across rayon threads. See `MmapBackedSA::advise_willneed_range` for
+    /// the full note. It exists to be tested under a memory ceiling, where a CPU prefetch hint
+    /// cannot help because it cannot fault, and where the syscall may replace a real disk stall
+    /// rather than nothing.
+    ///
+    /// A no-op on the preloaded backend, where the trait method is the default no-op.
+    pub willneed: bool
 }
 
 impl Default for SearchTuning {
@@ -199,7 +209,8 @@ impl Default for SearchTuning {
         Self {
             validate_batch: 64,              // confirmed by run3; 16 costs ~10%, 128 gains nothing
             validate_prefetch_threshold: 32, // measured flat over 8..64
-            retrieval_prefetch_distance: 32  // measured flat over 8..64
+            retrieval_prefetch_distance: 32, // measured flat over 8..64
+            willneed: false                  // regressed when resident; unmeasured under a cap
         }
     }
 }
@@ -1315,18 +1326,24 @@ mod tests {
                     for validate_batch in [1usize, 16, 64, MAX_VALIDATE_BATCH] {
                         for validate_prefetch_threshold in [0usize, 8, 32] {
                             for retrieval_prefetch_distance in [1usize, 8, 32] {
-                                let tuning = SearchTuning {
-                                    validate_batch,
-                                    validate_prefetch_threshold,
-                                    retrieval_prefetch_distance
-                                };
-                                searcher.tuning = tuning;
-                                assert_eq!(
-                                    tuning_run(searcher, &peptides, equate_il, tryptic),
-                                    expected,
-                                    "{name}: results changed (il={equate_il} tr={tryptic}) \
-                                     for {tuning:?}"
-                                );
+                                // `willneed` only decides whether readahead is *requested* for a
+                                // range about to be read anyway, so it must never change which
+                                // suffixes come back. It is swept here for exactly that reason.
+                                for willneed in [false, true] {
+                                    let tuning = SearchTuning {
+                                        validate_batch,
+                                        validate_prefetch_threshold,
+                                        retrieval_prefetch_distance,
+                                        willneed
+                                    };
+                                    searcher.tuning = tuning;
+                                    assert_eq!(
+                                        tuning_run(searcher, &peptides, equate_il, tryptic),
+                                        expected,
+                                        "{name}: results changed (il={equate_il} tr={tryptic}) \
+                                         for {tuning:?}"
+                                    );
+                                }
                             }
                         }
                     }
