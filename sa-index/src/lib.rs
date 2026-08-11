@@ -92,6 +92,54 @@
 //!
 //! Decisions that were measured and *rejected* are recorded next to the code they would have
 //! touched, so they are not rediscovered and retried.
+//!
+//! # When the index does not fit in RAM
+//!
+//! Everything above was tuned with the whole index resident. That is not the regime the mmap
+//! backend exists for, and **several of those decisions do not survive the regime it does exist
+//! for.** Measured 2026-08-10/11 at 3259427: full UniProt index (223 GB total) on a 295 GB /
+//! 12-core server, ceilings imposed with cgroup v2 `MemoryMax` and swap off, page cache dropped
+//! before every cell, 40-100 timed reps per cell, 6-mer table attached unless stated.
+//!
+//! For scale, the index divides roughly as SA ~149 GB, text ~40 GB, protein metadata ~24 GB,
+//! mapping ~10 GB — derived from the entry widths and sample rate rather than measured, except
+//! the metadata, which is the RSS delta observed when `preloaded-proteins` moves it to the heap.
+//! The ratios are what matter: the SA is two thirds of the working set, so it dominates residency.
+//!
+//! **The degradation is a concurrency limit, not a bandwidth one.** A major fault blocks its
+//! thread, and `prefetch_read` cannot help: a CPU hint instruction cannot fault, so every
+//! prefetch in this crate is inert against an absent page. With rayon at the core count, each
+//! faulting thread idles a core. Raising `RAYON_NUM_THREADS` leaves the fault *count* unchanged
+//! to within 0.24% and still buys:
+//!
+//! | ceiling | major faults/rep | default threads | best | gain |
+//! |---|---|---|---|---|
+//! | none | 0 | 35,710 | 35,046 @ 48 | **-1.9%** |
+//! | 167 GB (75%) | 24,190 | 15,739 | 26,071 @ 48 | **+65.6%** |
+//! | 112 GB (50%) | 46,690 | 10,561 | 19,654 @ 96 | **+86.1%** |
+//!
+//! The gain tracks the fault rate and the cost is real when resident (-7.8% at 96 threads), so
+//! this is a deployment knob, not a default. It is also the largest single effect anywhere in
+//! this investigation — larger than any storage-backend choice.
+//!
+//! **A 6-mer k-mer table is worth its 3.06 GB here**, against the note in `sa-benchmarks` that
+//! measured it inside the noise floor when resident. At a 167 GB ceiling it is +18.4% and -27.9%
+//! faults versus no table; a 5-mer table is +3.2% and -6.2%, i.e. barely distinguishable from
+//! nothing. The difference is working-set size, not probe count: a 5-mer narrows the search to
+//! ~7 SA pages per query, a 6-mer to ~1.
+//!
+//! **All of the loss is in the search phase.** Retrieval is flat at ~147 ms per rep across every
+//! ceiling while search goes 135 ms → 1127 ms, so the two-pass prefetch pipeline in
+//! `sa_searcher::retrieval` keeps working under paging and needs nothing. Within search, the split
+//! is roughly even between the dependent binary-search chain and the contiguous SA range scan
+//! (52% / 48% of thread-time, `metrics` build at a 167 GB ceiling).
+//!
+//! Two further ideas were measured and rejected; see `array::mmap::MmapBackedSA::advise_willneed_range`
+//! and `sa_searcher::SearchTuning::willneed` for `MADV_WILLNEED`, and note here that **sorting
+//! queries by k-mer prefix to create page locality does not work**: it changed the fault count by
+//! -0.1% and cost 4.4% throughput. With 10,000 queries per rep drawn against 20^6 possible
+//! 6-mers, the expected number of queries sharing a prefix is under one, so there is no page reuse
+//! for sorting to expose. Locality needs reuse, and this workload has none.
 
 pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 

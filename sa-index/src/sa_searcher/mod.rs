@@ -194,11 +194,15 @@ pub struct SearchTuning {
     pub retrieval_prefetch_distance: usize,
     /// Issue `madvise(MADV_WILLNEED)` over an SA range before scanning it.
     ///
-    /// **Off by default, and it has regressed before**: -16.8% qps with the index resident, from
-    /// `mmap_lock` contention across rayon threads. See `MmapBackedSA::advise_willneed_range` for
-    /// the full note. It exists to be tested under a memory ceiling, where a CPU prefetch hint
-    /// cannot help because it cannot fault, and where the syscall may replace a real disk stall
-    /// rather than nothing.
+    /// **Off by default, and measured not worth enabling.** Under a memory ceiling it does remove
+    /// 23-25% of major faults, but the throughput that buys decays to nothing as threads rise
+    /// (+12.0% at the core count, ~0% at 96), because oversubscription already overlaps those
+    /// faults; and it costs -3.7% with the index resident. Full numbers on
+    /// `MmapBackedSA::advise_willneed_range`, which also records the -16.8% regression that got
+    /// the first version of this removed.
+    ///
+    /// Kept as a knob for the two cases that could still favour it: slower storage, and running
+    /// at the core count where `RAYON_NUM_THREADS` cannot be raised.
     ///
     /// A no-op on the preloaded backend, where the trait method is the default no-op.
     pub willneed: bool

@@ -83,16 +83,26 @@ impl super::SuffixArrayBackend for MmapBackedSA {
     /// 5-mer-hurts / 6-mer-roughly-even split. On an index whose pages are already touched the
     /// syscall buys nothing and the lock contention is pure cost.
     ///
-    /// It is back only because that measurement was taken with the whole index **resident**,
-    /// which is the one regime where readahead cannot help. Under a memory ceiling the trade is
-    /// different: the syscall may replace a real ~100 µs fault rather than nothing. That is a
-    /// hypothesis, not a result — hence `SearchTuning::willneed` defaults to off, and it must be
-    /// measured under a cap before anyone turns it on.
+    /// It was retried under a memory ceiling, where readahead *can* help, and measured
+    /// (2026-08-11, 167 GB and 112 GB ceilings, 6-mer table, 40 reps/cell):
     ///
-    /// Two things make the contention worse now than when it was first measured: the fault path
-    /// itself takes `mmap_lock`, and the thread count that makes memory pressure survivable is
-    /// ~96 rather than the core count. If this regresses again, that is why, and the next thing
-    /// to try is `process_madvise` (Linux 5.10+) to collapse a batch of ranges into one call.
+    /// **The advice works and is still not worth enabling.** Major faults fall 23-25% at every
+    /// thread count and both ceilings — readahead lands, and what was a disk stall becomes a soft
+    /// fault. But the throughput it buys decays as threads rise (+12.0% at the core count, +3.8%
+    /// at 24, ~0% at 48-96), because oversubscription and readahead are **substitutes**: once ~55
+    /// faults are already in flight across 96 threads, removing a quarter of them changes little.
+    /// It also does not let the thread count come down — both curves still peak at 96 — which was
+    /// the question worth asking, since oversubscription costs 8-10% when RAM is ample.
+    ///
+    /// Resident, it costs **-3.7%** with a 6-mer table. That is the same effect as the original
+    /// -16.8%, scaled: the earlier run used a 5-mer table whose ranges are ~20x larger, and the
+    /// penalty was diagnosed as scaling with range size. The old diagnosis predicted this.
+    ///
+    /// Left in place, off, because two things could change the answer: slower storage, where each
+    /// avoided fault is worth more; and running at the core count, where +12.0% is real for anyone
+    /// who cannot set `RAYON_NUM_THREADS`. If it is ever retried at scale, the thing to fix first
+    /// is the syscall count — `process_madvise` (Linux 5.10+) collapses a batch of ranges into one
+    /// call — not the placement of the advice.
     #[cfg(unix)]
     fn advise_willneed_range(&self, start: usize, end: usize) {
         if start >= end || end > self.len {

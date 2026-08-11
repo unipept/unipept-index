@@ -239,6 +239,12 @@ struct Args {
     /// default — the full-DB sweep showed 6-mer vs 5-mer inside the noise floor (p90 3.9%)
     /// on medium/small and only +4.1% on large, for 3.06 GB vs 127 MB resident. Also gates
     /// whether the (expensive) 6-mer table is built/loaded at all.
+    ///
+    /// That verdict holds only while the index is resident. Under a memory ceiling the 6-mer is
+    /// +18.4% and -27.9% major faults against no table, where a 5-mer is +3.2% / -6.2% — barely
+    /// distinguishable from nothing. The table's value there is working-set size (~1 SA page per
+    /// query at k=6 vs ~7 at k=5), not probe count, and that only matters once pages can be
+    /// evicted. See the `sa-index` crate docs.
     #[arg(long)]
     matrix_kmer6: bool,
 

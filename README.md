@@ -46,6 +46,39 @@ A running server reports what it was compiled with:
 Storage backends: sa=mmap text=preloaded proteins=mmap mapping=mmap
 ```
 
+## Running an mmap build when the index does not fit in RAM
+
+Two settings matter far more than the storage flags above, and neither is on by default. Measured
+on the full 223 GB index with cgroup ceilings; see the `sa-index` crate docs for the method.
+
+**1. Raise the thread count.** A page fault blocks the thread that takes it, so with rayon at the
+core count every faulting thread idles a core. Raising it does not reduce faults — it overlaps
+them:
+
+| RAM available | default threads | tuned | gain |
+|---|---|---|---|
+| more than the index | 35,710 qps | 35,046 (48 threads) | **−1.9%** |
+| 75% of the index | 15,739 qps | 26,071 (48 threads) | **+65.6%** |
+| 50% of the index | 10,561 qps | 19,654 (96 threads) | **+86.1%** |
+
+```bash
+RAYON_NUM_THREADS=96 ./target/release/sa-server ...
+```
+
+The gain scales with how much the index overflows RAM, and it *costs* up to 10% when everything
+fits — so set it for constrained deployments and leave it alone otherwise.
+
+**2. Build a 6-mer k-mer table, not a 5-mer.** Under pressure the 6-mer is +18.4% and takes 27.9%
+fewer major faults than no table; a 5-mer is +3.2%, barely better than nothing. It costs 3.06 GB
+against 127 MB, which is why the resident-case measurement rejected it.
+
+```bash
+./target/release/sa-builder ... --output-kmer-table kmer-tables/6mer_table.bin --kmer-size 6
+```
+
+With both applied, a box holding 75% of the index runs at ~74% of its unconstrained throughput
+instead of ~36%.
+
 ## Installation
 
 > [!NOTE]
