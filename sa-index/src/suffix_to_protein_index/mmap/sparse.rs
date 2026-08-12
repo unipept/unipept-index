@@ -45,6 +45,9 @@ impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
     }
 }
 
+/// Maps a sparse mapping file, validating its header only. The entry count is kept, since the
+/// binary search needs it, but is not checked against the file length: a header claiming more
+/// entries than the body holds loads, and panics on the first lookup.
 pub(super) fn read_sparse_mmap(mmap: Mmap) -> Result<MmapSparseSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 9 {
         return Err("Sparse mapping file is truncated: missing count header".into());
@@ -55,57 +58,23 @@ pub(super) fn read_sparse_mmap(mmap: Mmap) -> Result<MmapSparseSuffixToProtein, 
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as IoWrite;
+    use text_compression::ProteinTextBackend;
 
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::{InMemoryProteinText, ProteinTextBackend};
-
-    use crate::{
-        Nullable, ReadBinaryMmap, WriteBinary,
-        suffix_to_protein_index::{
-            SuffixToProteinMappingBackend, mmap::MmapBackedSuffixToProteinMapping, preloaded::SparseSuffixToProtein
-        }
+    use crate::suffix_to_protein_index::{
+        mmap::test_utils::write_and_map,
+        preloaded::SparseSuffixToProtein,
+        test_utils::{assert_agree, many_proteins_text, sample_text}
     };
 
-    fn build_text() -> InMemoryProteinText {
-        let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
-        text.push(TERMINATION_CHARACTER as char);
-        InMemoryProteinText::from_string(&text)
-    }
-
-    fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(buf).unwrap();
-        tmp.flush().unwrap();
-        tmp
-    }
-
+    /// The absolute answers are pinned by `mmap::tests::test_load_mmap_sparse`; what this adds is
+    /// that the hand-written binary search over the mapped file agrees with `Vec::binary_search`
+    /// in the preloaded mapping, at every position and over enough proteins to recurse a few
+    /// levels deep.
     #[test]
     fn test_mmap_sparse_roundtrip() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        SparseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-
-        let tmp = write_to_tempfile(&buf);
-        let loaded = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        let original = SparseSuffixToProtein::new(&text);
-        for i in 0..text.len() as i64 {
-            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
+        for text in [sample_text(), many_proteins_text(300, 5)] {
+            let (loaded, _tmp) = write_and_map(SparseSuffixToProtein::new(&text));
+            assert_agree(&SparseSuffixToProtein::new(&text), &loaded, text.len());
         }
-    }
-
-    #[test]
-    fn test_search_mmap_sparse() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        SparseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-        let tmp = write_to_tempfile(&buf);
-        let index = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        assert_eq!(index.suffix_to_protein(5), 1);
-        assert_eq!(index.suffix_to_protein(7), 2);
-        assert_eq!(index.suffix_to_protein(3), u32::NULL);
-        assert_eq!(index.suffix_to_protein(10), u32::NULL);
     }
 }

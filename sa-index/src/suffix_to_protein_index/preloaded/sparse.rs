@@ -36,6 +36,11 @@ impl SparseSuffixToProtein {
         Self::from_text_parts(text.len(), |i| text.get(i))
     }
 
+    /// Closure-based constructor — works with any text type that exposes `len()` + `get()`.
+    ///
+    /// The result holds the start position of every protein — the leading `0` is the first one —
+    /// and then, from the terminator, one past-the-end entry. That trailing entry is what lets
+    /// `suffix_to_protein` read the entry after the one it found for any position in the text.
     pub fn from_text_parts(text_len: usize, get_char: impl Fn(usize) -> u8) -> Self {
         let mut suffix_index_to_protein: Vec<i64> = vec![0];
         for i in 0..text_len {
@@ -59,6 +64,8 @@ impl WriteBinary for SparseSuffixToProtein {
     }
 }
 
+/// Reads the body of a sparse mapping, after the type byte
+/// [`InMemorySuffixToProteinMapping::read_binary`](super::InMemorySuffixToProteinMapping) consumed.
 pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffixToProtein, Box<dyn Error>> {
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
@@ -75,44 +82,27 @@ pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffi
 mod tests {
     use std::io::Cursor;
 
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::InMemoryProteinText;
-
     use super::{SparseSuffixToProtein, read_sparse_mapping};
-    use crate::{Nullable, WriteBinary, suffix_to_protein_index::SuffixToProteinMappingBackend};
-
-    fn build_text() -> InMemoryProteinText {
-        let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
-        text.push(TERMINATION_CHARACTER as char);
-        InMemoryProteinText::from_string(&text)
-    }
+    use crate::suffix_to_protein_index::test_utils::{assert_sample_lookups, sample_text, to_binary};
 
     #[test]
     fn test_sparse_build() {
-        let u8_text = &build_text();
-        let index = SparseSuffixToProtein::new(u8_text);
+        let index = SparseSuffixToProtein::new(&sample_text());
         let expected = SparseSuffixToProtein { mapping: vec![0, 4, 7, 11] };
         assert_eq!(index, expected);
     }
 
     #[test]
     fn test_search_sparse() {
-        let u8_text = &build_text();
-        let index = SparseSuffixToProtein::new(u8_text);
-        assert_eq!(index.suffix_to_protein(5), 1);
-        assert_eq!(index.suffix_to_protein(7), 2);
-        assert_eq!(index.suffix_to_protein(3), u32::NULL);
-        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+        assert_sample_lookups(&SparseSuffixToProtein::new(&sample_text()));
     }
 
     #[test]
     fn test_sparse_roundtrip() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        SparseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
+        let text = sample_text();
+        let buf = to_binary(SparseSuffixToProtein::new(&text));
         assert_eq!(buf[0], 1u8);
-        let mut cursor = Cursor::new(&buf[1..]);
-        let restored = read_sparse_mapping(&mut cursor).unwrap();
+        let restored = read_sparse_mapping(&mut Cursor::new(&buf[1..])).unwrap();
         assert_eq!(SparseSuffixToProtein::new(&text), restored);
     }
 }

@@ -68,6 +68,11 @@ impl WriteBinary for DenseSuffixToProtein {
     }
 }
 
+/// Reads the body of a dense mapping. Unlike the mmap readers, which are handed the whole file,
+/// this starts after the type byte that [`InMemorySuffixToProteinMapping::read_binary`] has
+/// already consumed to get here.
+///
+/// [`InMemorySuffixToProteinMapping::read_binary`]: super::InMemorySuffixToProteinMapping
 pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixToProtein, Box<dyn Error>> {
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
@@ -85,22 +90,15 @@ pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixT
 mod tests {
     use std::io::Cursor;
 
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::InMemoryProteinText;
-
     use super::{DenseSuffixToProtein, read_dense_mapping};
-    use crate::{Nullable, WriteBinary, suffix_to_protein_index::SuffixToProteinMappingBackend};
-
-    fn build_text() -> InMemoryProteinText {
-        let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
-        text.push(TERMINATION_CHARACTER as char);
-        InMemoryProteinText::from_string(&text)
-    }
+    use crate::{
+        Nullable,
+        suffix_to_protein_index::test_utils::{assert_sample_lookups, sample_text, to_binary}
+    };
 
     #[test]
     fn test_dense_build() {
-        let u8_text = &build_text();
-        let index = DenseSuffixToProtein::new(u8_text);
+        let index = DenseSuffixToProtein::new(&sample_text());
         let expected = DenseSuffixToProtein {
             mapping: vec![0, 0, 0, u32::NULL, 1, 1, u32::NULL, 2, 2, 2, u32::NULL]
         };
@@ -109,22 +107,15 @@ mod tests {
 
     #[test]
     fn test_search_dense() {
-        let u8_text = &build_text();
-        let index = DenseSuffixToProtein::new(u8_text);
-        assert_eq!(index.suffix_to_protein(5), 1);
-        assert_eq!(index.suffix_to_protein(7), 2);
-        assert_eq!(index.suffix_to_protein(3), u32::NULL);
-        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+        assert_sample_lookups(&DenseSuffixToProtein::new(&sample_text()));
     }
 
     #[test]
     fn test_dense_roundtrip() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        DenseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
+        let text = sample_text();
+        let buf = to_binary(DenseSuffixToProtein::new(&text));
         assert_eq!(buf[0], 0u8);
-        let mut cursor = Cursor::new(&buf[1..]);
-        let restored = read_dense_mapping(&mut cursor).unwrap();
+        let restored = read_dense_mapping(&mut Cursor::new(&buf[1..])).unwrap();
         assert_eq!(DenseSuffixToProtein::new(&text), restored);
     }
 }

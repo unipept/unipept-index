@@ -35,7 +35,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// task via `search_matching_suffixes_batched` (memory-level parallelism); `1` runs the scalar
     /// `search_matching_suffixes` one peptide per task. Both produce identical results
     /// (see `test_batched_matches_scalar`), so it is a pure performance knob — which is why it
-    /// lives in [`SearchTuning`] with the others rather than being threaded through as an
+    /// lives in [`SearchTuning`](super::SearchTuning) with the others rather than being threaded through as an
     /// argument every caller has to supply and no caller ever varied.
     ///
     /// Peptides are searched as given — callers that need length filtering or normalisation

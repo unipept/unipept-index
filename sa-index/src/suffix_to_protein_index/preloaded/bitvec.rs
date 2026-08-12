@@ -34,6 +34,9 @@ impl BitVecSuffixToProtein {
         Self::from_text_parts(text.len(), |i| text.get(i))
     }
 
+    /// Closure-based constructor — works with any text type that exposes `len()` + `get()`.
+    ///
+    /// Sets one bit per separator and terminator; `Rank9` then builds its counts over those bits.
     pub fn from_text_parts(text_len: usize, get_char: impl Fn(usize) -> u8) -> Self {
         let mut bits = BitVector::with_capacity(text_len as u64);
         for i in 0..text_len {
@@ -58,16 +61,16 @@ impl BitVecSuffixToProtein {
 /// # The rank structure
 ///
 /// A bit marks each text position that is *not* part of a protein (a separator or the
-/// terminator). The protein index for a position is then the number of unset bits before it,
-/// which is what makes `rank1` the lookup. Answering that in constant time needs precomputed
-/// counts, stored in two levels:
+/// terminator). Since exactly one such byte closes each protein, the protein index for a position
+/// is the number of set bits before it, which is what makes `rank1` the lookup. Answering that in
+/// constant time needs precomputed counts, stored in two levels:
 ///
 /// * **level1** — the cumulative count before this superblock, i.e. before every one of its 8
 ///   words (512 bits). A full `u64`, since it can reach `bit_len`.
 /// * **packed_level2** — seven 9-bit sub-counts, one per word after the first, each the
 ///   cumulative count within the superblock before that word. Nine bits suffice because a count
-///   within a 512-bit superblock cannot exceed 512, and seven of them fit in a `u64` with a byte
-///   to spare, so the whole cell is exactly 16 bytes and one cache line holds four of them.
+///   within a 512-bit superblock cannot exceed 512, and seven of them occupy 63 of a `u64`'s
+///   bits, so the whole cell is exactly 16 bytes and one cache line holds four of them.
 ///
 /// Hence the constants below: `& 0x1FF` masks a 9-bit sub-count, `(w - 1) * 9` places it, and
 /// the loop covers `w = 1..8` because word 0's sub-count is always zero and is not stored.
@@ -116,6 +119,9 @@ impl WriteBinary for BitVecSuffixToProtein {
     }
 }
 
+/// Reads the body of a bitvec mapping, after the type byte
+/// [`InMemorySuffixToProteinMapping::read_binary`](super::InMemorySuffixToProteinMapping) consumed,
+/// and rebuilds `Rank9` from the raw bits.
 pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffixToProtein, Box<dyn Error>> {
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
@@ -136,7 +142,8 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
         }
     }
 
-    // Read and discard the superblock array written by write_bitvec_mapping
+    // Read and discard the superblock array the `WriteBinary` impl above emitted: `Rank9::new`
+    // recomputes those counts from the raw bits. Only the mmap reader consumes them.
     let sb_count = block_count / 8 + 1;
     let mut discard = [0u8; 16];
     for _ in 0..sb_count {
@@ -150,39 +157,28 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 mod tests {
     use std::io::Cursor;
 
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::{InMemoryProteinText, ProteinTextBackend};
+    use text_compression::ProteinTextBackend;
 
     use super::{BitVecSuffixToProtein, read_bitvec_mapping};
-    use crate::{Nullable, WriteBinary, suffix_to_protein_index::SuffixToProteinMappingBackend};
-
-    fn build_text() -> InMemoryProteinText {
-        let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
-        text.push(TERMINATION_CHARACTER as char);
-        InMemoryProteinText::from_string(&text)
-    }
+    use crate::suffix_to_protein_index::test_utils::{
+        assert_agree, assert_sample_lookups, many_proteins_text, sample_text, to_binary
+    };
 
     #[test]
     fn test_search_bitvec() {
-        let u8_text = &build_text();
-        let index = BitVecSuffixToProtein::new(u8_text);
-        assert_eq!(index.suffix_to_protein(5), 1);
-        assert_eq!(index.suffix_to_protein(7), 2);
-        assert_eq!(index.suffix_to_protein(3), u32::NULL);
-        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+        assert_sample_lookups(&BitVecSuffixToProtein::new(&sample_text()));
     }
 
+    /// The reader rebuilds `Rank9` from the raw bits and skips the superblocks the writer emitted,
+    /// so the second text is long enough to make that several cells rather than one — skip the
+    /// wrong number of them and the bits that follow decode as garbage.
     #[test]
     fn test_bitvec_roundtrip() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-        assert_eq!(buf[0], 2u8);
-        let mut cursor = Cursor::new(&buf[1..]);
-        let restored = read_bitvec_mapping(&mut cursor).unwrap();
-        let reference = BitVecSuffixToProtein::new(&text);
-        for i in 0..text.len() as i64 {
-            assert_eq!(reference.suffix_to_protein(i), restored.suffix_to_protein(i));
+        for text in [sample_text(), many_proteins_text(300, 5)] {
+            let buf = to_binary(BitVecSuffixToProtein::new(&text));
+            assert_eq!(buf[0], 2u8);
+            let restored = read_bitvec_mapping(&mut Cursor::new(&buf[1..])).unwrap();
+            assert_agree(&BitVecSuffixToProtein::new(&text), &restored, text.len());
         }
     }
 }

@@ -33,6 +33,9 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
     }
 }
 
+/// Maps a dense mapping file, validating its header only: the entry count it carries is not kept,
+/// because a lookup addresses the entry it wants directly. A file whose body is shorter than the
+/// text it was built for therefore loads, and panics on the first lookup past the end of it.
 pub(super) fn read_dense_mmap(mmap: Mmap) -> Result<MmapDenseSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 9 {
         return Err("Dense mapping file is truncated: missing count header".into());
@@ -43,57 +46,20 @@ pub(super) fn read_dense_mmap(mmap: Mmap) -> Result<MmapDenseSuffixToProtein, Bo
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as IoWrite;
+    use text_compression::ProteinTextBackend;
 
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-    use text_compression::{InMemoryProteinText, ProteinTextBackend};
-
-    use crate::{
-        Nullable, ReadBinaryMmap, WriteBinary,
-        suffix_to_protein_index::{
-            SuffixToProteinMappingBackend, mmap::MmapBackedSuffixToProteinMapping, preloaded::DenseSuffixToProtein
-        }
+    use crate::suffix_to_protein_index::{
+        mmap::test_utils::write_and_map,
+        preloaded::DenseSuffixToProtein,
+        test_utils::{assert_agree, sample_text}
     };
 
-    fn build_text() -> InMemoryProteinText {
-        let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
-        text.push(TERMINATION_CHARACTER as char);
-        InMemoryProteinText::from_string(&text)
-    }
-
-    fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(buf).unwrap();
-        tmp.flush().unwrap();
-        tmp
-    }
-
+    /// The absolute answers are pinned by `mmap::tests::test_load_mmap_dense`; what this adds is
+    /// that reading them out of the mapped file agrees with the preloaded mapping everywhere.
     #[test]
     fn test_mmap_dense_roundtrip() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        DenseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-
-        let tmp = write_to_tempfile(&buf);
-        let loaded = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        let original = DenseSuffixToProtein::new(&text);
-        for i in 0..text.len() as i64 {
-            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
-        }
-    }
-
-    #[test]
-    fn test_search_mmap_dense() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        DenseSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-        let tmp = write_to_tempfile(&buf);
-        let index = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        assert_eq!(index.suffix_to_protein(5), 1);
-        assert_eq!(index.suffix_to_protein(7), 2);
-        assert_eq!(index.suffix_to_protein(3), u32::NULL);
-        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+        let text = sample_text();
+        let (loaded, _tmp) = write_and_map(DenseSuffixToProtein::new(&text));
+        assert_agree(&DenseSuffixToProtein::new(&text), &loaded, text.len());
     }
 }

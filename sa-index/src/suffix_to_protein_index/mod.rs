@@ -9,18 +9,46 @@
 //!
 //! * **Dense** — one `u32` per text position. One load per lookup, but ~4 bytes per residue,
 //!   which at UniProt scale is over a gigabyte.
-//! * **Sparse** — the start position of each protein, binary-searched. Smallest, but O(log n)
-//!   dependent loads per lookup, each likely a cache miss.
-//! * **BitVec** — a bit per text position marking separators, with a rank structure over it.
-//!   Near-dense speed at a fraction of the size; the default.
+//! * **Sparse** — the start position of each protein, binary-searched. Smallest, but with m
+//!   proteins it costs O(log m) dependent loads per lookup, each likely a cache miss.
+//! * **BitVec** — a bit per text position marking the separators and the terminator, with a rank
+//!   structure over it. Near-dense speed at ~1.25 bits per position; the default.
 //!
 //! Each has a preloaded and an mmap implementation, selected through the
 //! [`SuffixToProteinMapping`] alias: `mmap` maps it, and `preloaded-mapping` pulls this one
 //! structure back into owned memory while the rest of the index stays mapped. See the crate docs.
 
+/// Generates a [`SuffixToProteinMappingBackend`] impl that forwards each listed method to the
+/// active enum variant (`Dense`, `Sparse` or `BitVec`).
+///
+/// Both backend enums are the same three-way match repeated per method; they differ only in which
+/// methods they list, since the preloaded one keeps the default no-op `touch_all_pages`. Declared
+/// before the module declarations below so that its textual scope reaches both.
+///
+/// This is the one thing the two halves share, and it is only the dispatch shell: the lookups it
+/// forwards to stay separate per the crate docs, so tuning one backend cannot perturb the other.
+macro_rules! delegate_suffix_to_protein_mapping {
+    ($mapping:ty { $(fn $method:ident(&self $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)?;)* }) => {
+        impl $crate::suffix_to_protein_index::SuffixToProteinMappingBackend for $mapping {
+            $(
+                #[inline]
+                fn $method(&self $(, $arg: $arg_ty)*) $(-> $ret)? {
+                    match self {
+                        Self::Dense(m) => m.$method($($arg),*),
+                        Self::Sparse(m) => m.$method($($arg),*),
+                        Self::BitVec(m) => m.$method($($arg),*)
+                    }
+                }
+            )*
+        }
+    };
+}
+
 #[cfg(feature = "mmap")]
 pub mod mmap;
 pub mod preloaded;
+#[cfg(test)]
+mod test_utils;
 
 #[cfg(feature = "mmap")]
 pub use mmap::{
@@ -42,11 +70,19 @@ pub type SuffixToProteinMapping = InMemorySuffixToProteinMapping;
 
 /// Trait implemented by the SuffixToProtein mappings
 pub trait SuffixToProteinMappingBackend: Send + Sync {
-    /// Returns the index of the protein in the protein list for the given suffix
+    /// Returns the index of the protein in the protein list for the given suffix, or `u32::NULL`
+    /// if the position holds a separator or the terminator and so belongs to no protein.
+    ///
+    /// `suffix` must be a position within the text. Positions past the end are not a checked
+    /// error: an implementation may return anything or panic.
     fn suffix_to_protein(&self, suffix: i64) -> u32;
 
     /// Non-blocking hardware prefetch hint for the data that `suffix_to_protein(suffix)` will access.
-    /// Default is a no-op; mmap-backed implementations override this.
+    ///
+    /// Default is a no-op, kept by the three implementations that cannot name the address the
+    /// lookup will touch: both sparse mappings, which binary-search, and the preloaded bitvec,
+    /// whose counts live inside `Rank9`. It accepts any `suffix`, in range or not, since a hint
+    /// that misses is only a wasted load.
     #[inline]
     fn prefetch_for_suffix(&self, _suffix: i64) {}
 

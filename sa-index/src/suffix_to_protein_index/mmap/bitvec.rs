@@ -88,6 +88,9 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
     }
 }
 
+/// Maps a bitvec mapping file. Unlike the other two readers this also checks the body: the bits
+/// and the superblock cells have fixed sizes the header's block count fixes exactly, so a file
+/// that cannot hold them is rejected here rather than panicking on a later lookup.
 pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 17 {
         return Err("Bitvec mapping file is truncated: missing header fields".into());
@@ -107,68 +110,28 @@ pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, 
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as IoWrite;
-
-    use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-    use crate::{
-        Nullable, ReadBinaryMmap, WriteBinary,
-        suffix_to_protein_index::{
-            SuffixToProteinMappingBackend, mmap::MmapBackedSuffixToProteinMapping, preloaded::BitVecSuffixToProtein
-        }
+    use crate::suffix_to_protein_index::{
+        mmap::test_utils::write_and_map,
+        preloaded::BitVecSuffixToProtein,
+        test_utils::{assert_agree, many_proteins_text, sample_text}
     };
 
-    fn build_text() -> InMemoryProteinText {
-        let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
-        text.push(TERMINATION_CHARACTER as char);
-        InMemoryProteinText::from_string(&text)
-    }
-
-    fn write_to_tempfile(buf: &[u8]) -> tempfile::NamedTempFile {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(buf).unwrap();
-        tmp.flush().unwrap();
-        tmp
-    }
-
+    /// The absolute answers are pinned by `mmap::tests::test_load_mmap_bitvec`; what this adds is
+    /// that the two-level rank read out of the mapped file agrees with `Rank9` everywhere. The
+    /// second text spans several superblocks, so it also exercises the level1 counts, which stay
+    /// zero for anything shorter than 512 bits.
     #[test]
     fn test_mmap_bitvec_roundtrip() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-
-        let tmp = write_to_tempfile(&buf);
-        let loaded = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        let original = BitVecSuffixToProtein::new(&text);
-        for i in 0..text.len() as i64 {
-            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
+        for text in [sample_text(), many_proteins_text(300, 5)] {
+            let (loaded, _tmp) = write_and_map(BitVecSuffixToProtein::new(&text));
+            assert_agree(&BitVecSuffixToProtein::new(&text), &loaded, text.len());
         }
     }
 
-    #[test]
-    fn test_mmap_bitvec_crosses_superblock_boundary() {
-        let segment = "ACGKL-";
-        let repeat = 100;
-        let raw: String = segment.chars().cycle().take(repeat * segment.len()).collect();
-        let mut raw = raw;
-        let last = raw.len() - 1;
-        raw.replace_range(last..=last, "$");
-
-        let text = InMemoryProteinText::from_string(&raw);
-        let mut buf = Vec::new();
-        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-
-        let tmp = write_to_tempfile(&buf);
-        let loaded = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        let original = BitVecSuffixToProtein::new(&text);
-        for i in 0..text.len() as i64 {
-            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
-        }
-    }
-
+    /// Proteins of regular length leave the separators at regular offsets, which a rank bug can
+    /// happen to line up with. This scatters them irregularly across many superblocks instead.
     #[test]
     fn test_mmap_bitvec_random_equivalence() {
         use std::{
@@ -188,28 +151,7 @@ mod tests {
         raw.push('$');
 
         let text = InMemoryProteinText::from_string(&raw);
-        let mut buf = Vec::new();
-        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-        let tmp = write_to_tempfile(&buf);
-        let mmap_idx = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        let original = BitVecSuffixToProtein::new(&text);
-        for i in 0..text.len() as i64 {
-            assert_eq!(original.suffix_to_protein(i), mmap_idx.suffix_to_protein(i), "mismatch at position {}", i);
-        }
-    }
-
-    #[test]
-    fn test_search_mmap_bitvec() {
-        let text = build_text();
-        let mut buf = Vec::new();
-        BitVecSuffixToProtein::new(&text).write_binary(&mut buf).unwrap();
-        let tmp = write_to_tempfile(&buf);
-        let index = MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap();
-
-        assert_eq!(index.suffix_to_protein(5), 1);
-        assert_eq!(index.suffix_to_protein(7), 2);
-        assert_eq!(index.suffix_to_protein(3), u32::NULL);
-        assert_eq!(index.suffix_to_protein(10), u32::NULL);
+        let (loaded, _tmp) = write_and_map(BitVecSuffixToProtein::new(&text));
+        assert_agree(&BitVecSuffixToProtein::new(&text), &loaded, text.len());
     }
 }
