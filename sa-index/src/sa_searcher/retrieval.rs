@@ -78,7 +78,7 @@ mod tests {
     use crate::{
         SuffixArray,
         array::OriginalSA,
-        sa_searcher::{SearchAllSuffixesResult, Searcher, test_helpers::get_example_proteins},
+        sa_searcher::{SearchAllSuffixesResult, Searcher, test_utils::get_example_proteins},
         suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
     };
 

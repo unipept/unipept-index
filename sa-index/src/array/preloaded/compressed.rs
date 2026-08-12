@@ -6,10 +6,14 @@ use std::{
 use bitarray::{Binary, DynBitArray, data_to_writer};
 use text_compression::WriteBinary;
 
-/// Owned, in-memory compressed suffix array backend.
+use super::super::{SuffixArrayBackend, write_sa_header};
+
+/// Suffix array in owned memory, bit-packed at the minimum width the text length requires.
+///
+/// Field 0 is the packed entries; field 1 is the sparseness factor the array was built with.
 pub struct CompressedSA(pub DynBitArray, pub u8);
 
-impl super::SuffixArrayBackend for CompressedSA {
+impl SuffixArrayBackend for CompressedSA {
     type RangeIter<'a> = bitarray::DynBitArrayRangeIter<'a>;
 
     fn len(&self) -> usize {
@@ -55,34 +59,23 @@ impl WriteBinary for CompressedSA {
 
 // ── I/O helpers ──────────────────────────────────────────────────────────────
 
-/// Writes the compressed suffix array to a writer.
-/// Writes a bit-packed suffix array.
-///
-/// Same header as [`super::original::dump_suffix_array`] — see there for the layout — with
-/// `bits_per_value` below 64 and the body packed by `bitarray`. Written in chunks so peak memory
-/// stays bounded at index-build scale.
+/// Writes a bit-packed suffix array: the shared header at `bits_per_value` bits per value — see
+/// the [module docs](super) for the layout — then the body packed by `bitarray`. The body goes out
+/// in chunks so peak memory stays bounded at index-build scale.
 pub fn dump_compressed_suffix_array(
     sa: Vec<i64>,
     sparseness_factor: u8,
     bits_per_value: usize,
     writer: &mut impl Write
 ) -> Result<(), Box<dyn Error>> {
-    writer
-        .write(&[bits_per_value as u8])
-        .map_err(|_| "Could not write the required bits to the writer")?;
-    writer
-        .write(&[sparseness_factor])
-        .map_err(|_| "Could not write the sparseness factor to the writer")?;
-    writer
-        .write(&(sa.len() as u64).to_le_bytes())
-        .map_err(|_| "Could not write the size of the suffix array to the writer")?;
+    write_sa_header(bits_per_value, sparseness_factor, sa.len(), writer)?;
     data_to_writer(sa, bits_per_value, 8 * 1024, writer)
         .map_err(|_| "Could not write the compressed suffix array to the writer")?;
     Ok(())
 }
 
-/// Load the compressed suffix array, reading the sample_rate + size header first.
-/// Returns a `CompressedSA`.
+/// Loads a compressed suffix array whose width has already been read, taking the sparseness factor
+/// and item count that follow it before the body.
 pub fn load_compressed_suffix_array(
     reader: &mut impl BufRead,
     bits_per_value: usize
@@ -103,7 +96,9 @@ pub fn load_compressed_suffix_array(
     Ok(CompressedSA(sa, sample_rate))
 }
 
-/// Inner helper: load the compressed BitArray body (no header).
+/// Loads a compressed body, the header having already been read. Unlike its uncompressed
+/// counterpart the entry count is a capacity rather than a bound: `DynBitArray::read_binary`
+/// consumes the reader to its end.
 pub(super) fn load_compressed(
     reader: &mut impl BufRead,
     bits_per_value: usize,
@@ -120,47 +115,10 @@ pub(super) fn load_compressed(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-
-    use super::{super::SuffixArrayBackend, *};
-
-    pub struct FailingWriter {
-        pub valid_write_count: usize
-    }
-
-    impl Write for FailingWriter {
-        fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
-            if self.valid_write_count == 0 {
-                return Err(std::io::Error::other("Write failed"));
-            }
-            self.valid_write_count -= 1;
-            Ok(1)
-        }
-        fn flush(&mut self) -> Result<(), std::io::Error> {
-            Ok(())
-        }
-    }
-
-    pub struct FailingReader {
-        pub valid_read_count: usize
-    }
-
-    impl Read for FailingReader {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.valid_read_count == 0 {
-                return Err(std::io::Error::other("Read failed"));
-            }
-            self.valid_read_count -= 1;
-            Ok(buf.len())
-        }
-    }
-
-    impl BufRead for FailingReader {
-        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-            Ok(&[])
-        }
-        fn consume(&mut self, _: usize) {}
-    }
+    use super::{
+        super::test_utils::{FailingReader, FailingWriter},
+        *
+    };
 
     #[test]
     fn test_dump_compressed_suffix_array() {
@@ -191,7 +149,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the compressed suffix array to the writer")]
     fn test_dump_compressed_suffix_array_fail_compressed_suffix_array() {
-        dump_compressed_suffix_array(vec![1], 1, 8, &mut FailingWriter { valid_write_count: 3 }).unwrap();
+        // 1 call for the width, 1 for the sparseness factor, 8 for the count field, since the
+        // writer claims one byte per call.
+        dump_compressed_suffix_array(vec![1], 1, 8, &mut FailingWriter { valid_write_count: 10 }).unwrap();
     }
 
     #[test]
@@ -221,20 +181,5 @@ mod tests {
     #[should_panic(expected = "Could not read the compressed suffix array from the binary file")]
     fn test_load_compressed_suffix_array_fail_compressed_suffix_array() {
         load_compressed_suffix_array(&mut FailingReader { valid_read_count: 2 }, 8).unwrap();
-    }
-
-    #[test]
-    fn test_failing_writer() {
-        let mut writer = FailingWriter { valid_write_count: 0 };
-        assert!(writer.flush().is_ok());
-        assert!(writer.write(&[0]).is_err());
-    }
-
-    #[test]
-    fn test_failing_reader() {
-        let mut reader = FailingReader { valid_read_count: 0 };
-        assert_eq!(reader.fill_buf().unwrap(), &[] as &[u8]);
-        let mut buffer = [0_u8; 1];
-        assert!(reader.read(&mut buffer).is_err());
     }
 }

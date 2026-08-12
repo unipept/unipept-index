@@ -376,7 +376,7 @@ mod tests {
         array::OriginalSA,
         sa_searcher::{
             SearchAllSuffixesResult, Searcher,
-            test_helpers::{TRYPTIC_FIXTURE, get_example_proteins, searcher_over_text, tryptic_fixture_peptides}
+            test_utils::{TRYPTIC_FIXTURE, get_example_proteins, searcher_over_text, tryptic_fixture_peptides}
         },
         suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping}
     };

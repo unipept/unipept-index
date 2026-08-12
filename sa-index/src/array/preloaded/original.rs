@@ -5,7 +5,11 @@ use std::{
 
 use text_compression::WriteBinary;
 
-/// Owned, in-memory original (uncompressed) suffix array backend.
+use super::super::{SuffixArrayBackend, write_sa_header};
+
+/// Suffix array in owned memory, one `i64` per entry.
+///
+/// Field 0 is the entries; field 1 is the sparseness factor the array was built with.
 pub struct OriginalSA(pub Vec<i64>, pub u8);
 
 /// Wrapper around `slice::Iter` that yields `i64` values directly.
@@ -26,7 +30,7 @@ impl Iterator for OriginalRangeIter<'_> {
 
 impl ExactSizeIterator for OriginalRangeIter<'_> {}
 
-impl super::SuffixArrayBackend for OriginalSA {
+impl SuffixArrayBackend for OriginalSA {
     type RangeIter<'a> = OriginalRangeIter<'a>;
 
     fn len(&self) -> usize {
@@ -64,6 +68,8 @@ impl WriteBinary for OriginalSA {
 
 // ── I/O helpers ──────────────────────────────────────────────────────────────
 
+/// Reads until `buffer` is full or the input is exhausted, since one `read` may return less than
+/// asked for. Returns `(input_exhausted, bytes_read)`.
 fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<(bool, usize)> {
     let buffer_size = buffer.len();
     let mut writable_buffer_space = buffer.as_mut();
@@ -83,6 +89,7 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<
     }
 }
 
+/// Writes entries as little-endian `i64`s, the uncompressed body format.
 fn write_vec_i64(vec: Vec<i64>, writer: &mut impl Write) -> std::io::Result<()> {
     for value in vec {
         writer.write_all(&value.to_le_bytes())?;
@@ -90,6 +97,9 @@ fn write_vec_i64(vec: Vec<i64>, writer: &mut impl Write) -> std::io::Result<()> 
     Ok(())
 }
 
+/// Reads little-endian `i64`s into `vec` until the reader is exhausted, in 8 KiB chunks so a
+/// UniProt-scale body does not need a second copy of itself in memory. Callers bound the reader to
+/// the body they want; a trailing partial entry is dropped.
 fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result<()> {
     vec.clear();
     let mut buffer = vec![0; 8 * 1024];
@@ -108,90 +118,36 @@ fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result
     Ok(())
 }
 
-/// Writes the suffix array to a binary file.
-/// Writes an uncompressed suffix array.
-///
-/// # On-disk format for `sa.bin`
-///
-/// Shared by both packings and by all three readers — the compressed writer in
-/// `array::compressed` emits the same header, and `InMemorySA::read_binary` dispatches on the
-/// first byte:
-///
-/// ```text
-/// [ bits_per_value: u8 ]   64 here; the compressed width otherwise
-/// [ sparseness_factor: u8 ]
-/// [ item_count: u64 little-endian ]
-/// [ data ]                 item_count entries at bits_per_value each
-/// ```
-///
-/// At 64 bits the data is plain little-endian `i64`s. Below 64 it is `bitarray`'s packing:
-/// most-significant-bit first within each little-endian `u64` word, entries may straddle words.
-///
-/// Readers: `array::preloaded::InMemorySA::read_binary` and `array::mmap::MmapBackedSA`.
+/// Writes an uncompressed suffix array: the shared header at 64 bits per value, then the entries
+/// as plain little-endian `i64`s. See the [module docs](super) for the layout.
 pub fn dump_suffix_array(sa: Vec<i64>, sparseness_factor: u8, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
-    writer.write(&[64_u8]).map_err(|_| "Could not write the required bits to the writer")?;
-    writer
-        .write(&[sparseness_factor])
-        .map_err(|_| "Could not write the sparseness factor to the writer")?;
-    writer
-        .write(&(sa.len()).to_le_bytes())
-        .map_err(|_| "Could not write the size of the suffix array to the writer")?;
+    write_sa_header(64, sparseness_factor, sa.len(), writer)?;
     write_vec_i64(sa, writer).map_err(|_| "Could not write the suffix array to the writer")?;
     Ok(())
 }
 
-/// Inner helper: load the original (uncompressed) suffix array body after the header is already read.
-pub(super) fn load_original(
-    reader: &mut impl BufRead,
-    _sample_rate: u8,
-    size: usize
-) -> Result<Vec<i64>, Box<dyn Error>> {
+/// Loads an uncompressed suffix array body, the header having already been read.
+///
+/// Reads exactly the `size` entries the header declared: a body holding fewer is an error, and one
+/// holding more — a header that disagrees with its file — stops at `size` rather than returning
+/// entries nothing accounted for.
+pub(super) fn load_original(reader: &mut impl BufRead, size: usize) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut sa = Vec::with_capacity(size);
-    read_vec_i64(&mut sa, reader).map_err(|_| "Could not read the suffix array from the binary file")?;
+    let body_bytes = size.checked_mul(8).ok_or("The SA header declares too many items")? as u64;
+    read_vec_i64(&mut sa, reader.take(body_bytes))
+        .map_err(|_| "Could not read the suffix array from the binary file")?;
+    if sa.len() != size {
+        return Err(format!("The SA header declares {} entries but the file holds {}", size, sa.len()).into());
+    }
     Ok(sa)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    pub struct FailingWriter {
-        pub valid_write_count: usize
-    }
-
-    impl Write for FailingWriter {
-        fn write(&mut self, _: &[u8]) -> Result<usize, std::io::Error> {
-            if self.valid_write_count == 0 {
-                return Err(std::io::Error::other("Write failed"));
-            }
-            self.valid_write_count -= 1;
-            Ok(1)
-        }
-        fn flush(&mut self) -> Result<(), std::io::Error> {
-            Ok(())
-        }
-    }
-
-    pub struct FailingReader {
-        pub valid_read_count: usize
-    }
-
-    impl Read for FailingReader {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.valid_read_count == 0 {
-                return Err(std::io::Error::other("Read failed"));
-            }
-            self.valid_read_count -= 1;
-            Ok(buf.len())
-        }
-    }
-
-    impl BufRead for FailingReader {
-        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-            Ok(&[])
-        }
-        fn consume(&mut self, _: usize) {}
-    }
+    use super::{
+        super::test_utils::{FailingReader, FailingWriter},
+        *
+    };
 
     #[test]
     fn test_fill_buffer() {
@@ -247,6 +203,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "Could not write the suffix array to the writer")]
     fn test_dump_suffix_array_fail_suffix_array() {
-        dump_suffix_array(vec![1], 1, &mut FailingWriter { valid_write_count: 3 }).unwrap();
+        // 1 call for the width, 1 for the sparseness factor, 8 for the count field, since the
+        // writer claims one byte per call.
+        dump_suffix_array(vec![1], 1, &mut FailingWriter { valid_write_count: 10 }).unwrap();
     }
 }

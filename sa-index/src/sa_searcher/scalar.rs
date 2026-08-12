@@ -353,7 +353,7 @@ mod tests {
         array::OriginalSA,
         sa_searcher::{
             BoundSearchResult, SearchAllSuffixesResult, Searcher,
-            test_helpers::{
+            test_utils::{
                 EXAMPLE_SA_FULL, EXAMPLE_SA_SPARSE3, Mapping, TRYPTIC_FIXTURE, example_searcher_with,
                 get_example_proteins, searcher_over_text, tryptic_fixture_peptides
             }

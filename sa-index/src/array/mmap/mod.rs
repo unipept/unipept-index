@@ -1,12 +1,20 @@
-// This entire file is mmap-only.
+// This entire module is mmap-only.
 use std::{error::Error, fs::File, path::Path};
 
 use memmap2::Mmap;
 use text_compression::ReadBinaryMmap;
 
-/// Owned, mmap-backed suffix array backend.
+#[cfg(test)]
+pub(super) mod test_utils;
+
+/// Suffix array read straight out of a memory mapping, in either packing.
+///
+/// Holds no entries of its own: every lookup decodes from `mmap`, so it may fault a page in. The
+/// four fields after it are what [`read_binary_mmap`](ReadBinaryMmap::read_binary_mmap) took from
+/// the file header.
 pub struct MmapBackedSA {
     pub mmap: Mmap,
+    /// Where the entries start — 10 bytes in, past the header.
     pub(crate) data_offset: usize,
     pub(crate) len: usize,
     pub(crate) bits_per_value: usize,
@@ -84,6 +92,9 @@ impl super::SuffixArrayBackend for MmapBackedSA {
 }
 
 impl ReadBinaryMmap for MmapBackedSA {
+    /// Maps an SA file, checking that it is long enough for both the header and the entries the
+    /// header declares. That check is what lets every lookup below index the mapping without
+    /// bounds-checking against the file length.
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
         // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
@@ -131,9 +142,8 @@ pub(super) fn read_u64_le(mmap: &Mmap, byte_offset: usize) -> u64 {
     u64::from_le_bytes(bytes)
 }
 
-/// Streaming sequential iterator over a contiguous range of a compressed or uncompressed
-/// mmap-backed suffix array.
-/// Sequential reader over a range of SA entries, decoding straight from the mapping.
+/// Sequential reader over a range of SA entries, decoding straight from the mapping. Handles
+/// either packing.
 ///
 /// # Bit layout
 ///
@@ -246,43 +256,17 @@ impl ExactSizeIterator for MmapSaRangeIter<'_> {}
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use super::{
+        test_utils::{assert_hints_are_harmless, write_and_map, write_to_tempfile},
+        *
+    };
+    use crate::array::{
+        OriginalSA, SuffixArrayBackend, dump_compressed_suffix_array,
+        test_utils::{fit_to_width, owned_compressed, sample_sa}
+    };
 
-    use bitarray::DynBitArray;
-
-    use super::*;
-    use crate::array::{CompressedSA, OriginalSA, SuffixArrayBackend, dump_compressed_suffix_array, dump_suffix_array};
-
-    /// Builds the owned compressed backend directly, to compare against.
-    fn compressed_from(sa: &[i64], sparseness: u8, bits: usize) -> CompressedSA {
-        let mut ba = DynBitArray::with_capacity(sa.len(), bits);
-        for (i, &v) in sa.iter().enumerate() {
-            ba.set(i, v as u64);
-        }
-        CompressedSA(ba, sparseness)
-    }
-
-    /// Writes an SA through the production writer and maps it back.
-    fn write_and_map(sa: &[i64], sparseness: u8, bits: Option<usize>) -> (MmapBackedSA, tempfile::NamedTempFile) {
-        let mut buf: Vec<u8> = Vec::new();
-        match bits {
-            None => dump_suffix_array(sa.to_vec(), sparseness, &mut buf).unwrap(),
-            Some(b) => dump_compressed_suffix_array(sa.to_vec(), sparseness, b, &mut buf).unwrap()
-        }
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(&buf).unwrap();
-        tmp.flush().unwrap();
-        let mapped = MmapBackedSA::read_binary_mmap(tmp.path()).unwrap();
-        (mapped, tmp)
-    }
-
-    fn sample_sa(len: usize) -> Vec<i64> {
-        // Deterministic, spread across the whole value range so the high bits are exercised.
-        (0..len).map(|i| ((i as i64).wrapping_mul(2_654_435_761)) & 0x0fff_ffff).collect()
-    }
-
-    /// The mmap backend is the production storage layer and had no tests at all. It must agree
-    /// with the owned-memory backends that wrote the file, entry for entry.
+    /// The mmap backend is the production storage layer. It must agree with the owned-memory
+    /// backends that wrote the file, entry for entry.
     #[test]
     fn matches_the_uncompressed_backend() {
         let sa = sample_sa(500);
@@ -302,11 +286,10 @@ mod tests {
     #[test]
     fn matches_the_compressed_backend_at_every_width() {
         for bits in [8usize, 13, 17, 28, 29, 31, 32, 33, 40, 63] {
-            let mask = (u64::MAX >> (64 - bits)) as i64;
-            let sa: Vec<i64> = sample_sa(400).iter().map(|v| v & mask).collect();
+            let sa = fit_to_width(&sample_sa(400), bits);
 
             let (mapped, _tmp) = write_and_map(&sa, 3, Some(bits));
-            let owned = compressed_from(&sa, 3, bits);
+            let owned = owned_compressed(&sa, 3, bits);
 
             assert_eq!(mapped.len(), sa.len(), "length differs at {bits} bits");
             assert_eq!(mapped.bits_per_value(), bits);
@@ -323,8 +306,7 @@ mod tests {
     #[test]
     fn iter_range_agrees_with_get() {
         for bits in [29usize, 32, 40] {
-            let mask = (u64::MAX >> (64 - bits)) as i64;
-            let sa: Vec<i64> = sample_sa(200).iter().map(|v| v & mask).collect();
+            let sa = fit_to_width(&sample_sa(200), bits);
             let (mapped, _tmp) = write_and_map(&sa, 1, Some(bits));
 
             for start in [0usize, 1, 7, 12, 63, 64, 65, 130] {
@@ -354,9 +336,7 @@ mod tests {
         assert!(required <= buf.len());
 
         for cut in 0..required {
-            let mut tmp = tempfile::NamedTempFile::new().unwrap();
-            tmp.write_all(&buf[..cut]).unwrap();
-            tmp.flush().unwrap();
+            let tmp = write_to_tempfile(&buf[..cut]);
             let err = MmapBackedSA::read_binary_mmap(tmp.path())
                 .err()
                 .unwrap_or_else(|| panic!("{cut} of {required} required bytes should not load"));
@@ -372,9 +352,17 @@ mod tests {
         dump_compressed_suffix_array(sa, 1, 29, &mut buf).unwrap();
         buf[2..10].copy_from_slice(&1_000_000_u64.to_le_bytes());
 
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(&buf).unwrap();
-        tmp.flush().unwrap();
+        let tmp = write_to_tempfile(&buf);
         assert!(MmapBackedSA::read_binary_mmap(tmp.path()).is_err());
+    }
+
+    /// `prefetch_sa_index` and `touch_all_pages` are hints nothing else in the suite calls, yet
+    /// both index the mapping by offsets they compute themselves.
+    #[test]
+    fn hints_stay_within_the_mapping() {
+        assert_hints_are_harmless(&sample_sa(300), 1, None);
+        for bits in [8usize, 29, 40] {
+            assert_hints_are_harmless(&fit_to_width(&sample_sa(300), bits), 2, Some(bits));
+        }
     }
 }

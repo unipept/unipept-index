@@ -7,7 +7,7 @@ mod scalar;
 // only exist in the preloaded configuration. Every consumer is gated the same way, so gating the
 // module itself keeps `--features mmap` compiling.
 #[cfg(all(test, not(feature = "mmap")))]
-mod test_helpers;
+mod test_utils;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
 use sa_mappings::proteins::{Proteins, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
@@ -863,7 +863,7 @@ mod tests {
         array::OriginalSA,
         sa_searcher::{
             BoundSearchResult, Searcher,
-            test_helpers::{example_searcher, searcher_over_text}
+            test_utils::{example_searcher, searcher_over_text}
         },
         suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
     };

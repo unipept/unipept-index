@@ -1,39 +1,85 @@
 //! The suffix array itself: sorted positions into the concatenated protein text.
 //!
-//! Four storage types, in two axes.
+//! Two independent choices, both recorded in the file header so a reader learns them at load time
+//! rather than from the build it happens to be.
 //!
 //! **Packing.** [`OriginalSA`] stores one `i64` per entry; [`CompressedSA`] packs entries at the
 //! minimum width the text length requires (29 bits for a 300 M-residue text), roughly halving the
-//! file. Which one a file holds is recorded in its header, so the reader picks at runtime.
-//!
-//! **Sparseness.** The array may index only every n-th text position, trading search work for
-//! size. The factor is likewise a header field, and search compensates by trying each of the n
-//! possible alignments. A peptide shorter than the factor cannot be searched at all.
+//! file.
 //!
 //! **Storage.** [`InMemorySA`] holds owned memory and dispatches over the packing at runtime;
-//! `MmapBackedSA` decodes straight out of a memory mapping and knows its packing from the same
-//! header. The `mmap` feature picks which one [`SuffixArray`] means; see the crate docs.
+//! `MmapBackedSA` decodes straight out of a memory mapping and handles either packing itself. The
+//! `mmap` feature picks which one [`SuffixArray`] means; see the crate docs.
 //!
-//! All four implement [`SuffixArrayBackend`], which is what the searcher is written against.
+//! A third property, **sparseness**, is a build parameter rather than a storage choice: the array
+//! may index only every n-th text position, trading search work for size. Every type above carries
+//! the factor and reports it through [`SuffixArrayBackend::sample_rate`]; search compensates by
+//! trying each of the n possible alignments, and a peptide shorter than the factor cannot be
+//! searched at all.
+//!
+//! All four types implement [`SuffixArrayBackend`], which is what the searcher is written against.
+//!
+//! # On-disk format for `sa.bin`
+//!
+//! ```text
+//! [ bits_per_value: u8 ]   64 for the uncompressed packing; the compressed width otherwise
+//! [ sparseness_factor: u8 ]
+//! [ item_count: u64 little-endian ]
+//! [ data ]                 item_count entries at bits_per_value each
+//! ```
+//!
+//! At 64 bits the data is plain little-endian `i64`s, written by [`dump_suffix_array`]. Below 64
+//! it is `bitarray`'s packing — most-significant-bit first within each little-endian `u64` word,
+//! entries may straddle words — written by [`dump_compressed_suffix_array`]. Both emit the header
+//! through the same private helper, so the two packings cannot drift apart.
+//!
+//! Readers: [`InMemorySA::read_binary`](text_compression::ReadBinary::read_binary), which
+//! dispatches on the first byte, and `MmapBackedSA::read_binary_mmap`.
 
-pub mod compressed;
+use std::{error::Error, io::Write};
+
 #[cfg(feature = "mmap")]
 pub mod mmap;
-pub mod original;
 pub mod preloaded;
+#[cfg(test)]
+mod test_utils;
 
-pub use compressed::{CompressedSA, dump_compressed_suffix_array, load_compressed_suffix_array};
 #[cfg(feature = "mmap")]
 pub use mmap::MmapBackedSA;
-pub use original::{OriginalRangeIter, OriginalSA, dump_suffix_array};
-pub use preloaded::{InMemoryRangeIter, InMemorySA};
+pub use preloaded::{
+    CompressedSA, InMemoryRangeIter, InMemorySA, OriginalRangeIter, OriginalSA, dump_compressed_suffix_array,
+    dump_suffix_array, load_compressed_suffix_array
+};
 
-/// Type alias so existing call-sites can keep using `SuffixArray` unchanged.
+/// Type alias — resolves to the active suffix-array backend for this build.
 #[cfg(feature = "mmap")]
 pub type SuffixArray = MmapBackedSA;
-/// Type alias so existing call-sites can keep using `SuffixArray` unchanged.
+/// Type alias — resolves to the active suffix-array backend for this build.
+///
+/// Owned memory, because this is a preloaded build. Unlike the other three structures the suffix
+/// array has no `preloaded-*` override: it follows `mmap` alone.
 #[cfg(not(feature = "mmap"))]
 pub type SuffixArray = InMemorySA;
+
+/// Writes the 10-byte header both packings share; see the module docs for the layout.
+pub(super) fn write_sa_header(
+    bits_per_value: usize,
+    sparseness_factor: u8,
+    item_count: usize,
+    writer: &mut impl Write
+) -> Result<(), Box<dyn Error>> {
+    writer
+        .write_all(&[bits_per_value as u8])
+        .map_err(|_| "Could not write the required bits to the writer")?;
+    writer
+        .write_all(&[sparseness_factor])
+        .map_err(|_| "Could not write the sparseness factor to the writer")?;
+    // As `u64`, not `usize`: the readers always take 8 bytes here.
+    writer
+        .write_all(&(item_count as u64).to_le_bytes())
+        .map_err(|_| "Could not write the size of the suffix array to the writer")?;
+    Ok(())
+}
 
 /// Common interface implemented by every SA storage backend.
 ///
@@ -63,9 +109,9 @@ pub trait SuffixArrayBackend: Send + Sync {
 
     /// Returns the text position stored at `index`.
     ///
-    /// # Panics
-    ///
-    /// If `index >= len()`.
+    /// `index` must be below [`len`](Self::len). Beyond it the behaviour is unspecified and
+    /// differs per backend: the owned ones panic, while the mmap one may read a compressed entry
+    /// out of the file's trailing slack and return a value that was never written.
     fn get(&self, index: usize) -> i64;
 
     /// Iterates entries in `start..end` (half-open).

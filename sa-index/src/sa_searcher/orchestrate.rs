@@ -66,7 +66,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 mod tests {
     use crate::{
         SuffixArray,
-        sa_searcher::{SearchAllSuffixesResult, Searcher, test_helpers::example_searcher}
+        sa_searcher::{SearchAllSuffixesResult, Searcher, test_utils::example_searcher}
     };
 
     /// A copy of `searcher` with `mlp_batch` set, so a test can compare batch sizes.
