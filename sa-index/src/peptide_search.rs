@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::{
     array::SuffixArrayBackend,
-    sa_searcher::{DEFAULT_MLP_BATCH, SearchAllSuffixesResult, Searcher},
+    sa_searcher::{SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::SuffixToProteinMappingBackend
 };
 
@@ -152,8 +152,7 @@ pub fn search_all_peptides<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: Suf
 
     // One batched (MLP) search over the whole list — the same code path the benchmark measures
     // and the only place the batch size is chosen.
-    let suffix_results =
-        searcher.search_all_matching_suffixes(&byte_peptides, cutoff, equate_il, tryptic, DEFAULT_MLP_BATCH);
+    let suffix_results = searcher.search_all_matching_suffixes(&byte_peptides, cutoff, equate_il, tryptic);
 
     // Retrieve the proteins for each hit and build the result, dropping peptides with no matches
     // (preserves the previous filter_map semantics and result ordering).

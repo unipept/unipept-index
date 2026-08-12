@@ -31,10 +31,12 @@ pub const DEFAULT_MLP_BATCH: usize = 16;
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Searches every peptide, returning one raw suffix result per input, in order.
     ///
-    /// `batch_size` selects the strategy: `> 1` interleaves that many peptides per rayon task
-    /// via `search_matching_suffixes_batched` (memory-level parallelism); `1` runs the scalar
+    /// `tuning.mlp_batch` selects the strategy: `> 1` interleaves that many peptides per rayon
+    /// task via `search_matching_suffixes_batched` (memory-level parallelism); `1` runs the scalar
     /// `search_matching_suffixes` one peptide per task. Both produce identical results
-    /// (see `test_batched_matches_scalar`), so `batch_size` is a pure performance knob.
+    /// (see `test_batched_matches_scalar`), so it is a pure performance knob — which is why it
+    /// lives in [`SearchTuning`] with the others rather than being threaded through as an
+    /// argument every caller has to supply and no caller ever varied.
     ///
     /// Peptides are searched as given — callers that need length filtering or normalisation
     /// (e.g. skipping peptides shorter than the sample rate) must do it before calling.
@@ -43,9 +45,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         peptides: &[&[u8]],
         max_matches: usize,
         equate_il: bool,
-        tryptic: bool,
-        batch_size: usize
+        tryptic: bool
     ) -> Vec<SearchAllSuffixesResult> {
+        let batch_size = self.tuning.mlp_batch;
         if batch_size > 1 {
             peptides
                 .par_chunks(batch_size)
@@ -62,7 +64,22 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(all(test, not(feature = "mmap")))]
 mod tests {
-    use crate::sa_searcher::{SearchAllSuffixesResult, test_helpers::example_searcher};
+    use crate::{
+        SuffixArray,
+        sa_searcher::{SearchAllSuffixesResult, Searcher, test_helpers::example_searcher}
+    };
+
+    /// A copy of `searcher` with `mlp_batch` set, so a test can compare batch sizes.
+    ///
+    /// The searcher is not cloneable and the tests only need to read it, so this takes it by
+    /// reference and returns a view with one field of the tuning changed. `SearchTuning` is `Copy`,
+    /// which is what makes that a two-line helper rather than a rebuild of the index.
+    fn with_batch(searcher: &Searcher<SuffixArray>, mlp_batch: usize) -> Searcher<SuffixArray> {
+        let mut copy = example_searcher();
+        copy.tuning = searcher.tuning;
+        copy.tuning.mlp_batch = mlp_batch;
+        copy
+    }
 
     /// Orchestrated multi-peptide search must be identical whether scalar (batch 1) or batched,
     /// across the equate_il × tryptic combinations, and independent of batch size.
@@ -72,9 +89,10 @@ mod tests {
         let peptides: Vec<&[u8]> = vec![b"A", b"AC", b"CLA", b"KCR", b"VAA", b"ZZZ", b"AI"];
         for equate_il in [true, false] {
             for tryptic in [true, false] {
-                let scalar = s.search_all_matching_suffixes(&peptides, 1000, equate_il, tryptic, 1);
+                let scalar = with_batch(&s, 1).search_all_matching_suffixes(&peptides, 1000, equate_il, tryptic);
                 for batch in [2usize, 3, 16] {
-                    let batched = s.search_all_matching_suffixes(&peptides, 1000, equate_il, tryptic, batch);
+                    let batched =
+                        with_batch(&s, batch).search_all_matching_suffixes(&peptides, 1000, equate_il, tryptic);
                     assert_eq!(scalar.len(), peptides.len());
                     assert_eq!(batched.len(), peptides.len(), "one result per input, in order");
                     for (i, (a, b)) in scalar.iter().zip(batched.iter()).enumerate() {
@@ -91,8 +109,8 @@ mod tests {
         let s = example_searcher();
         // "A" matches 5 suffixes; cap at 2 → MaxMatches with 2 entries on both paths.
         let peptides: Vec<&[u8]> = vec![b"A"];
-        let scalar = s.search_all_matching_suffixes(&peptides, 2, true, false, 1);
-        let batched = s.search_all_matching_suffixes(&peptides, 2, true, false, 16);
+        let scalar = with_batch(&s, 1).search_all_matching_suffixes(&peptides, 2, true, false);
+        let batched = with_batch(&s, 16).search_all_matching_suffixes(&peptides, 2, true, false);
         assert!(matches!(scalar[0], SearchAllSuffixesResult::MaxMatches(_)));
         assert_eq!(scalar[0], batched[0]);
     }
@@ -101,8 +119,8 @@ mod tests {
     fn test_search_all_empty() {
         let s = example_searcher();
         let none: Vec<&[u8]> = vec![];
-        assert!(s.search_all_matching_suffixes(&none, 1000, true, false, 1).is_empty());
-        assert!(s.search_all_matching_suffixes(&none, 1000, true, false, 16).is_empty());
+        assert!(with_batch(&s, 1).search_all_matching_suffixes(&none, 1000, true, false).is_empty());
+        assert!(with_batch(&s, 16).search_all_matching_suffixes(&none, 1000, true, false).is_empty());
     }
 
     // A batch size that does not divide the input length must still return one result per
@@ -111,8 +129,8 @@ mod tests {
     fn test_search_all_ragged_batch() {
         let s = example_searcher();
         let peptides: Vec<&[u8]> = vec![b"A", b"AC", b"CLA", b"AI", b"VAA"]; // 5 peptides
-        let scalar = s.search_all_matching_suffixes(&peptides, 1000, true, false, 1);
-        let batched = s.search_all_matching_suffixes(&peptides, 1000, true, false, 4); // 4 + 1
+        let scalar = with_batch(&s, 1).search_all_matching_suffixes(&peptides, 1000, true, false);
+        let batched = with_batch(&s, 4).search_all_matching_suffixes(&peptides, 1000, true, false); // 4 + 1
         assert_eq!(scalar, batched);
     }
 }

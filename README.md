@@ -208,6 +208,29 @@ cargo build --release -p sa-benchmarks
 
 Beware that `cargo build --workspace` *overrides* `default-members` and will include it again.
 
+## Benchmarking
+
+Everything needed to measure the index — the harness, the driver, the suite definitions and the
+machine profiles — lives in `sa-benchmarks/`. See [its README](sa-benchmarks/README.md).
+
+```bash
+cp sa-benchmarks/profiles/example.toml sa-benchmarks/profiles/local.toml   # once per machine
+./sa-benchmarks/run.sh defaults      # the regression gate — run after any change to the search path
+sudo ./sa-benchmarks/run.sh all      # every suite in one session, into one report.md
+```
+
+Five suites: `defaults` (throughput at production defaults), `detail` (where the time goes inside a
+search), `startup` (what each storage configuration costs before the first query), `ram` (scaling as
+the RAM ceiling falls) and `threads` (whether oversubscription pays). `ram` and `threads` need root
+for cgroup ceilings and `drop_caches`; `run.sh all` skips them without it and says so in the report.
+
+Every run writes a self-contained `report.html` — sidebar, row filter, sortable columns — next to
+its results, plus `report.md` and, for `all`, a `report.json` a later run can use as its baseline.
+
+Measurement code stays out of what ships. The hot-path instrumentation is behind `sa-index`'s
+`metrics` feature, which compiles to nothing when off and which CI proves `sa-server` and
+`sa-builder` never enable; run-level measurement lives in `sa-benchmarks`, which never ships at all.
+
 ## Further reading
 
 * Crate-level `cargo doc` for `sa-index` explains the search pipeline and the feature axes in

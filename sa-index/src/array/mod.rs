@@ -80,24 +80,6 @@ pub trait SuffixArrayBackend: Send + Sync {
     /// comparison. Out-of-range indices are ignored rather than panicking.
     fn prefetch_sa_index(&self, index: usize);
 
-    /// Asks the kernel to start reading the pages holding entries `start..end`, without waiting.
-    ///
-    /// The counterpart to [`Self::prefetch_sa_index`] for pages that are not resident at all. A
-    /// CPU prefetch hint cannot fault — see the `prefetch` crate docs — so it does nothing for an
-    /// absent page, and the load that follows blocks the thread for a whole disk read.
-    /// `madvise(MADV_WILLNEED)` queues real asynchronous readahead and returns, which is the only
-    /// way to overlap misses from inside one thread.
-    ///
-    /// Measured worth attacking: at 75% residency the search phase splits roughly half into the
-    /// dependent binary-search chain and half into the contiguous range scan this covers, and
-    /// every mapping is opened `MADV_RANDOM`, so that scan takes one fault per page with no
-    /// readahead at all.
-    ///
-    /// Default: no-op — only a mapping has anything to advise. Callers gate it on
-    /// `SearchTuning::willneed` because each call is a syscall: worth it against a ~100 µs fault,
-    /// pure overhead when the page was already resident.
-    fn advise_willneed_range(&self, _start: usize, _end: usize) {}
-
     /// Reads every mapped page into the page cache.
     ///
     /// Default: no-op. Only the mmap backend implements it, as a warmup so the first requests do

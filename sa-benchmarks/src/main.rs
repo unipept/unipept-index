@@ -23,10 +23,15 @@
 //!
 //! The `metrics` feature adds the per-candidate counters and the internal phase breakdown, at
 //! the cost of perturbing what it measures — keep it off for timing runs.
-//! See `matrix_bench.sh` / `mlp_sweep.sh` next to this crate for the driver scripts.
+//!
+//! This binary measures **one** configuration per invocation and knows nothing about sweeps. The
+//! coordinates of a cell within a sweep — cgroup ceiling, thread count, storage arm, ABBA slot —
+//! come from the driver via `--suite` and `--dim key=value`, and are written straight through to
+//! `suite` / `dims` on every record. See `sa-benchmarks/run.sh` and the `bench` package next to
+//! this crate for the driver.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     error::Error,
     fs::{File, OpenOptions, create_dir_all},
     io::{BufRead, BufReader, Read, Write},
@@ -40,7 +45,7 @@ use rayon::prelude::*;
 use sa_index::{
     KmerTable, ProteinsBackend as _, SearchTuning, SuffixArray, SuffixArrayBackend,
     kmer_table::AMINO_ACID_COUNT,
-    sa_searcher::{DEFAULT_MLP_BATCH, SearchAllSuffixesResult, Searcher},
+    sa_searcher::{SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::SuffixToProteinMappingBackend as _
 };
 use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
@@ -65,7 +70,12 @@ use text_compression::ProteinTextBackend as _;
 /// v7: `result` gains `major_faults` / `minor_faults`, counted across the timed region. They are
 ///     what separates "slow because it is waiting on I/O" from "slow for some other reason" when
 ///     the index does not fit in RAM.
-const SCHEMA_VERSION: u32 = 7;
+/// v8: records carry `suite` and a free-form `dims` map, both supplied by the caller. A sweep
+///     dimension this binary knows nothing about — a cgroup ceiling, a `RAYON_NUM_THREADS` value,
+///     which storage arm was built — used to survive only in the file name (`c167_pprot_t96.jsonl`),
+///     so every driver script needed its own file-name parser and every one of them could disagree
+///     about what a run meant. Now the coordinates travel inside the record.
+const SCHEMA_VERSION: u32 = 9;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -186,29 +196,22 @@ struct Args {
     #[arg(long)]
     build_kmer_table: Option<usize>,
 
-    /// Cross-query MLP batch size: how many independent peptide searches are interleaved per
-    /// rayon task to hide random-access DRAM latency. 1 = scalar (one peptide per task).
-    /// Defaults to the production value so an unqualified run measures what ships.
-    /// Single-run mode only — matrix mode sweeps `--matrix-batches` instead.
-    #[arg(long, default_value_t = DEFAULT_MLP_BATCH)]
-    mlp_batch: usize,
+    /// Override one `SearchTuning` knob, as `field=value`. Repeatable.
+    ///
+    /// Generic on purpose: `SearchTuning` is the searcher's single home for performance knobs, and
+    /// this flag reaches every field it has — including any added later — without this binary
+    /// needing to know their names. Anything not overridden keeps `SearchTuning::default()`, so an
+    /// unqualified run measures what ships.
+    ///
+    ///   --tune mlp_batch=1 --tune validate_batch=32 --tune retrieval_prefetch_distance=8
+    ///
+    /// An unknown field is an error rather than a no-op; run with `--help-tuning` to list them.
+    #[arg(long = "tune", value_parser = parse_dim, value_name = "FIELD=VALUE")]
+    tune: Vec<(String, String)>,
 
-    // -- SearchTuning knobs (applied to `searcher.tuning`), in both single-run and matrix mode.
-    // Defaults match `SearchTuning::default()` so omitting them is a no-op.
-    /// Candidates per two-pass validation batch in `iterate_sa_range` (only reachable on the
-    /// tryptic / non-fast-path route — see sa_index::SearchTuning::validate_batch). Clamped to
-    /// 1..=256 internally.
-    #[arg(long, default_value_t = SearchTuning::default().validate_batch)]
-    validate_batch: usize,
-
-    /// Minimum SA range size before `iterate_sa_range` switches from a straight loop to
-    /// two-pass validation.
-    #[arg(long, default_value_t = SearchTuning::default().validate_prefetch_threshold)]
-    validate_prefetch_threshold: usize,
-
-    /// Prefetch look-ahead distance (in suffixes) inside protein retrieval.
-    #[arg(long, default_value_t = SearchTuning::default().retrieval_prefetch_distance)]
-    retrieval_prefetch_distance: usize,
+    /// Print every `SearchTuning` field with its default and exit.
+    #[arg(long)]
+    help_tuning: bool,
 
     /// Run the full parameter matrix in one process: loads the index once, then sweeps the
     /// grid (see `expand_cells`) for each `--matrix-files` entry. Writes one aggregated
@@ -253,15 +256,6 @@ struct Args {
     #[arg(long)]
     dry_run: bool,
 
-    /// Issue madvise(MADV_WILLNEED) over each SA range before scanning it.
-    ///
-    /// Off by default and it has regressed before — -16.8% qps with the index resident, from
-    /// mmap_lock contention across rayon threads (see MmapBackedSA::advise_willneed_range). It is
-    /// exposed to test the opposite regime: under a memory ceiling a CPU prefetch hint cannot help
-    /// (it cannot fault), so the syscall may replace a real disk stall rather than nothing.
-    #[arg(long)]
-    willneed: bool,
-
     /// Skip the theoretical memory calculation, reporting `theoretical_max_memory: 0`.
     ///
     /// That calculation walks *every* protein's metadata (see `theoretical_memory`), which on an
@@ -270,7 +264,33 @@ struct Args {
     /// supposed to be faulting on demand and spends the budget being measured. Off by default, so
     /// ordinary runs still report the figure.
     #[arg(long)]
-    no_theoretical_memory: bool
+    no_theoretical_memory: bool,
+
+    /// Name of the suite this invocation belongs to, copied verbatim into every record.
+    ///
+    /// Set by the driver (`sa-benchmarks/run.sh <suite>`); a hand-run invocation leaves it at
+    /// "adhoc" so its records are still groupable but obviously not part of a sweep.
+    #[arg(long, default_value = "adhoc")]
+    suite: String,
+
+    /// Sweep coordinate for this invocation, as `key=value`. Repeatable.
+    ///
+    /// These are the facts about a cell that this binary cannot observe about itself — the cgroup
+    /// ceiling it was launched under, its `RAYON_NUM_THREADS`, which storage arm was built, which
+    /// slot of an ABBA ordering it occupies. The driver knows them, so the driver passes them, and
+    /// they end up in `dims` on every record rather than encoded in the output file name.
+    #[arg(long = "dim", value_parser = parse_dim, value_name = "KEY=VALUE")]
+    dims: Vec<(String, String)>
+}
+
+/// Parses one `--dim key=value`. Splits on the FIRST `=` so values may contain `=` themselves
+/// (a feature list, a path). An empty key is rejected: it would silently collide in the map.
+fn parse_dim(s: &str) -> Result<(String, String), String> {
+    let (key, value) = s.split_once('=').ok_or_else(|| format!("expected KEY=VALUE, got '{}'", s))?;
+    if key.is_empty() {
+        return Err(format!("empty key in '{}'", s));
+    }
+    Ok((key.to_string(), value.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -317,21 +337,22 @@ struct BenchmarkConfig {
     equate_il: bool,
     tryptic: bool,
     max_matches: usize,
-    /// MLP batch size for this run (1 = scalar, one peptide per task).
-    batch_size: usize,
+    /// Every `SearchTuning` field this cell ran at, serialized from the struct itself, and the
+    /// shipped defaults beside it.
+    ///
+    /// A map rather than named columns so that adding a knob to `SearchTuning` needs no change
+    /// here and none in the report: both are read generically. `tuning_defaults` travels in the
+    /// record so a reader can tell "held at the shipped value" from "overridden" without knowing
+    /// what this version's defaults were — which is exactly what goes stale when defaults get
+    /// re-tuned, and what a report comparing two commits would otherwise get wrong.
+    tuning: SearchTuning,
+    tuning_defaults: SearchTuning,
     /// k of the attached k-mer table (0 = no table).
     kmer_k: usize,
     amount_of_peptides: usize,
     peptide_length_min: usize,
     peptide_length_max: usize,
     peptide_source: String,
-    // -- SearchTuning, recorded in full so runs are groupable/reproducible from the jsonl alone
-    // (Task 4) without cross-referencing the CLI invocation that produced them.
-    validate_batch: usize,
-    validate_prefetch_threshold: usize,
-    retrieval_prefetch_distance: usize,
-    /// Whether madvise(MADV_WILLNEED) was issued over each SA range before scanning.
-    willneed: bool,
     /// Which sweep produced this record: "single" (non-matrix CLI run) or "grid" (the trimmed
     /// default matrix grid).
     phase: String
@@ -388,6 +409,11 @@ struct BenchmarkRecord {
     version: u32,
     label: String,
     commit: String,
+    /// Which suite produced this record ("adhoc" for a hand-run invocation).
+    suite: String,
+    /// The driver's sweep coordinates for this cell — see `Args::dims`. `BTreeMap` rather than
+    /// `HashMap` so the serialized key order is stable and two records diff cleanly.
+    dims: BTreeMap<String, String>,
     config: BenchmarkConfig,
     /// Absent in records written before schema v6.
     startup: StartupTiming,
@@ -553,7 +579,6 @@ fn run_benchmark(
     max_matches: usize,
     equate_il: bool,
     tryptic: bool,
-    mlp_batch: usize,
     theoretical_max_memory: u64,
     baseline_memory: u64
 ) -> BenchmarkResult {
@@ -567,12 +592,13 @@ fn run_benchmark(
     // Fault counters bracket the timed region only, so index loading and warmup are excluded.
     let (minflt_before, majflt_before) = page_faults();
 
-    // Phase 1: suffix array search (parallel), via the same orchestrator production uses.
-    // mlp_batch > 1 interleaves that many peptides per rayon task for memory-level parallelism;
-    // 1 = scalar one-peptide-at-a-time.
+    // Phase 1: suffix array search (parallel), via the same orchestrator production uses. The
+    // decomposition (tuning.mlp_batch > 1 interleaves that many peptides per rayon task for
+    // memory-level parallelism; 1 = scalar) comes from the searcher's tuning, exactly as it does
+    // on the server.
     let refs: Vec<&[u8]> = peptides.iter().map(|p| p.as_bytes()).collect();
     let search_start = Instant::now();
-    let suffix_results = searcher.search_all_matching_suffixes(&refs, max_matches, equate_il, tryptic, mlp_batch);
+    let suffix_results = searcher.search_all_matching_suffixes(&refs, max_matches, equate_il, tryptic);
     let search_duration_ns = search_start.elapsed().as_nanos() as u64;
 
     // Read internal timing/candidate breakdown accumulated during the search phase above.
@@ -649,15 +675,58 @@ struct GridCell {
     mlp_batch: usize
 }
 
-/// The `SearchTuning` the CLI asks for. Defaults match `SearchTuning::default()`, so this is
-/// that default unless one of the `--validate-*` / `--retrieval-*` flags was passed.
-fn tuning_from(args: &Args) -> SearchTuning {
-    SearchTuning {
-        validate_batch: args.validate_batch,
-        validate_prefetch_threshold: args.validate_prefetch_threshold,
-        retrieval_prefetch_distance: args.retrieval_prefetch_distance,
-        willneed: args.willneed
+/// The `SearchTuning` the CLI asks for: the shipped defaults with any `--tune` overrides applied.
+fn tuning_from(args: &Args) -> Result<SearchTuning, Box<dyn Error>> {
+    apply_tuning(SearchTuning::default(), &args.tune)
+}
+
+/// Applies `field=value` overrides to a `SearchTuning`, through its own serde representation.
+///
+/// Going via JSON rather than a hand-written `match` is what keeps this binary from needing an
+/// update every time a knob is added: `SearchTuning` describes its own fields, so a new one is
+/// settable and recordable the day it exists. `deny_unknown_fields` on the struct turns a
+/// misspelled knob into an error instead of a setting that silently does nothing — which would
+/// otherwise look exactly like a knob that has no effect.
+fn apply_tuning(base: SearchTuning, overrides: &[(String, String)]) -> Result<SearchTuning, Box<dyn Error>> {
+    let mut value = serde_json::to_value(base)?;
+    let map = value.as_object_mut().ok_or("SearchTuning did not serialize to an object")?;
+
+    for (field, raw) in overrides {
+        if !map.contains_key(field) {
+            return Err(format!("unknown tuning field '{}'; known: {}", field, tuning_field_list()).into());
+        }
+        // Typed by what the field already holds, so "16" lands as a number and "true" as a bool
+        // without this code knowing which field is which.
+        let parsed = match map[field] {
+            serde_json::Value::Bool(_) => serde_json::Value::Bool(
+                raw.parse::<bool>().map_err(|_| format!("{}: expected true/false, got '{}'", field, raw))?
+            ),
+            serde_json::Value::Number(_) => serde_json::Value::Number(
+                raw.parse::<u64>().map_err(|_| format!("{}: expected a number, got '{}'", field, raw))?.into()
+            ),
+            _ => serde_json::Value::String(raw.clone())
+        };
+        map.insert(field.clone(), parsed);
     }
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Comma-separated list of the tuning fields, for error messages.
+fn tuning_field_list() -> String {
+    serde_json::to_value(SearchTuning::default())
+        .ok()
+        .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(", ")))
+        .unwrap_or_default()
+}
+
+/// `--help-tuning`: every knob and its shipped default, read out of the struct itself.
+fn print_tuning_help() -> Result<(), Box<dyn Error>> {
+    let defaults = serde_json::to_value(SearchTuning::default())?;
+    println!("SearchTuning fields (override with --tune FIELD=VALUE):");
+    for (field, value) in defaults.as_object().ok_or("not an object")? {
+        println!("  {:<32} default {}", field, value);
+    }
+    Ok(())
 }
 
 /// The k-mer table sizes the matrix sweeps. `0` means "no table attached".
@@ -667,8 +736,8 @@ fn matrix_kmers(args: &Args) -> Vec<usize> {
 
 /// Expands the grid for one peptide-file bucket. This is the single source of truth for the
 /// planned cell list: both `run_matrix` and `print_dry_run` go through it, so `--dry-run`
-/// cannot drift from what a real run would execute (`matrix_bench.sh` shells out to
-/// `--dry-run` for its expected-config count precisely to rely on that).
+/// cannot drift from what a real run would execute — which is what makes `--dry-run` worth
+/// eyeballing before committing to a multi-hour sweep.
 ///
 /// Full sweep is kmer × equate_il × mlp_batch, doubled for tryptic=true/false — except tryptic
 /// on the small/medium buckets, which collapses to one representative cell: the last full run
@@ -770,7 +839,6 @@ fn run_cell(
                 args.max_matches,
                 spec.equate_il,
                 spec.tryptic,
-                spec.mlp_batch,
                 spec.theoretical_max,
                 spec.baseline_memory
             )
@@ -806,7 +874,7 @@ fn run_cell(
     };
 
     eprintln!(
-        "  {} {} il={} tr={} batch={} kmer={} tuning{{vb={} vpt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
+        "  {} {} il={} tr={} batch={} kmer={} tuning{{vb={} pt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
         spec.source,
         spec.phase,
         spec.equate_il,
@@ -814,7 +882,7 @@ fn run_cell(
         spec.mlp_batch,
         spec.kmer_k,
         searcher.tuning.validate_batch,
-        searcher.tuning.validate_prefetch_threshold,
+        searcher.tuning.prefetch_threshold,
         searcher.tuning.retrieval_prefetch_distance,
         stats.qps_p50,
         band,
@@ -827,6 +895,8 @@ fn run_cell(
         version: SCHEMA_VERSION,
         label: args.label.clone(),
         commit: spec.commit.to_string(),
+        suite: args.suite.clone(),
+        dims: args.dims.iter().cloned().collect(),
         startup: spec.startup,
         config: BenchmarkConfig {
             sa_type: spec.sa_type.to_string(),
@@ -840,16 +910,14 @@ fn run_cell(
             equate_il: spec.equate_il,
             tryptic: spec.tryptic,
             max_matches: args.max_matches,
-            batch_size: spec.mlp_batch,
+
             kmer_k: spec.kmer_k,
             amount_of_peptides: peptides.len(),
             peptide_length_min: spec.p_min,
             peptide_length_max: spec.p_max,
             peptide_source: spec.source.to_string(),
-            validate_batch: searcher.tuning.validate_batch,
-            validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
-            retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            willneed: searcher.tuning.willneed,
+            tuning: searcher.tuning,
+            tuning_defaults: SearchTuning::default(),
             phase: spec.phase.to_string()
         },
         result: representative,
@@ -869,10 +937,15 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
     }
 
     println!("DRY RUN — planned matrix config, no index will be loaded");
+    println!("suite          : {}", args.suite);
+    if !args.dims.is_empty() {
+        let dims: Vec<String> = args.dims.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        println!("dims           : {}", dims.join(" "));
+    }
     println!("backend        : {}", if cfg!(feature = "mmap") { "mmap" } else { "preloaded" });
     println!("kmer sizes     : {:?}", matrix_kmers(args));
     println!("mlp batches    : {:?}", args.matrix_batches);
-    println!("tuning         : {:?}", tuning_from(args));
+    println!("tuning         : {:?}", tuning_from(args)?);
     println!("runs/config    : {}", args.runs);
     println!();
 
@@ -1040,7 +1113,7 @@ fn run_matrix(
     let output_path = args.output.join(format!("{}.jsonl", args.label));
     let mut output_file = OpenOptions::new().create(true).write(true).truncate(true).open(&output_path)?;
     let commit = env!("GIT_COMMIT_HASH").to_string();
-    let tuning = tuning_from(args);
+    let tuning = tuning_from(args)?;
 
     for pep_path in &args.matrix_files {
         let peptides: Vec<String> = BufReader::new(File::open(pep_path)?)
@@ -1084,6 +1157,8 @@ fn run_matrix(
         for cell in expand_cells(args, &source) {
             ensure_kmer_table(&mut searcher, &mut table5, &mut table6, cell.kmer_k);
             searcher.tuning = tuning;
+            // The grid's own axis, applied the same way as every other knob.
+            searcher.tuning.mlp_batch = cell.mlp_batch;
             let spec = CellSpec {
                 theoretical_max: theoretical_by_k[&cell.kmer_k],
                 equate_il: cell.equate_il,
@@ -1100,15 +1175,18 @@ fn run_matrix(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Before `Args::parse()`, which would otherwise demand an index and an output directory for a
+    // question that needs neither: "what knobs are there?" is asked when setting a sweep up, not
+    // when running one.
+    if std::env::args().any(|arg| arg == "--help-tuning") {
+        return print_tuning_help();
+    }
+
     let args = Args::parse();
 
     // Validate length range only for random mode
     if args.peptide_file.is_none() && args.peptide_length_min > args.peptide_length_max {
         return Err("--peptide-length-min must be <= --peptide-length-max".into());
-    }
-
-    if args.mlp_batch == 0 {
-        return Err("--mlp-batch must be >= 1 (1 = scalar)".into());
     }
 
     // --dry-run never touches the index (which may not even exist locally) — it only expands
@@ -1211,7 +1289,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Apply the SearchTuning knobs from the CLI (defaults match SearchTuning::default(), so
     // this is a no-op unless the caller overrides one of --validate-batch/etc).
-    searcher.tuning = tuning_from(&args);
+    searcher.tuning = tuning_from(&args)?;
 
     let theoretical_max = if args.no_theoretical_memory {
         eprintln!("Theoretical max memory: skipped (--no-theoretical-memory)");
@@ -1334,16 +1412,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             equate_il: args.equate_il,
             tryptic: args.tryptic,
             max_matches: args.max_matches,
-            batch_size: args.mlp_batch,
+
             kmer_k: searcher.kmer_table.as_ref().map_or(0, |t| t.k),
             amount_of_peptides: run_peptides.len(),
             peptide_length_min: p_min,
             peptide_length_max: p_max,
             peptide_source: peptide_source.clone(),
-            validate_batch: searcher.tuning.validate_batch,
-            validate_prefetch_threshold: searcher.tuning.validate_prefetch_threshold,
-            retrieval_prefetch_distance: searcher.tuning.retrieval_prefetch_distance,
-            willneed: searcher.tuning.willneed,
+            tuning: searcher.tuning,
+            tuning_defaults: SearchTuning::default(),
             phase: "single".to_string()
         };
 
@@ -1353,7 +1429,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             args.max_matches,
             args.equate_il,
             args.tryptic,
-            args.mlp_batch,
             theoretical_max,
             baseline_memory
         );
@@ -1362,6 +1437,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             version: SCHEMA_VERSION,
             label: args.label.clone(),
             commit: env!("GIT_COMMIT_HASH").to_string(),
+            suite: args.suite.clone(),
+            dims: args.dims.iter().cloned().collect(),
             config,
             startup,
             result,

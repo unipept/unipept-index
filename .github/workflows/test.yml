@@ -49,3 +49,59 @@ jobs:
 
       - name: Run cargo test
         run: cargo test ${{ matrix.features }}
+
+  no-instrumentation-in-shipping-builds:
+    # `metrics` swaps the searcher's zero-sized counters for real atomics on cache lines every rayon
+    # worker shares. It exists for the benchmark harness and costs throughput wherever it is on, so
+    # nothing that ships may enable it — not directly, and not through a feature that forwards to it.
+    #
+    # That is easy to break by accident: adding `metrics = ["sa-index/metrics"]` to sa-server, or
+    # folding it into another feature, compiles cleanly and produces a slower server that nothing
+    # complains about. This job resolves the feature graph for the two shipping binaries and fails if
+    # `metrics` is anywhere in it.
+    name: metrics is off in shipping builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve features for sa-server and sa-builder
+        shell: bash
+        run: |
+          set -uo pipefail
+          rc=0
+          for package in sa-server sa-builder; do
+            for features in "" "--features mmap"; do
+              # `{f}` is the resolved feature list of each package in the graph, so this reads the
+              # feature actually enabled on sa-index rather than what any manifest asks for.
+              resolved=$(cargo tree -e features -p "$package" $features --format '{p} [{f}]' \
+                         | grep 'sa-index v' | sort -u)
+              echo "$package ${features:-(default features)}:"
+              echo "$resolved" | sed 's/^/  /'
+              if grep -qE '\[[^]]*\bmetrics\b' <<<"$resolved"; then
+                echo "::error::$package ${features:-(default features)} resolves sa-index's 'metrics' feature."
+                echo "::error::Instrumentation must never reach a shipping binary; see the 'metrics' section of sa-index's crate docs."
+                rc=1
+              fi
+            done
+          done
+          exit $rc
+
+      # The guard is only worth having if it can fail, and a feature-graph query that silently stops
+      # matching would pass forever. sa-benchmarks with `metrics` on must trip the same check.
+      - name: Prove the check detects metrics when it is present
+        shell: bash
+        run: |
+          set -uo pipefail
+          resolved=$(cargo tree -e features -p sa-benchmarks --features sa-benchmarks/metrics \
+                     --format '{p} [{f}]' | grep 'sa-index v' | sort -u)
+          echo "$resolved" | sed 's/^/  /'
+          if grep -qE '\[[^]]*\bmetrics\b' <<<"$resolved"; then
+            echo "check is live"
+          else
+            echo "::error::the metrics check no longer detects metrics — cargo tree output shape changed."
+            exit 1
+          fi

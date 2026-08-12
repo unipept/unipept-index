@@ -55,6 +55,16 @@
 //! real atomics, so the benchmark harness can attribute time and count candidates. Enabling it
 //! costs throughput; see `sa_searcher::metrics`.
 //!
+//! **This is the only gate for measurement code in this workspace.** Anything that reads a clock or
+//! bumps a counter to describe how the search behaves belongs behind it — or, if it is a property of
+//! a whole run rather than of the hot path (load timings, page-fault counts), in the `sa-benchmarks`
+//! crate, which is excluded from the workspace's `default-members` and never ships.
+//!
+//! Nothing that ships may turn it on. `sa-server` and `sa-builder` deliberately have no `metrics`
+//! passthrough, and CI resolves their feature graphs on every push to prove none appears — adding
+//! one would compile cleanly and produce a slower server that nothing else would complain about.
+//! See `.github/workflows/test.yml`.
+//!
 //! # Why this crate is written the way it is
 //!
 //! Search is dominated by DRAM latency, not by instruction count: the suffix array and the
@@ -134,10 +144,13 @@
 //! is roughly even between the dependent binary-search chain and the contiguous SA range scan
 //! (52% / 48% of thread-time, `metrics` build at a 167 GB ceiling).
 //!
-//! Two further ideas were measured and rejected; see `array::mmap::MmapBackedSA::advise_willneed_range`
-//! and `sa_searcher::SearchTuning::willneed` for `MADV_WILLNEED`, and note here that **sorting
-//! queries by k-mer prefix to create page locality does not work**: it changed the fault count by
-//! -0.1% and cost 4.4% throughput. With 10,000 queries per rep drawn against 20^6 possible
+//! Two further ideas were measured and rejected. **`MADV_WILLNEED` over the SA range about to be
+//! scanned does not pay**: the advice lands (major faults -23-25% under a ceiling) but the
+//! throughput decays from +12.0% at the core count to ~0% at 96 threads, since oversubscription
+//! already overlaps those faults, and it costs -3.7% resident — the comment where it used to live
+//! in `array::mmap` carries the full numbers. And **sorting queries by k-mer prefix to create page
+//! locality does not work either**: it changed the fault count by -0.1% and cost 4.4% throughput.
+//! With 10,000 queries per rep drawn against 20^6 possible
 //! 6-mers, the expected number of queries sharing a prefix is under one, so there is no page reuse
 //! for sorting to expose. Locality needs reuse, and this workload has none.
 

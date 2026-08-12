@@ -1,0 +1,50 @@
+description = "Where the time goes inside a search — phase split, candidate acceptance, MLP batch sweep"
+
+mode = "single"
+ordering = "sequential"
+
+# Builds with sa-index's `metrics` feature, which swaps the searcher's zero-sized counters for real
+# atomics. That is the only way to get the phase split and the candidate counts, and it perturbs
+# what it measures: ~2% at mlp_batch=1, well under 1% at the default batch of 16. Read the SHAPE of
+# the numbers here, never their absolute throughput — `defaults` is what measures throughput.
+metrics = true
+
+notes = """
+This suite is diagnostic. Its qps figures come from an instrumented binary and are NOT the
+throughput this version delivers; use the `defaults` suite for that.
+
+What it answers:
+
+  * `bounds` vs `iter` — is search stalling in the binary search (a dependent pointer chain, which
+    no prefetch can help and which only the k-mer table shortens) or in the contiguous scan over the
+    matched SA range (where readahead and prefetch distance apply)? These two counters accumulate
+    across ALL rayon threads while `search` is wall-clock, so comparing them to wall time is
+    meaningless — it exceeds it by the parallelism factor. The meaningful quantity is their share of
+    each other; the wall-clock ratio is reported separately as effective parallelism.
+  * `accept%` — candidates examined against candidates accepted. This settles whether tryptic's
+    slowdown is "work is already minimal, the hit rate is just low" or "unbounded exhaustive
+    scanning", which need opposite fixes.
+  * the MLP batch sweep — how much cross-query batching still buys on this machine. Batching
+    interleaves B independent peptide searches per rayon task to hide random-access DRAM latency;
+    B=1 is scalar. The production default is the value `defaults` measures.
+"""
+
+[defaults]
+runs = 20
+amount = 10000
+peptides = "mixed"
+kmer_table = "k5"
+warmup = "all:100000"
+
+# `[axes.tune]` sweeps SearchTuning fields; the names are whatever that struct has
+# (`sa-benchmarks --help-tuning` lists them), not a list this driver maintains.
+[axes.tune]
+mlp_batch = [1, 4, 8, 16, 32, 64, 128]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]

@@ -11,6 +11,7 @@ mod test_helpers;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
 use sa_mappings::proteins::{Proteins, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use serde::{Deserialize, Serialize};
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
 
 use crate::{
@@ -161,17 +162,46 @@ pub const MAX_VALIDATE_BATCH: usize = 256;
 /// peptides grow normally.
 pub(crate) const MAX_RESULT_PREALLOC: usize = 4096;
 
-/// Runtime-tunable batch and prefetch-lookahead sizes for the search and retrieval hot
-/// paths. Every field is a pure performance knob: results are identical for any setting
-/// (asserted by `test_tuning_does_not_change_results`).
+/// Every runtime performance knob the searcher has, in one place.
 ///
-/// All three defaults are confirmed by the run3 full-DB sweep (3 peptide-length buckets x
-/// {preloaded, mmap} x {fast-path, validating} baselines, 20 reps, 3.9% noise floor). Two
-/// knobs that the same sweep found dead were removed rather than left to be re-measured:
-/// `retrieval_batch` (cross-query batched retrieval, median +1.7%) and `scalar_kmer_prefetch`
-/// (+0.3%).
-#[derive(Clone, Copy, Debug)]
+/// Each field is a *pure* performance knob: results are identical for any setting (asserted by
+/// `test_tuning_does_not_change_results`). Nothing here changes an answer, only how long it takes
+/// to produce one.
+///
+/// Defaults are confirmed by the run3 full-DB sweep (3 peptide-length buckets x {preloaded, mmap} x
+/// {fast-path, validating} baselines, 20 reps, 3.9% noise floor). Two knobs that the same sweep
+/// found dead were removed rather than left to be re-measured: `retrieval_batch` (cross-query
+/// batched retrieval, median +1.7%) and `scalar_kmer_prefetch` (+0.3%).
+///
+/// # Adding a knob
+///
+/// Add a field here, give it a default, and document what measurement justified that default. That
+/// is the whole change: the struct is `Serialize`/`Deserialize`, so the benchmark harness records
+/// every field into its output and accepts `--tune <field>=<value>` for any of them without being
+/// modified, and the benchmark report picks the new knob up on its own — as a swept axis if a suite
+/// declares `tune.<field>`, and otherwise in the line stating what was held and at what value.
+///
+/// `deny_unknown_fields` is what makes a typo in `--tune` an error instead of a silently ignored
+/// setting, which would otherwise read as "this knob does nothing".
+///
+/// # What does not belong here
+///
+/// Only things the *searcher* reads. `RAYON_NUM_THREADS` is the notable exclusion: rayon's global
+/// pool is built once per process, before any searcher exists, so a field here could not affect it.
+/// It stays an environment variable, set per benchmark cell by the driver and recorded alongside
+/// these values in the report.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SearchTuning {
+    /// Peptides interleaved per rayon task, for cross-query memory-level parallelism.
+    ///
+    /// `> 1` runs `search_matching_suffixes_batched` over chunks of this size; `1` runs the scalar
+    /// path, one peptide per task. See `DEFAULT_MLP_BATCH` for why the default is 16.
+    ///
+    /// Unlike the other fields this one is read at the top of the search rather than in a hot loop:
+    /// it selects how the work is decomposed, not how memory is walked. It lives here anyway so
+    /// that every knob is recorded, swept and reported through one mechanism.
+    pub mlp_batch: usize,
     /// Candidates per two-pass validation batch in `iterate_sa_range`.
     /// Clamped to `1..=MAX_VALIDATE_BATCH`.
     ///
@@ -180,41 +210,36 @@ pub struct SearchTuning {
     /// 32 wins in 1/6 and 128 wins in 5/6 but never above the noise floor, and 128 regresses
     /// long peptides on the preloaded backend by 2.7%. Do not lower it below 32.
     pub validate_batch: usize,
-    /// Minimum SA range size before `iterate_sa_range` uses two-pass validation
-    /// instead of a straight loop.
+    /// Minimum SA range size, in entries, before `iterate_sa_range` and
+    /// `iterate_extended_sa_range` use two-pass validation instead of a straight loop.
+    ///
+    /// This is the gate on the *candidate-validation* path, and the partner of
+    /// `validate_batch`: that one sets the batch size, this one decides whether a range is big
+    /// enough to batch at all. It does not reach retrieval, which prefetches unconditionally at
+    /// `retrieval_prefetch_distance`. Below the threshold the two-pass overhead exceeds the
+    /// latency it hides, so the scalar loop runs and `validate_batch` has no effect.
     ///
     /// Swept over {8, 16, 32, 64}: median full-range swing +0.9%, inside the noise floor
-    /// everywhere. Left tunable for re-measurement on other hardware, not because 32 is
-    /// known to be special.
-    pub validate_prefetch_threshold: usize,
+    /// everywhere. Note what that sweep could and could not see — every value in it leaves the
+    /// two-pass path on for ranges above 64 and off for ranges below 8, so it priced the
+    /// crossover, never the mechanism. Left tunable for re-measurement on other hardware, not
+    /// because 32 is known to be special.
+    pub prefetch_threshold: usize,
     /// Prefetch look-ahead distance (in suffixes) inside protein retrieval.
     ///
     /// Swept over {8, 16, 32, 64}: median full-range swing +1.2%, inside the noise floor
-    /// everywhere. Same caveat as `validate_prefetch_threshold`.
-    pub retrieval_prefetch_distance: usize,
-    /// Issue `madvise(MADV_WILLNEED)` over an SA range before scanning it.
-    ///
-    /// **Off by default, and measured not worth enabling.** Under a memory ceiling it does remove
-    /// 23-25% of major faults, but the throughput that buys decays to nothing as threads rise
-    /// (+12.0% at the core count, ~0% at 96), because oversubscription already overlaps those
-    /// faults; and it costs -3.7% with the index resident. Full numbers on
-    /// `MmapBackedSA::advise_willneed_range`, which also records the -16.8% regression that got
-    /// the first version of this removed.
-    ///
-    /// Kept as a knob for the two cases that could still favour it: slower storage, and running
-    /// at the core count where `RAYON_NUM_THREADS` cannot be raised.
-    ///
-    /// A no-op on the preloaded backend, where the trait method is the default no-op.
-    pub willneed: bool
+    /// everywhere. Same caveat as `prefetch_threshold`, and one of its own: a query matching
+    /// fewer suffixes than the distance issues no prefetches at all, at any value in that sweep.
+    pub retrieval_prefetch_distance: usize
 }
 
 impl Default for SearchTuning {
     fn default() -> Self {
         Self {
+            mlp_batch: DEFAULT_MLP_BATCH,    // the 8-16 knee; 32/64 regress short peptides
             validate_batch: 64,              // confirmed by run3; 16 costs ~10%, 128 gains nothing
-            validate_prefetch_threshold: 32, // measured flat over 8..64
-            retrieval_prefetch_distance: 32, // measured flat over 8..64
-            willneed: false                  // regressed when resident; unmeasured under a cap
+            prefetch_threshold: 32,          // measured flat over 8..64
+            retrieval_prefetch_distance: 32  // measured flat over 8..64
         }
     }
 }
@@ -644,7 +669,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         max_matches: usize
     ) -> bool {
         let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
-        let prefetch_threshold = self.tuning.validate_prefetch_threshold;
+        let prefetch_threshold = self.tuning.prefetch_threshold;
         let needs_span = !equate_il && !il_locations.is_empty();
 
         let mut examined = 0u64;
@@ -740,7 +765,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
         // Default 32: the minimum range for a prefetch to resolve before use. Below this the
         // two-pass overhead exceeds the latency-hiding benefit.
-        let prefetch_threshold = self.tuning.validate_prefetch_threshold;
+        let prefetch_threshold = self.tuning.prefetch_threshold;
 
         // Resolve the query-invariant half of the tryptic predicate once per peptide rather
         // than once per candidate — this loop runs `max_matches / acceptance_rate` times.
@@ -1242,14 +1267,17 @@ mod tests {
     type TuningRow = (usize, &'static str, Vec<i64>, Vec<(u32, String)>);
 
     fn tuning_run(
-        searcher: &Searcher<SuffixArray>,
+        searcher: &mut Searcher<SuffixArray>,
         peptides: &[&[u8]],
         equate_il: bool,
         tryptic: bool
     ) -> Vec<TuningRow> {
         let mut out = Vec::new();
         for mlp_batch in [1usize, 16] {
-            let results = searcher.search_all_matching_suffixes(peptides, 64, equate_il, tryptic, mlp_batch);
+            // `mlp_batch` is part of the tuning now, so it is set the same way as every other knob.
+            // The caller's outer loop reassigns the whole struct, so this override does not leak.
+            searcher.tuning.mlp_batch = mlp_batch;
+            let results = searcher.search_all_matching_suffixes(peptides, 64, equate_il, tryptic);
             let tags: Vec<&'static str> = results
                 .iter()
                 .map(|r| match r {
@@ -1297,7 +1325,7 @@ mod tests {
         ];
 
         // The fixture must actually reach both scan paths, otherwise sweeping validate_batch
-        // and validate_prefetch_threshold proves nothing. "AA" must exceed the largest swept
+        // and prefetch_threshold proves nothing. "AA" must exceed the largest swept
         // threshold (and the largest swept batch, so the batch refills); "MWYFQ" must fall
         // below the smallest non-zero one.
         match fixtures[0].1.search_bounds(b"AA") {
@@ -1328,26 +1356,24 @@ mod tests {
                     );
 
                     for validate_batch in [1usize, 16, 64, MAX_VALIDATE_BATCH] {
-                        for validate_prefetch_threshold in [0usize, 8, 32] {
+                        for prefetch_threshold in [0usize, 8, 32] {
                             for retrieval_prefetch_distance in [1usize, 8, 32] {
-                                // `willneed` only decides whether readahead is *requested* for a
-                                // range about to be read anyway, so it must never change which
-                                // suffixes come back. It is swept here for exactly that reason.
-                                for willneed in [false, true] {
-                                    let tuning = SearchTuning {
-                                        validate_batch,
-                                        validate_prefetch_threshold,
-                                        retrieval_prefetch_distance,
-                                        willneed
-                                    };
-                                    searcher.tuning = tuning;
-                                    assert_eq!(
-                                        tuning_run(searcher, &peptides, equate_il, tryptic),
-                                        expected,
-                                        "{name}: results changed (il={equate_il} tr={tryptic}) \
-                                         for {tuning:?}"
-                                    );
-                                }
+                                // Functional update, so adding a knob to `SearchTuning` does not
+                                // break this test — the new field simply starts at its default
+                                // until someone sweeps it here too.
+                                let tuning = SearchTuning {
+                                    validate_batch,
+                                    prefetch_threshold,
+                                    retrieval_prefetch_distance,
+                                    ..SearchTuning::default()
+                                };
+                                searcher.tuning = tuning;
+                                assert_eq!(
+                                    tuning_run(searcher, &peptides, equate_il, tryptic),
+                                    expected,
+                                    "{name}: results changed (il={equate_il} tr={tryptic}) \
+                                     for {tuning:?}"
+                                );
                             }
                         }
                     }

@@ -1,0 +1,69 @@
+description = "What each storage configuration costs before it can answer the first query"
+
+mode = "single"
+ordering = "sequential"
+
+notes = """
+Load time is a property of one invocation, not of a rep, so every configuration is loaded once with
+a trivial query workload and the numbers come from the harness's own `startup` section. There is
+nothing to gain from running this at 100 reps.
+
+Preloading a structure does not make its cost go away — it moves it from page faults spread across
+the steady state into one bulk copy at startup. Compare the `total` column, never the `load` column
+alone, and read this suite together with the throughput the same configuration reaches in `ram`.
+
+PAGE CACHE, read before interpreting: after the first configuration has run, the index files are in
+the page cache, so every later load is doing memcpy rather than disk I/O. That is the right number
+for "how long does a restart take on a warm box" and the WRONG one for "how long does the first boot
+after a deploy take". Pass --cold (needs root) for the latter, and expect the sweep to take much
+longer.
+
+The preloaded arm has nothing mapped to touch, so its page-touch warmup degrades to a small pipeline
+warmup automatically; its `warmup` column is therefore not comparable with the mapped arms'.
+"""
+
+[defaults]
+runs = 1
+amount = 100
+peptides = "mixed"
+kmer_table = "k5"
+warmup = "all"
+
+# All nine configurations: everything preloaded, everything mapped, and the seven mixtures. A
+# feature that is declared but not forwarded through every crate produces a byte-identical binary,
+# which the build step rejects — that check is why every one of these rows means something.
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text"]
+
+[[arms]]
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-mapping"]
+
+[[arms]]
+name = "ptext+pprot"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext+pmap"
+features = ["mmap", "preloaded-text", "preloaded-mapping"]
+
+[[arms]]
+name = "pprot+pmap"
+features = ["mmap", "preloaded-proteins", "preloaded-mapping"]
+
+[[arms]]
+name = "all3"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

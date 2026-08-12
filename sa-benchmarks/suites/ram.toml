@@ -1,0 +1,66 @@
+description = "How the storage arms scale as the RAM ceiling falls, and where they cross over"
+
+mode = "single"
+# Palindromic within each ceiling: comparisons are made within a level, so drift across levels does
+# not matter, but drift inside one does — and the storage-axes run showed the per-cell slot spread
+# was the statistic that separated the real effects from the noise.
+ordering = "palindrome"
+needs_root = true
+drop_caches = true
+
+notes = """
+The storage-axes A/B put preloaded-proteins 21.5% ahead — but it ran with the whole index resident,
+which is the one regime where mmap has no advantage to show. Preloaded metadata is non-evictable
+anonymous memory, so under pressure it displaces file-backed cache for the suffix array and the
+mapping, both bigger and hotter per query. This sweeps the ceiling down and looks for the crossover.
+
+Read the columns in this order:
+
+  * `slots` is the gap between a cell's own two invocations. A delta smaller than it is not an
+    answer for that ceiling — that is the lesson from the storage-axes run, where the real effects
+    had 0.1-2.1% spreads and the noise had 6.8-12.9%.
+  * `drift` is the first quarter of reps against the last. A capped cell begins with the cache the
+    page sweep left behind and climbs; a large positive drift means it had not reached steady state,
+    so its median understates that arm. Both arms drifting similarly is fine.
+  * `majflt` is the mechanism. If throughput falls while major faults stay flat, residency is not
+    what changed and something else is being measured (reclaim CPU, huge-page breakup).
+  * `RSS GB` should track the ceiling once constrained. If it does not, the cap did not apply and
+    the cell is void — check that the page cache was actually dropped.
+
+`--no-theoretical-memory` is on for every cell. That calculation walks every protein's metadata,
+which on an mmap backend faults the whole metadata section in before anything is timed: it would
+pre-warm exactly what the mmap arm should be faulting on demand, and spend the budget being measured.
+
+The 6-mer table is attached to both arms. It removes the top ~21 of ~34 binary-search probes, which
+is exactly the phase that degrades under a cap, so a sweep with it and a sweep without it answer
+different questions. Under a ceiling the 6-mer is +18.4% and -27.9% major faults against no table
+where a 5-mer is +3.2% / -6.2% — the table's value here is working-set size (~1 SA page per query at
+k=6 against ~7 at k=5), not probe count, and that only matters once pages can be evicted.
+
+MADV_WILLNEED over the SA range was swept here and has since been removed from the searcher: the
+advice lands (majflt -23-25%) but buys nothing above the core count, and costs 3.7% resident. See
+the comment where it lived in `sa-index/src/array/mmap.rs` before re-opening that question. The
+reading rule generalises to anything readahead-shaped — check majflt before qps: majflt down with
+minflt up means the advice landed; majflt flat means it never took effect and any qps change is
+syscall cost or noise.
+"""
+
+[defaults]
+runs = 100
+amount = 10000
+peptides = "mixed"
+kmer_table = "k6"
+warmup = "all:1000000"
+no_theoretical_memory = true
+
+[axes]
+# GB; 0 = unconstrained. Adjust to the box — these bracket a ~223 GB index on a 295 GB machine.
+ceiling_gb = [0, 223, 167, 140, 112, 78]
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

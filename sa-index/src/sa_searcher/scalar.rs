@@ -17,18 +17,6 @@ use super::{
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
-    /// Queues readahead over an SA range about to be scanned, when `SearchTuning::willneed` is on.
-    ///
-    /// The gate lives here rather than in the backend so the policy is in one place, and it costs
-    /// the preloaded backend nothing: its trait method is the default no-op. The branch is per
-    /// *range*, not per entry.
-    #[inline]
-    pub(crate) fn advise_sa_range(&self, start: usize, end: usize) {
-        if self.tuning.willneed {
-            self.sa.advise_willneed_range(start, end);
-        }
-    }
-
     /// Binary search within the SA window `[left, right)` for the minimum or maximum bound
     /// of `search_string`.
     ///
@@ -239,9 +227,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
-                // One advice call for the whole contiguous range, before any branch below walks
-                // it. Gated: see `SearchTuning::willneed`.
-                self.advise_sa_range(min_bound, max_bound);
                 let t_iter = Timer::start();
 
                 // Fast-path: when equate_il=true, !tryptic, and skip=0, every entry in the SA
@@ -321,7 +306,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 self.search_bounds_ns.add(t_bounds.elapsed_ns());
 
                 if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
-                    self.advise_sa_range(min_bound, max_bound);
                     let t_iter = Timer::start();
                     let hit_max = self.iterate_extended_sa_range(
                         self.sa.iter_range(min_bound, max_bound),

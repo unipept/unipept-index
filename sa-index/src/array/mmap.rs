@@ -71,51 +71,16 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len);
     }
 
-    /// Queues asynchronous readahead over the pages holding entries `start..end`.
-    ///
-    /// # This regressed badly once already — read before enabling it
-    ///
-    /// A per-query `MADV_WILLNEED` over the k-mer SA range was tried and *regressed* the mmap
-    /// backend by **-16.8% qps** (5-mer, 26-50aa, batch=16) even though the pages were already
-    /// resident. Average range size is ~54 KB for a 5-mer vs ~2.7 KB for a 6-mer (37.2e9 SA
-    /// entries / 20^5 vs 20^6), and every rayon thread contends on the same VMA's `mmap_lock` to
-    /// issue the advice — the penalty scales with range size, matching the observed
-    /// 5-mer-hurts / 6-mer-roughly-even split. On an index whose pages are already touched the
-    /// syscall buys nothing and the lock contention is pure cost.
-    ///
-    /// It was retried under a memory ceiling, where readahead *can* help, and measured
-    /// (2026-08-11, 167 GB and 112 GB ceilings, 6-mer table, 40 reps/cell):
-    ///
-    /// **The advice works and is still not worth enabling.** Major faults fall 23-25% at every
-    /// thread count and both ceilings — readahead lands, and what was a disk stall becomes a soft
-    /// fault. But the throughput it buys decays as threads rise (+12.0% at the core count, +3.8%
-    /// at 24, ~0% at 48-96), because oversubscription and readahead are **substitutes**: once ~55
-    /// faults are already in flight across 96 threads, removing a quarter of them changes little.
-    /// It also does not let the thread count come down — both curves still peak at 96 — which was
-    /// the question worth asking, since oversubscription costs 8-10% when RAM is ample.
-    ///
-    /// Resident, it costs **-3.7%** with a 6-mer table. That is the same effect as the original
-    /// -16.8%, scaled: the earlier run used a 5-mer table whose ranges are ~20x larger, and the
-    /// penalty was diagnosed as scaling with range size. The old diagnosis predicted this.
-    ///
-    /// Left in place, off, because two things could change the answer: slower storage, where each
-    /// avoided fault is worth more; and running at the core count, where +12.0% is real for anyone
-    /// who cannot set `RAYON_NUM_THREADS`. If it is ever retried at scale, the thing to fix first
-    /// is the syscall count — `process_madvise` (Linux 5.10+) collapses a batch of ranges into one
-    /// call — not the placement of the advice.
-    #[cfg(unix)]
-    fn advise_willneed_range(&self, start: usize, end: usize) {
-        if start >= end || end > self.len {
-            return;
-        }
-        let lo = self.data_offset + (start * self.bits_per_value) / 8;
-        // +8 so a value straddling the final u64 boundary is covered; see `get`.
-        let hi = (self.data_offset + (end * self.bits_per_value).div_ceil(8) + 8).min(self.mmap.len());
-        if hi > lo {
-            // Advisory only: a failure costs nothing but the missed readahead.
-            let _ = self.mmap.advise_range(memmap2::Advice::WillNeed, lo, hi - lo);
-        }
-    }
+    // Do not add a `MADV_WILLNEED` over the SA range before scanning it. Tried twice, removed
+    // twice. Resident it is pure cost — -16.8% qps with a 5-mer table, -3.7% with a 6-mer —
+    // because every rayon thread contends on the same VMA's `mmap_lock` and the penalty scales
+    // with range size (~54 KB per 5-mer range vs ~2.7 KB per 6-mer). Under a memory ceiling the
+    // advice does land: major faults fall 23-25% at both a 167 GB and a 112 GB cap. But the
+    // throughput that buys decays as threads rise (+12.0% at the core count, ~0% at 48-96),
+    // because oversubscription and readahead are substitutes — with ~55 faults already in flight
+    // across 96 threads, removing a quarter of them changes little — and it does not let the
+    // thread count come down. If it is ever retried, fix the syscall count first with
+    // `process_madvise` (Linux 5.10+).
 }
 
 impl ReadBinaryMmap for MmapBackedSA {

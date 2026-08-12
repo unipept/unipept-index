@@ -1,0 +1,23 @@
+# The master run: every suite in one session, into one report.
+#
+# Not a suite — it has no arms or axes of its own. `run.sh all` reads this to decide what to run, in
+# what order, and what to do when this machine cannot run part of it.
+
+description = "Everything: one session, one report characterising this commit"
+
+# Cheapest and root-free first, so a session that is going to fail on privileges has already
+# produced the throughput numbers by the time it gets there. `defaults` leads because it is the
+# regression gate: if it moved, the rest is context for why.
+order = ["defaults", "detail", "startup", "ram", "threads"]
+
+# Suites that need root. When it is unavailable they are SKIPPED and the report says so in their
+# section — never omitted, which would read as "nothing to report here".
+optional = ["ram", "threads"]
+
+# Headline numbers lifted into the summary at the top of the report.
+[headline]
+# Configuration whose throughput represents "what this version does": production defaults.
+defaults_kmer = 5
+defaults_batch = 16
+defaults_equate_il = true
+defaults_tryptic = false

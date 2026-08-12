@@ -10,6 +10,9 @@ benchmarks/
 scripts/
 docs/
 sa-benchmarks/summary/
+# Machine-specific paths (index dir, peptide files, scratch). profiles/example.toml is the template.
+sa-benchmarks/profiles/local.toml
+__pycache__/
 *.log
 
 # Tooling scratch space.
