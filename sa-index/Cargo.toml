@@ -6,11 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-mmap = ["dep:memmap2", "sa-mappings/mmap", "text-compression/mmap"]
-# Per-structure overrides; see the crate docs. No-ops without `mmap`.
-preloaded-text = ["sa-mappings/preloaded-text", "text-compression/preloaded-text"]
-preloaded-proteins = ["sa-mappings/preloaded-proteins"]
-preloaded-mapping = []
 # Hot-path instrumentation (phase timings + candidate acceptance counters on `Searcher`).
 # Off by default: the clock reads and the atomic RMWs on searcher-wide cache lines perturb
 # the very measurement they exist to produce (~2% at mlp_batch=1). With the feature off the
@@ -22,7 +17,7 @@ metrics = []
 tempfile = "3"
 
 [dependencies]
-memmap2 = { version = "0.9", optional = true }
+memmap2 = "0.9"
 rayon = "1.8.1"
 serde = { version = "1.0.197", features = ["derive"] }
 prefetch = { path = "../prefetch" }

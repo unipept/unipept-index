@@ -1,14 +1,12 @@
 //! Runtime dispatch over the three owned-memory mapping representations.
 //!
-//! Compiled in *both* configurations, despite only being selected as
-//! [`SuffixToProteinMapping`](super::SuffixToProteinMapping) in the preloaded one: these types own
-//! the `WriteBinary` implementations that produce the files the mmap backend reads, so
-//! `sa-builder` needs them either way. The tag-sniffing `read_binary` below is the single place
-//! that decides which of the three a file holds.
+//! These types own the `WriteBinary` implementations that produce the files *either* backend
+//! reads, which is why `sa-builder` names only them. The tag-sniffing `read_binary` below is the
+//! single place that decides which of the three a file holds.
 
-use std::error::Error;
+use std::{error::Error, path::Path};
 
-use crate::ReadBinary;
+use crate::{LoadIndex, ReadBinary};
 
 pub mod bitvec;
 pub mod dense;
@@ -43,6 +41,12 @@ impl ReadBinary for InMemorySuffixToProteinMapping {
             2 => Ok(InMemorySuffixToProteinMapping::BitVec(bitvec::read_bitvec_mapping(reader)?)),
             t => Err(format!("Unknown mapping type byte: {}", t).into())
         }
+    }
+}
+
+impl LoadIndex for InMemorySuffixToProteinMapping {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        text_compression::load_owned(path)
     }
 }
 

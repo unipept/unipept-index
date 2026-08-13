@@ -9,7 +9,7 @@ use clap::Parser;
 use rand::Rng;
 use sa_index::ProteinsBackend as _;
 use sa_server::load_proteins_file;
-use text_compression::ProteinTextBackend as _;
+use text_compression::ProteinTextBackend;
 
 /// Characters that delimit protein boundaries in the text.
 /// b'-' is SEPARATION_CHARACTER, b'$' is TERMINATION_CHARACTER.
@@ -45,7 +45,7 @@ struct Args {
 
 /// Scans `text` once and returns all protein runs as `(start, len)` pairs,
 /// keeping only runs whose length is at least `min_len`.
-fn collect_protein_runs(text: &text_compression::ProteinText, min_len: usize) -> Vec<(usize, usize)> {
+fn collect_protein_runs<T: ProteinTextBackend>(text: &T, min_len: usize) -> Vec<(usize, usize)> {
     let total = text.len();
     let mut runs = Vec::new();
     let mut run_start = 0usize;
@@ -70,7 +70,7 @@ fn collect_protein_runs(text: &text_compression::ProteinText, min_len: usize) ->
     runs
 }
 
-fn sample_peptides(text: &text_compression::ProteinText, amount: usize, min_len: usize, max_len: usize) -> Vec<String> {
+fn sample_peptides<T: ProteinTextBackend>(text: &T, amount: usize, min_len: usize, max_len: usize) -> Vec<String> {
     let runs = collect_protein_runs(text, min_len);
 
     // Prefix sums over the number of valid start positions per run.

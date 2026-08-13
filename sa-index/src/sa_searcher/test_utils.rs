@@ -2,57 +2,44 @@
 //!
 //! # Why these go through files
 //!
-//! The searcher is generic over the three storage backends, and the `mmap` / `preloaded-*`
-//! features pick which ones [`SuffixArray`], `Proteins` and [`SuffixToProteinMapping`] name — nine
-//! combinations in all. A fixture that constructed a backend directly could therefore only ever
-//! build the preloaded one, which is why these tests used to be gated off under `--features mmap`
-//! and never ran in the configuration that ships.
+//! The searcher is generic over its three storage backends, and both implementations of each are
+//! always compiled, so a fixture can build *any* of the sixteen combinations. What it cannot do is
+//! construct a mapped backend directly: those types only come into existence by reading a file.
 //!
-//! So they build the way production does instead: the always-compiled preloaded types write the
-//! three files `sa-builder` writes, and [`load_fixture`] reads each one back through whichever
-//! loader the active build selects — the same predicates `sa-server`'s `load_by_backend!` uses.
-//! Every test below then runs against the backends its build actually uses, and search results
-//! must be identical either way, which is the property worth testing.
+//! So the fixtures build the way production does. The owned types write the three files
+//! `sa-builder` writes, and each is read back through [`LoadIndex`], which every backend
+//! implements by whichever route it needs. The type parameters alone therefore decide the
+//! combination — there is no `#[cfg]` here, and none is mirrored from `sa-server`.
+//!
+//! Most tests want one combination and take the default, [`PreloadedSearcher`]. The one that wants
+//! all sixteen is `super::backend_agreement`, which asserts they answer identically.
 
 use std::{
     io::Write,
     ops::{Deref, DerefMut}
 };
 
-use sa_mappings::proteins::{InMemoryProteins, Protein, Proteins};
+use sa_mappings::proteins::{InMemoryProteins, Protein, ProteinsBackend};
 use tempfile::NamedTempFile;
-use text_compression::{InMemoryProteinText, WriteBinary};
+use text_compression::{InMemoryProteinText, LoadIndex, WriteBinary};
 
 use crate::{
-    KmerTable, SuffixArray,
-    array::OriginalSA,
+    KmerTable,
+    array::{InMemorySA, OriginalSA, SuffixArrayBackend},
     sa_searcher::Searcher,
     suffix_to_protein_index::{
-        BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping
+        BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein,
+        SuffixToProteinMappingBackend
     }
 };
 
-/// Reads a fixture file back as `$ty`, mapping it exactly when the active build would.
-///
-/// The predicates mirror `sa_server::load_by_backend!` one for one; keep them in step. Note the
-/// protein one in particular: `proteins.bin` holds both the metadata and the text, so it has to be
-/// *mapped* whenever either section is, not merely when the metadata is.
-macro_rules! load_fixture {
-    ($ty:ty, $file:expr, $mapped_when:meta) => {{
-        #[cfg($mapped_when)]
-        {
-            <$ty as text_compression::ReadBinaryMmap>::read_binary_mmap($file.path()).unwrap()
-        }
-        #[cfg(not($mapped_when))]
-        {
-            let mut reader = std::io::BufReader::new(std::fs::File::open($file.path()).unwrap());
-            <$ty as text_compression::ReadBinary>::read_binary(&mut reader).unwrap()
-        }
-    }};
-}
+/// Everything owned — the combination the ordinary tests use, named because three concrete type
+/// parameters are unreadable in a signature.
+pub(crate) type PreloadedSearcher =
+    Searcher<InMemorySA, InMemoryProteins<InMemoryProteinText>, InMemorySuffixToProteinMapping>;
 
 /// Serialises one structure to a temporary file. The caller keeps the handle alive for as long as
-/// the structure built from it is in use — under `mmap` the mapping borrows this file.
+/// the structure built from it is in use — a mapped backend borrows this file.
 fn write_fixture(value: impl WriteBinary) -> NamedTempFile {
     let mut tmp = NamedTempFile::new().unwrap();
     let mut buf = Vec::new();
@@ -62,31 +49,57 @@ fn write_fixture(value: impl WriteBinary) -> NamedTempFile {
     tmp
 }
 
-/// A fixture searcher, plus the files the active build may still be reading out of.
+/// A fixture searcher, plus the files its backends may still be reading out of.
 ///
-/// Under `mmap` the three structures borrow mappings of the temporary files below, so the handles
-/// have to outlive the searcher; a preloaded build has copied everything out and simply drops them
-/// at the end of the test. [`Deref`] keeps the wrapper invisible at the call sites.
-pub(crate) struct TestSearcher {
-    searcher: Searcher<SuffixArray>,
+/// A mapped backend borrows a mapping of one of the temporary files below, so the handles have to
+/// outlive the searcher; owned backends have copied everything out and simply drop them at the end
+/// of the test. [`Deref`] keeps the wrapper invisible at the call sites.
+///
+/// The parameters default to the owned types, so `TestSearcher` alone means
+/// [`PreloadedSearcher`].
+pub(crate) struct TestSearcher<
+    SA = InMemorySA,
+    P = InMemoryProteins<InMemoryProteinText>,
+    STPM = InMemorySuffixToProteinMapping
+> where
+    SA: SuffixArrayBackend,
+    P: ProteinsBackend,
+    STPM: SuffixToProteinMappingBackend
+{
+    searcher: Searcher<SA, P, STPM>,
     _backing: Vec<NamedTempFile>
 }
 
-impl Deref for TestSearcher {
-    type Target = Searcher<SuffixArray>;
+impl<SA, P, STPM> Deref for TestSearcher<SA, P, STPM>
+where
+    SA: SuffixArrayBackend,
+    P: ProteinsBackend,
+    STPM: SuffixToProteinMappingBackend
+{
+    type Target = Searcher<SA, P, STPM>;
 
     fn deref(&self) -> &Self::Target {
         &self.searcher
     }
 }
 
-impl DerefMut for TestSearcher {
+impl<SA, P, STPM> DerefMut for TestSearcher<SA, P, STPM>
+where
+    SA: SuffixArrayBackend,
+    P: ProteinsBackend,
+    STPM: SuffixToProteinMappingBackend
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.searcher
     }
 }
 
-impl TestSearcher {
+impl<SA, P, STPM> TestSearcher<SA, P, STPM>
+where
+    SA: SuffixArrayBackend,
+    P: ProteinsBackend,
+    STPM: SuffixToProteinMappingBackend
+{
     /// Forwards to [`Searcher::with_kmer_table`], which consumes the searcher and so cannot be
     /// reached through `Deref`.
     pub(crate) fn with_kmer_table(self, table: KmerTable) -> Self {
@@ -108,8 +121,19 @@ pub(crate) enum Mapping {
 }
 
 /// The one place a fixture searcher is built: write the three structures as `sa-builder` would,
-/// then read each back through the active build's loader.
-fn build_searcher(text: &str, proteins: Vec<Protein>, sa: Vec<i64>, sparseness: u8, mapping: Mapping) -> TestSearcher {
+/// then read each back as whichever backend the caller asked for.
+pub(crate) fn build_searcher<SA, P, STPM>(
+    text: &str,
+    proteins: Vec<Protein>,
+    sa: Vec<i64>,
+    sparseness: u8,
+    mapping: Mapping
+) -> TestSearcher<SA, P, STPM>
+where
+    SA: SuffixArrayBackend + LoadIndex,
+    P: ProteinsBackend + LoadIndex,
+    STPM: SuffixToProteinMappingBackend + LoadIndex
+{
     let protein_text = InMemoryProteinText::from_string(text);
 
     let mapping_file = match mapping {
@@ -121,13 +145,9 @@ fn build_searcher(text: &str, proteins: Vec<Protein>, sa: Vec<i64>, sparseness: 
     let proteins_file = write_fixture(InMemoryProteins::new(protein_text, proteins));
 
     let searcher = Searcher::new(
-        load_fixture!(SuffixArray, sa_file, feature = "mmap"),
-        load_fixture!(
-            Proteins,
-            proteins_file,
-            all(feature = "mmap", not(all(feature = "preloaded-text", feature = "preloaded-proteins")))
-        ),
-        load_fixture!(SuffixToProteinMapping, mapping_file, all(feature = "mmap", not(feature = "preloaded-mapping")))
+        SA::load(sa_file.path()).unwrap(),
+        P::load(proteins_file.path()).unwrap(),
+        STPM::load(mapping_file.path()).unwrap()
     );
 
     TestSearcher {
@@ -141,10 +161,10 @@ fn build_searcher(text: &str, proteins: Vec<Protein>, sa: Vec<i64>, sparseness: 
 /// Text `"AI-CLACVAA-AC-KCRLY$"` = four proteins (separated by `-`): `AI`, `CLACVAA`,
 /// `AC`, `KCRLY`. Each is given a distinct taxon id (10/20/30/40) and uniprot id so
 /// retrieval tests can assert which protein a suffix maps to.
-const EXAMPLE_TEXT: &str = "AI-CLACVAA-AC-KCRLY$";
+pub(crate) const EXAMPLE_TEXT: &str = "AI-CLACVAA-AC-KCRLY$";
 
 /// Four proteins with distinct taxa, matching [`EXAMPLE_TEXT`]'s separators.
-fn example_protein_list() -> Vec<Protein> {
+pub(crate) fn example_protein_list() -> Vec<Protein> {
     (0..4)
         .map(|i| Protein {
             uniprot_id: format!("P{i}"),

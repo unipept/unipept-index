@@ -1,24 +1,29 @@
 #![warn(missing_docs)]
-//! The three traits every on-disk index structure implements.
+//! The four traits every on-disk index structure implements.
 //!
-//! An index is built once by `sa-builder` and then read by `sa-server` in one of two
-//! configurations, so each structure has one writer and two readers:
+//! An index is built once by `sa-builder` and then read back through one of two backends, so each
+//! structure has one writer and two readers:
 //!
 //! * [`WriteBinary`] — serialise. Implemented once per structure, by the preloaded type, and used
 //!   by `sa-builder` regardless of which backend will later read the file.
 //! * [`ReadBinary`] — deserialise into owned memory. The preloaded backend.
 //! * [`ReadBinaryMmap`] — map the file and decode fields in place. The mmap backend.
+//! * [`LoadIndex`] — load by whichever of the two routes that concrete type uses, so that code
+//!   generic over the backends does not have to know which.
 //!
 //! Because the writer lives with the preloaded type but its output is also consumed by an mmap
 //! reader in a different module, the two are easy to drift apart. Every format is therefore
-//! documented at its *writer*, and each reader points back at it.
+//! documented at its *writer*, and each reader points back at it. `sa-builder` names only the
+//! preloaded types for exactly this reason: one writer per structure, whichever backend reads it
+//! later.
 //!
 //! These traits live in their own crate so that `sa-index`, `sa-mappings` and `text-compression`
 //! can implement them for each other's types without a dependency cycle.
 
 use std::{
     error::Error,
-    io::{BufRead, Write},
+    fs::File,
+    io::{BufRead, BufReader, Write},
     path::Path
 };
 
@@ -62,6 +67,38 @@ pub trait ReadBinary: Sized {
 pub trait ReadBinaryMmap: Sized {
     /// Maps the file at `path` and decodes its header, borrowing the payload from the mapping.
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>>;
+}
+
+/// Loads a structure from an index file, by whichever of the two routes above it uses.
+///
+/// [`ReadBinary`] and [`ReadBinaryMmap`] describe *how* a structure is decoded; this describes how
+/// to get one from a path without knowing which applies. Each concrete type has exactly one route
+/// and therefore exactly one implementation: an owned type opens the file and streams it, a mapped
+/// one maps it.
+///
+/// # Why this exists
+///
+/// A bound cannot say "implements `ReadBinary` *or* `ReadBinaryMmap`", so without this trait no
+/// function can be generic over the storage backends — which is what the searcher's test fixtures
+/// need in order to exercise every combination in one build.
+///
+/// It also puts a fact in the type system that used to be a hand-maintained `#[cfg]` predicate:
+/// `proteins.bin` holds both the protein text and the metadata table, so it must be *mapped*
+/// whenever either section is mapped, not merely when the metadata is. That is now expressed by
+/// which of the four `InMemory`/`MmapBacked` protein pairings implements this trait through which
+/// route; see `sa_mappings::proteins::mmap`.
+pub trait LoadIndex: Sized {
+    /// Loads the structure stored at `path`.
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>>;
+}
+
+/// Opens `path` and reads one structure out of it, for [`LoadIndex`] impls that take the owned
+/// route.
+///
+/// Every such impl is a one-line call to this, so the buffering is decided once here rather than
+/// per structure.
+pub fn load_owned<T: ReadBinary>(path: &Path) -> Result<T, Box<dyn Error>> {
+    T::read_binary(&mut BufReader::new(File::open(path)?))
 }
 
 #[cfg(test)]

@@ -14,9 +14,9 @@
 //! * **BitVec** — a bit per text position marking the separators and the terminator, with a rank
 //!   structure over it. Near-dense speed at ~1.25 bits per position; the default.
 //!
-//! Each has a preloaded and an mmap implementation, selected through the
-//! [`SuffixToProteinMapping`] alias: `mmap` maps it, and `preloaded-mapping` pulls this one
-//! structure back into owned memory while the rest of the index stays mapped. See the crate docs.
+//! Each has a preloaded and an mmap implementation, both always compiled and both wrapped by a
+//! dispatch enum — [`InMemorySuffixToProteinMapping`] and [`MmapBackedSuffixToProteinMapping`] —
+//! which is what a caller names to pick one. See the crate docs.
 
 /// Generates a [`SuffixToProteinMappingBackend`] impl that forwards each listed method to the
 /// active enum variant (`Dense`, `Sparse` or `BitVec`).
@@ -44,29 +44,17 @@ macro_rules! delegate_suffix_to_protein_mapping {
     };
 }
 
-#[cfg(feature = "mmap")]
 pub mod mmap;
 pub mod preloaded;
 #[cfg(test)]
 mod test_utils;
 
-#[cfg(feature = "mmap")]
 pub use mmap::{
     MmapBackedSuffixToProteinMapping, MmapBitVecSuffixToProtein, MmapDenseSuffixToProtein, MmapSparseSuffixToProtein
 };
 pub use preloaded::{
     BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein
 };
-
-/// Type alias — resolves to the active mapping backend for this build.
-#[cfg(all(feature = "mmap", not(feature = "preloaded-mapping")))]
-pub type SuffixToProteinMapping = MmapBackedSuffixToProteinMapping;
-/// Type alias — resolves to the active mapping backend for this build.
-///
-/// Owned memory either because this is a preloaded build, or because `preloaded-mapping` asked
-/// for this structure specifically.
-#[cfg(any(not(feature = "mmap"), feature = "preloaded-mapping"))]
-pub type SuffixToProteinMapping = InMemorySuffixToProteinMapping;
 
 /// Trait implemented by the SuffixToProtein mappings
 pub trait SuffixToProteinMappingBackend: Send + Sync {

@@ -185,21 +185,22 @@ pub fn search_all_peptides<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: Suf
 mod tests {
     use super::*;
 
-    #[cfg(not(feature = "mmap"))]
+    /// Built from the owned types directly rather than through `sa_searcher::test_utils`: this
+    /// tests the peptide-level API, not the storage backends, and the backends are already proved
+    /// interchangeable by `sa_searcher::backend_agreement`.
     #[test]
     fn test_search_all_peptides_matches_scalar_reference() {
-        use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
-        use text_compression::ProteinText;
+        use sa_mappings::proteins::{InMemoryProteins, Protein, ProteinsBackend as _};
+        use text_compression::InMemoryProteinText;
 
         use crate::{
-            SuffixArray,
-            array::OriginalSA,
-            suffix_to_protein_index::{BitVecSuffixToProtein, SuffixToProteinMapping}
+            array::{InMemorySA, OriginalSA},
+            suffix_to_protein_index::{BitVecSuffixToProtein, InMemorySuffixToProteinMapping}
         };
 
         // Example DB "AI-CLACVAA-AC-KCRLY$", sample rate 1 (so single characters are searchable).
-        let text = ProteinText::from_string("AI-CLACVAA-AC-KCRLY$");
-        let proteins = Proteins::new(text, vec![
+        let text = InMemoryProteinText::from_string("AI-CLACVAA-AC-KCRLY$");
+        let proteins = InMemoryProteins::new(text, vec![
             Protein {
                 uniprot_id: "P0".to_string(),
                 taxon_id: 10,
@@ -221,12 +222,12 @@ mod tests {
                 functional_annotations: vec![]
             },
         ]);
-        let sa = SuffixArray::Original(OriginalSA(
+        let sa = InMemorySA::Original(OriginalSA(
             vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
             1
         ));
         let stp = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::BitVec(stp));
 
         // Mixed case (normalisation), whitespace + empty (trim/length filter), a no-match ("ZZZ").
         let peptides: Vec<String> =

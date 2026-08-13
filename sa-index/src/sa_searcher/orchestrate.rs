@@ -64,12 +64,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        SuffixArray,
-        sa_searcher::{
-            SearchAllSuffixesResult, Searcher,
-            test_utils::{TestSearcher, example_searcher}
-        }
+    use crate::sa_searcher::{
+        SearchAllSuffixesResult,
+        test_utils::{PreloadedSearcher, TestSearcher, example_searcher}
     };
 
     /// A copy of `searcher` with `mlp_batch` set, so a test can compare batch sizes.
@@ -77,7 +74,7 @@ mod tests {
     /// The searcher is not cloneable and the tests only need to read it, so this takes it by
     /// reference and returns a view with one field of the tuning changed. `SearchTuning` is `Copy`,
     /// which is what makes that a two-line helper rather than a rebuild of the index.
-    fn with_batch(searcher: &Searcher<SuffixArray>, mlp_batch: usize) -> TestSearcher {
+    fn with_batch(searcher: &PreloadedSearcher, mlp_batch: usize) -> TestSearcher {
         let mut copy = example_searcher();
         copy.tuning = searcher.tuning;
         copy.tuning.mlp_batch = mlp_batch;

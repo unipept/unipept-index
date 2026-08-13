@@ -1,56 +1,37 @@
-//! `Proteins` — per-build concrete backends with a type alias.
+//! Protein metadata, in either of two backends.
 //!
 //! Submodules:
-//! - [`preloaded`] — [`InMemoryProteins`] (always available)
-//! - `mmap` — `MmapBackedProteins` (mmap builds only)
+//! - [`preloaded`] — [`InMemoryProteins`], the metadata table in owned memory
+//! - [`mmap`] — [`MmapBackedProteins`], the table borrowed from a mapping
 //!
-//! The alias [`Proteins`] resolves to the active backend.
+//! Both are always compiled; callers pick by naming a type. Everything that reads protein metadata
+//! is written against [`ProteinsBackend`].
 //!
 //! # Two independent axes
 //!
 //! Both structs are generic over their text backend, so the metadata and the text are stored
 //! independently: the metadata table is the biggest structure in the index and the text the
 //! hottest, and the best place for one is not the best place for the other. All four pairings
-//! load from the same `proteins.bin`, which holds both sections.
-//!
-//! `mmap` maps both; `preloaded-proteins` and `preloaded-text` pull back one section each. The
-//! alias below composes them by instantiating the proteins struct with `text_compression`'s own
-//! `ProteinText` alias, which has already resolved the text axis.
+//! load from the same `proteins.bin`, which holds both sections — and which reader each pairing
+//! needs is its own `LoadIndex` impl, since the file must be mapped whenever *either* section is.
 //!
 //! Everything both backends share lives here rather than in a submodule: the [`ProteinsBackend`]
 //! trait they implement, the [`Protein`] / [`ProteinRef`] pair a lookup returns, and the
 //! [`SEPARATION_CHARACTER`] and [`TERMINATION_CHARACTER`] delimiters that give the concatenated
 //! text its structure.
 
-#[cfg(feature = "mmap")]
 pub mod mmap;
 pub mod preloaded;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 
-#[cfg(feature = "mmap")]
+// ── Shared types ──────────────────────────────────────────────────────────────
+use fa_compression::algorithm1::decode;
 pub use mmap::MmapBackedProteins;
 pub use preloaded::InMemoryProteins;
-
-/// Type alias — resolves to the active metadata backend, holding the active text backend.
-///
-/// `ProteinText` is `text_compression`'s alias, so the text axis is already decided by the time
-/// it is substituted here and the two compose without a case per combination.
-#[cfg(all(feature = "mmap", not(feature = "preloaded-proteins")))]
-pub type Proteins = MmapBackedProteins<ProteinText>;
-/// Type alias — resolves to the active metadata backend, holding the active text backend.
-///
-/// Owned metadata either because this is a preloaded build, or because `preloaded-proteins` asked
-/// for the table specifically. Note the text may still be mapped underneath.
-#[cfg(any(not(feature = "mmap"), feature = "preloaded-proteins"))]
-pub type Proteins = InMemoryProteins<ProteinText>;
-
-// ── Shared types ──────────────────────────────────────────────────────────────
-
-use fa_compression::algorithm1::decode;
 // The I/O traits callers need, re-exported so they do not have to depend on `binary-traits`
 // directly. `text-compression` re-exports them from there for the same reason.
-pub use text_compression::{ProteinText, ProteinTextBackend, ReadBinary, ReadBinaryMmap, WriteBinary};
+pub use text_compression::{LoadIndex, ProteinTextBackend, ReadBinary, ReadBinaryMmap, WriteBinary};
 
 /// Byte placed between consecutive protein sequences in the concatenated text.
 ///

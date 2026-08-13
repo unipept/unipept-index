@@ -109,9 +109,9 @@ impl Default for SearchTuning {
 #[cfg(test)]
 mod tests {
     use super::{MAX_VALIDATE_BATCH, SearchTuning};
-    use crate::{
-        SuffixArray,
-        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher, test_utils::searcher_over_text}
+    use crate::sa_searcher::{
+        BoundSearchResult, SearchAllSuffixesResult,
+        test_utils::{PreloadedSearcher, searcher_over_text}
     };
 
     // The two-pass path's stack buffer is sized by the compile-time MAX_VALIDATE_BATCH; a
@@ -205,7 +205,7 @@ mod tests {
     type TuningRow = (usize, &'static str, Vec<i64>, Vec<(u32, String)>);
 
     fn tuning_run(
-        searcher: &mut Searcher<SuffixArray>,
+        searcher: &mut PreloadedSearcher,
         peptides: &[&[u8]],
         equate_il: bool,
         tryptic: bool

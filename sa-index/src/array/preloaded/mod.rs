@@ -1,14 +1,12 @@
 //! The two owned-memory suffix-array packings, and the runtime dispatch over them.
 //!
-//! Compiled in *both* configurations, despite only being selected as
-//! [`SuffixArray`](super::SuffixArray) in the preloaded one: these types own the `WriteBinary`
-//! implementations that produce the files the mmap backend reads, so `sa-builder` needs them
-//! either way. The header-sniffing `read_binary` below is the single place that decides whether a
-//! file holds a 64-bit or a compressed array.
+//! These types own the `WriteBinary` implementations that produce the files *either* backend
+//! reads, which is why `sa-builder` names only them. The header-sniffing `read_binary` below is
+//! the single place that decides whether a file holds a 64-bit or a compressed array.
 use std::{error::Error, io::BufRead};
 
 use bitarray::DynBitArrayRangeIter;
-use text_compression::{ReadBinary, WriteBinary};
+use text_compression::{LoadIndex, ReadBinary, WriteBinary};
 
 pub mod compressed;
 pub mod original;
@@ -130,6 +128,12 @@ impl ReadBinary for InMemorySA {
     }
 }
 
+impl LoadIndex for InMemorySA {
+    fn load(path: &std::path::Path) -> Result<Self, Box<dyn Error>> {
+        text_compression::load_owned(path)
+    }
+}
+
 impl WriteBinary for InMemorySA {
     fn write_binary<W: std::io::Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         dispatch!(self, write_binary(writer))
@@ -241,9 +245,9 @@ mod tests {
         assert!(!InMemorySA::Original(OriginalSA(vec![7], 1)).is_empty());
     }
 
-    /// The two storage backends read the same bytes and must answer identically; nothing else
-    /// compares them, and the searcher is written against whichever the build selects.
-    #[cfg(feature = "mmap")]
+    /// The two storage backends read the same bytes and must answer identically; the searcher is
+    /// written against whichever one it is handed. `sa_searcher::backend_agreement` makes the same
+    /// check end to end, but this one localises a failure to the array.
     #[test]
     fn agrees_with_the_mmap_backend() {
         use crate::array::mmap::test_utils::write_and_map;

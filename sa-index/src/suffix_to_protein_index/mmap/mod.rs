@@ -3,14 +3,12 @@
 //! Each answers out of the mapping itself rather than an owned structure, so a lookup is a page
 //! the kernel may still have to fault in. The layouts they read are the ones the matching
 //! `preloaded` types write, and are documented on both sides.
-//!
-//! This entire module is mmap-only.
 
 use std::{error::Error, path::Path};
 
 use memmap2::MmapOptions;
 
-use crate::ReadBinaryMmap;
+use crate::{LoadIndex, ReadBinaryMmap};
 
 pub mod bitvec;
 pub mod dense;
@@ -51,6 +49,12 @@ impl ReadBinaryMmap for MmapBackedSuffixToProteinMapping {
             2 => Ok(Self::BitVec(bitvec::read_bitvec_mmap(mmap)?)),
             t => Err(format!("Unknown mapping type byte: {}", t).into())
         }
+    }
+}
+
+impl LoadIndex for MmapBackedSuffixToProteinMapping {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        Self::read_binary_mmap(path)
     }
 }
 

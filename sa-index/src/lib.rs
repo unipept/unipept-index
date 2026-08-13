@@ -10,50 +10,50 @@
 //! 3. [`suffix_to_protein_index`] maps surviving text positions to protein indices;
 //! 4. [`peptide_search`] turns those into results with accessions and annotations.
 //!
-//! # Storage features: one build, one API, four independent choices
+//! # Storage: two backends per structure, chosen by the caller
 //!
 //! Every storage structure has two implementations — one holding owned memory, one borrowing a
-//! memory mapping — and features pick which. The selection is a *type alias*, resolved at compile
-//! time, so there is no runtime branch and no dispatch anywhere in the search path.
+//! memory mapping — and **this crate has no opinion about which**. Both are always compiled, the
+//! searcher is generic over all three of them, and nothing here names a concrete one:
 //!
-//! `mmap` maps everything. Each `preloaded-*` feature then pulls **one** structure back into owned
-//! memory, leaving the rest mapped:
+//! | structure | owned | mapped |
+//! |---|---|---|
+//! | suffix array | [`array::InMemorySA`] | [`array::MmapBackedSA`] |
+//! | protein text | `text_compression::InMemoryProteinText` | `text_compression::MmapBackedProteinText` |
+//! | protein metadata | `sa_mappings::proteins::InMemoryProteins<T>` | `sa_mappings::proteins::MmapBackedProteins<T>` |
+//! | suffix→protein | [`suffix_to_protein_index::InMemorySuffixToProteinMapping`] | [`suffix_to_protein_index::MmapBackedSuffixToProteinMapping`] |
 //!
-//! | alias | owned | mapped | mapped when |
-//! |---|---|---|---|
-//! | [`SuffixArray`] | `InMemorySA` | `MmapBackedSA` | `mmap` |
-//! | `text_compression::ProteinText` | `InMemoryProteinText` | `MmapBackedProteinText` | `mmap` and not `preloaded-text` |
-//! | `sa_mappings::proteins::Proteins` | `InMemoryProteins<T>` | `MmapBackedProteins<T>` | `mmap` and not `preloaded-proteins` |
-//! | [`suffix_to_protein_index::SuffixToProteinMapping`] | `InMemorySuffixToProteinMapping` | `MmapBackedSuffixToProteinMapping` | `mmap` and not `preloaded-mapping` |
+//! The choice is made once per build, by the binary: `sa-server`'s `backends` module resolves four
+//! Cargo features into one concrete type per structure. That is the *only* place in the workspace
+//! a storage feature is read. Selection is by type, so there is still no runtime branch and no
+//! dispatch anywhere in the search path.
 //!
-//! Nine configurations in all: everything preloaded, everything mapped, and the seven mixtures.
-//! The point is that the best place for one structure is not the best place for another — the
-//! text is the hottest and the metadata table the biggest — so, for instance
-//! `--features mmap,preloaded-text` keeps the multi-gigabyte index mapped while the ~190 MB text
-//! the search reads once per character compared sits in owned RAM.
+//! Sixteen combinations are constructible, of which the binaries expose nine. The point is that
+//! the best place for one structure is not the best place for another — the text is the hottest
+//! and the metadata table the biggest — so, for instance, `--features mmap,preloaded-text` keeps
+//! the multi-gigabyte index mapped while the ~190 MB text that search reads once per character
+//! compared sits in owned RAM.
 //!
 //! Consequences worth knowing before reading further:
 //!
-//! * **No crate declares `default = [...]`**, so a plain `cargo build` or `cargo test` gives you
-//!   the fully *preloaded* configuration. The production server is built `--features mmap`.
-//! * The suffix array follows `mmap` and has no override; there is no `preloaded-sa`.
-//! * A `preloaded-*` feature without `mmap` is a no-op — everything is preloaded already. Cargo
-//!   features are additive and cannot be negated by a dependent crate, so they only ever *remove*
-//!   mapping, never add it.
 //! * The protein text and the protein metadata share one file (`proteins.bin`) but are separate
-//!   axes, which is why `Proteins` is generic over its text type. All four pairings load from the
-//!   same file; see `sa_mappings::proteins::mmap`.
-//! * The preloaded half is compiled in **every** configuration, because it owns the `WriteBinary`
-//!   implementations that produce the files the mmap half reads.
+//!   axes, which is why the protein structs are generic over their text type. All four pairings
+//!   load from the same file; see `sa_mappings::proteins::mmap`.
+//! * Which reader a structure needs is not a decision any caller makes — it is the `LoadIndex`
+//!   implementation on that concrete type. That is what lets a test build all sixteen combinations
+//!   without a single `#[cfg]`; see `sa_searcher::backend_agreement`, which asserts they answer
+//!   identically.
+//! * The owned half owns the `WriteBinary` implementations that produce the files the mapped half
+//!   reads, which is why `sa-builder` never mentions a backend.
 //! * The two halves are kept deliberately separate rather than sharing code, so that a tuning
 //!   change to one cannot perturb the other. Where that produces near-duplicate code it is marked
 //!   as intentional at the site.
 //!
 //! # The `metrics` feature
 //!
-//! Off by default. It swaps the counters on [`sa_searcher::Searcher`] from zero-sized no-ops to
-//! real atomics, so the benchmark harness can attribute time and count candidates. Enabling it
-//! costs throughput; see `sa_searcher::metrics`.
+//! The one feature this crate has. Off by default. It swaps the counters on
+//! [`sa_searcher::Searcher`] from zero-sized no-ops to real atomics, so the benchmark harness can
+//! attribute time and count candidates. Enabling it costs throughput; see `sa_searcher::metrics`.
 //!
 //! **This is the only gate for measurement code in this workspace.** Anything that reads a clock or
 //! bumps a counter to describe how the search behaves belongs behind it — or, if it is a property of
@@ -154,7 +154,7 @@
 //! 6-mers, the expected number of queries sharing a prefix is under one, so there is no page reuse
 //! for sorting to expose. Locality needs reuse, and this workload has none.
 
-pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
+pub use text_compression::{LoadIndex, ReadBinary, ReadBinaryMmap, WriteBinary};
 
 pub mod array;
 pub mod kmer_table;
@@ -162,7 +162,7 @@ pub mod peptide_search;
 pub mod sa_searcher;
 pub mod suffix_to_protein_index;
 
-pub use array::{SuffixArray, SuffixArrayBackend};
+pub use array::SuffixArrayBackend;
 pub use kmer_table::KmerTable;
 pub use sa_mappings::proteins::ProteinsBackend;
 pub use sa_searcher::{MAX_VALIDATE_BATCH, SearchTuning};

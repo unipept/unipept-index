@@ -12,28 +12,26 @@
 //!
 //! # Two backends
 //!
-//! Which one [`ProteinText`] resolves to is decided by two features:
+//! Both are always compiled; callers pick by naming a type, and everything here that touches the
+//! text is generic over [`ProteinTextBackend`].
 //!
 //! * [`preloaded::InMemoryProteinText`] — the text decompressed into owned RAM. Faster per
-//!   access, but the process pays the full resident size. Selected without `mmap`, or with
-//!   `mmap` *and* `preloaded-text`.
+//!   access, but the process pays the full resident size.
 //! * [`mmap::MmapBackedProteinText`] — decoded straight out of a memory mapping, so the kernel
-//!   decides what stays resident. Selected by `mmap` alone.
+//!   decides what stays resident.
 //!
-//! `preloaded-text` exists because the text is the hottest structure in the index while the
-//! protein metadata sharing its file is the biggest, so the two are worth storing differently.
-//! It has no effect without `mmap` — everything is already preloaded then.
+//! Storing this structure differently from the rest of the index is worth a knob of its own
+//! (`sa-server`'s `preloaded-text`): the text is the hottest structure in the index while the
+//! protein metadata sharing its file is the biggest.
 //!
-//! `preloaded` is compiled in both configurations because it owns the `WriteBinary`
-//! implementation that produces the file both backends read.
+//! `preloaded` owns the `WriteBinary` implementation that produces the file both backends read,
+//! which is why `sa-builder` needs only that half.
 
-pub use binary_traits::{ReadBinary, ReadBinaryMmap, WriteBinary};
+pub use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap, WriteBinary, load_owned};
 
-#[cfg(feature = "mmap")]
 pub mod mmap;
 pub mod preloaded;
 
-#[cfg(feature = "mmap")]
 pub use mmap::MmapBackedProteinText;
 pub use preloaded::InMemoryProteinText;
 
@@ -47,18 +45,6 @@ pub use preloaded::InMemoryProteinText;
 /// Tracked as a known issue; padding the table to 32 entries would remove both the panic and the
 /// bounds check from the hot path.
 pub const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
-
-/// Type alias — resolves to the single active text backend for this build.
-///
-/// Mapped only when this is an `mmap` build that has not asked for the text back in RAM.
-#[cfg(all(feature = "mmap", not(feature = "preloaded-text")))]
-pub type ProteinText = MmapBackedProteinText;
-/// Type alias — resolves to the single active text backend for this build.
-///
-/// Owned memory either because this is a preloaded build, or because `preloaded-text` asked for
-/// the text specifically while the rest of the index stays mapped.
-#[cfg(any(not(feature = "mmap"), feature = "preloaded-text"))]
-pub type ProteinText = InMemoryProteinText;
 
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
 ///

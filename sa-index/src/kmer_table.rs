@@ -20,7 +20,7 @@ use std::{
 use rayon::prelude::*;
 use text_compression::ProteinTextBackend;
 
-use crate::{ReadBinary, WriteBinary, array::SuffixArrayBackend};
+use crate::{LoadIndex, ReadBinary, WriteBinary, array::SuffixArrayBackend};
 
 /// Amino acid alphabet used for k-mer indexing (no J; L is treated as I).
 /// Index in this slice + 1 gives the 1-based `ascii_array` value for each character.
@@ -224,6 +224,13 @@ impl ReadBinary for KmerTable {
     }
 }
 
+/// Only ever the owned route: the table is small relative to the index and has no mmap variant.
+impl LoadIndex for KmerTable {
+    fn load(path: &std::path::Path) -> Result<Self, Box<dyn Error>> {
+        text_compression::load_owned(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use text_compression::InMemoryProteinText;
@@ -290,5 +297,36 @@ mod tests {
 
         assert_eq!(restored.k, k);
         assert_eq!(restored.lookup(b"AC"), original_lookup);
+    }
+
+    /// The table is the one structure with no mmap variant, so its [`LoadIndex`] impl is the only
+    /// one no backend-combination test reaches. `sa-server` calls it on every start with
+    /// `--kmer-table-file`.
+    #[test]
+    fn loads_from_a_file() {
+        use std::io::Write;
+
+        use crate::{LoadIndex, WriteBinary};
+
+        let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
+        let expected = table.lookup(b"AC");
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let mut buf = Vec::new();
+        table.write_binary(&mut buf).unwrap();
+        file.write_all(&buf).unwrap();
+        file.flush().unwrap();
+
+        let loaded = KmerTable::load(file.path()).unwrap();
+
+        assert_eq!(loaded.k, 2);
+        assert_eq!(loaded.lookup(b"AC"), expected);
+    }
+
+    #[test]
+    fn loading_a_missing_file_errors() {
+        use crate::LoadIndex;
+
+        assert!(KmerTable::load(std::path::Path::new("/nonexistent/kmer_table.bin")).is_err());
     }
 }

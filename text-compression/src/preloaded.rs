@@ -1,8 +1,7 @@
 //! In-memory protein text: the whole text decompressed into owned RAM.
 //!
-//! Compiled in *both* configurations, not only non-mmap builds: this module owns the
-//! `WriteBinary` implementation, so `sa-builder` uses it to produce the file that the mmap
-//! backend later reads. Only the reading half is configuration-specific.
+//! This module owns the `WriteBinary` implementation, so `sa-builder` uses it to produce the file
+//! that *either* backend later reads — which is why the builder never names a backend at all.
 //!
 //! See [`crate::mmap`] for the counterpart that decodes straight out of a mapping.
 use std::{

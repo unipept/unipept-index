@@ -13,10 +13,12 @@ path = "src/generate_peptides.rs"
 
 [features]
 default = []
-mmap = ["sa-index/mmap", "sa-server/mmap"]
-preloaded-text = ["sa-index/preloaded-text", "sa-server/preloaded-text"]
-preloaded-proteins = ["sa-index/preloaded-proteins", "sa-server/preloaded-proteins"]
-preloaded-mapping = ["sa-index/preloaded-mapping", "sa-server/preloaded-mapping"]
+# Storage selection lives entirely in sa-server; forwarding only there is what keeps this crate
+# and the loaders it calls from ever resolving to different backends.
+mmap = ["sa-server/mmap"]
+preloaded-text = ["sa-server/preloaded-text"]
+preloaded-proteins = ["sa-server/preloaded-proteins"]
+preloaded-mapping = ["sa-server/preloaded-mapping"]
 # Pass-through for sa-index's hot-path instrumentation. Off by default so timing runs are
 # uninstrumented; switch it on for diagnostic runs that want the phase breakdown and the
 # tryptic candidate acceptance rate.

@@ -24,12 +24,12 @@ const ASSUMED_PAGE_SIZE: usize = 4096;
 ///
 /// All three steps matter:
 ///
-/// 1. [`Advice::Sequential`] tells the kernel to read far ahead, so the sweep faults in long runs
+/// 1. [`memmap2::Advice::Sequential`] tells the kernel to read far ahead, so the sweep faults in long runs
 ///    instead of one page at a time.
 /// 2. Touching one byte per page forces the fault. The read **must** be laundered through
 ///    [`std::hint::black_box`]: without it the optimizer deletes a loop whose result is unused,
 ///    and the warmup silently does nothing.
-/// 3. [`Advice::Random`] restores the steady-state pattern. The index is probed in an order the
+/// 3. [`memmap2::Advice::Random`] restores the steady-state pattern. The index is probed in an order the
 ///    kernel cannot predict, so leaving readahead enabled would make every later miss drag in
 ///    neighbouring pages that will not be used.
 ///

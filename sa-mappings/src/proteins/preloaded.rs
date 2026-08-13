@@ -1,8 +1,8 @@
 //! Protein metadata held in owned memory, plus the TSV loader that builds an index.
 //!
-//! Compiled in *every* configuration: this module owns the `WriteBinary` implementation, so
-//! `sa-builder` uses it to produce the `proteins.bin` that the mmap backend later reads. Only the
-//! reading half is configuration-specific.
+//! This module owns the `WriteBinary` implementation, so `sa-builder` uses it to produce the
+//! `proteins.bin` that either backend later reads — which is why the builder never mentions a
+//! backend at all.
 //!
 //! The struct is generic over its text backend, so "owned metadata" does not imply "owned text" —
 //! see [`super`] for the two axes. The reader here handles the both-owned case; the pairings that
@@ -12,13 +12,14 @@ use std::{
     error::Error,
     fs::File,
     io::{BufRead, BufReader, Write},
+    path::Path,
     str::from_utf8
 };
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::encode;
 use text_compression::{InMemoryProteinText, ProteinTextBackend};
-pub use text_compression::{ReadBinary, WriteBinary};
+pub use text_compression::{LoadIndex, ReadBinary, WriteBinary};
 
 use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
@@ -26,12 +27,10 @@ use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINAT
 
 /// All protein metadata held in owned memory, plus the concatenated text.
 ///
-/// `T` is the text backend. It defaults to [`InMemoryProteinText`] — metadata and text both owned,
-/// which is the whole preloaded build — but an mmap build may instantiate it at
-/// `MmapBackedProteinText` to keep the (much larger) metadata in RAM while the text stays mapped.
-/// The two axes are independent; which pair this build uses is decided by the `Proteins` alias in
-/// [`super`].
-pub struct InMemoryProteins<T = InMemoryProteinText> {
+/// `T` is the text backend. At [`InMemoryProteinText`] metadata and text are both owned; it may
+/// instead be instantiated at `MmapBackedProteinText` to keep the (much larger) metadata in RAM
+/// while the text stays mapped. The two axes are independent.
+pub struct InMemoryProteins<T> {
     /// The concatenated protein text the suffix array is built over.
     pub text: T,
     /// Metadata per protein, in the same order as the runs in `text`.
@@ -287,6 +286,17 @@ impl<T: ReadBinary> ReadBinary for InMemoryProteins<T> {
         let text = T::read_binary(reader)?;
         let proteins = read_metadata_section(reader)?;
         Ok(Self { text, proteins })
+    }
+}
+
+/// The only pairing with nothing mapped, and so the only one loaded through the owned route.
+///
+/// The other three are in the mmap module: this impl is deliberately on the concrete
+/// `InMemoryProteins<InMemoryProteinText>` rather than on a generic `T`, because
+/// `InMemoryProteins<MmapBackedProteinText>` must map the file even though its metadata is owned.
+impl LoadIndex for InMemoryProteins<InMemoryProteinText> {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        text_compression::load_owned(path)
     }
 }
 

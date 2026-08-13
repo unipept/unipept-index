@@ -1,8 +1,7 @@
-// This entire module is mmap-only.
 use std::{error::Error, fs::File, path::Path};
 
 use memmap2::Mmap;
-use text_compression::ReadBinaryMmap;
+use text_compression::{LoadIndex, ReadBinaryMmap};
 
 #[cfg(test)]
 pub(super) mod test_utils;
@@ -130,6 +129,12 @@ impl ReadBinaryMmap for MmapBackedSA {
             bits_per_value,
             sample_rate
         })
+    }
+}
+
+impl LoadIndex for MmapBackedSA {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        Self::read_binary_mmap(path)
     }
 }
 

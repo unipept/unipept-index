@@ -212,13 +212,7 @@ mod tests {
     use text_compression::ProteinTextBackend as _;
 
     use super::TrypticQuery;
-    use crate::{
-        SuffixArray,
-        sa_searcher::{
-            Searcher,
-            test_utils::{example_searcher, searcher_over_text}
-        }
-    };
+    use crate::sa_searcher::test_utils::{PreloadedSearcher, example_searcher, searcher_over_text};
 
     // Direct test of the protein-boundary checks used by tryptic filtering.
     // Text "AI-CLACVAA-AC-KCRLY$": separators at 2/10/13, termination at 19.
@@ -258,7 +252,7 @@ mod tests {
     // The original four-text-read formulation, kept verbatim as the oracle for the equivalence
     // test below. `check_start_of_protein` MUST stay on the left of the `||`: it is the only
     // thing that stops `check_tryptic_cut(0)` from reading `text[-1]`.
-    fn old_tryptic_predicate(searcher: &Searcher<SuffixArray>, match_start: usize, match_end: usize) -> bool {
+    fn old_tryptic_predicate(searcher: &PreloadedSearcher, match_start: usize, match_end: usize) -> bool {
         (searcher.check_start_of_protein(match_start) || searcher.check_tryptic_cut(match_start))
             && (searcher.check_end_of_protein(match_end) || searcher.check_tryptic_cut(match_end))
     }

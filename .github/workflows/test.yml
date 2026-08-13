@@ -4,29 +4,13 @@ name: Test
 
 jobs:
   test:
-    # No crate in this workspace declares `default = [...]`, so a bare `cargo test` only ever
-    # compiles the fully *preloaded* configuration.
-    #
-    # Storage is chosen per structure, so there are nine configurations; these four cover both
-    # extremes, one mixture, and every loader implementation. Note in particular that
-    # `--all-features` turns on all three `preloaded-*` flags, so it is NOT the production
-    # configuration — it maps only the suffix array. The explicit `mmap` cell is what covers the
-    # way the server actually ships.
-    name: Check + test (${{ matrix.name }})
+    # One cell, because the libraries no longer have a storage feature to vary. Both backends of
+    # every structure are always compiled, and the searcher's fixtures load each combination by
+    # naming its types, so a single `cargo test` exercises all of them — see
+    # `sa-index/src/sa_searcher/test_utils.rs`. What the features still choose is which combination
+    # the *binaries* are built for; that is covered by the `server-backends` job below.
+    name: Check + test
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: preloaded (default features)
-            features: ""
-          - name: mmap (production configuration)
-            features: "--features mmap"
-          - name: mmap + preloaded text
-            features: "--features mmap,preloaded-text"
-          - name: all features (mmap SA only + metrics)
-            features: "--all-features"
 
     steps:
       - name: Checkout repository
@@ -39,16 +23,54 @@ jobs:
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.features }}
 
       # Deliberately no `--workspace`: that would override the root `default-members`
       # and drag `sa-benchmarks` (a heavy, long-running bench harness) into every CI run.
       - name: Run cargo check
-        run: cargo check --all-targets ${{ matrix.features }}
+        run: cargo check --all-targets
 
       - name: Run cargo test
-        run: cargo test ${{ matrix.features }}
+        run: cargo test
+
+      # The one remaining feature. It swaps the searcher's counters for real atomics, and nothing
+      # else compiles that code.
+      - name: Run cargo test with metrics
+        run: cargo test -p sa-index --features metrics
+
+  server-backends:
+    # `sa-server` is where the storage features now live, and all they do is pick which concrete
+    # type each `Active*` alias names (see `sa-server/src/backends.rs`). Nine resolutions; every one
+    # has to typecheck, and each has to report the backends it actually selected — which is what
+    # `backends::tests` checks, per configuration, so it is run rather than only compiled.
+    # Checking `sa-benchmarks` covers `sa-server` too, since its features forward there and nowhere
+    # else.
+    name: sa-server backend aliases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check every backend combination
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in "" "mmap" "mmap,preloaded-text" "mmap,preloaded-proteins" \
+                          "mmap,preloaded-mapping" "mmap,preloaded-text,preloaded-proteins" \
+                          "mmap,preloaded-text,preloaded-mapping" \
+                          "mmap,preloaded-proteins,preloaded-mapping" \
+                          "mmap,preloaded-text,preloaded-proteins,preloaded-mapping"; do
+            echo "== ${features:-(none)} =="
+            if [ -z "$features" ]; then
+              cargo check --all-targets -p sa-benchmarks
+              cargo test -p sa-server
+            else
+              cargo check --all-targets -p sa-benchmarks --features "$features"
+              cargo test -p sa-server --features "$features"
+            fi
+          done
 
   no-instrumentation-in-shipping-builds:
     # `metrics` swaps the searcher's zero-sized counters for real atomics on cache lines every rayon
@@ -73,20 +95,22 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          for package in sa-server sa-builder; do
-            for features in "" "--features mmap"; do
-              # `{f}` is the resolved feature list of each package in the graph, so this reads the
-              # feature actually enabled on sa-index rather than what any manifest asks for.
-              resolved=$(cargo tree -e features -p "$package" $features --format '{p} [{f}]' \
-                         | grep 'sa-index v' | sort -u)
-              echo "$package ${features:-(default features)}:"
-              echo "$resolved" | sed 's/^/  /'
-              if grep -qE '\[[^]]*\bmetrics\b' <<<"$resolved"; then
-                echo "::error::$package ${features:-(default features)} resolves sa-index's 'metrics' feature."
-                echo "::error::Instrumentation must never reach a shipping binary; see the 'metrics' section of sa-index's crate docs."
-                rc=1
-              fi
-            done
+          # sa-builder has no features at all — it writes the index with the owned types in every
+          # configuration — so it is checked once, with none.
+          for spec in "sa-server|" "sa-server|--features mmap" "sa-builder|"; do
+            package="${spec%%|*}"
+            features="${spec#*|}"
+            # `{f}` is the resolved feature list of each package in the graph, so this reads the
+            # feature actually enabled on sa-index rather than what any manifest asks for.
+            resolved=$(cargo tree -e features -p "$package" $features --format '{p} [{f}]' \
+                       | grep 'sa-index v' | sort -u)
+            echo "$package ${features:-(default features)}:"
+            echo "$resolved" | sed 's/^/  /'
+            if grep -qE '\[[^]]*\bmetrics\b' <<<"$resolved"; then
+              echo "::error::$package ${features:-(default features)} resolves sa-index's 'metrics' feature."
+              echo "::error::Instrumentation must never reach a shipping binary; see the 'metrics' section of sa-index's crate docs."
+              rc=1
+            fi
           done
           exit $rc
 

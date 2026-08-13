@@ -43,12 +43,12 @@ use clap::Parser;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use sa_index::{
-    KmerTable, ProteinsBackend as _, SearchTuning, SuffixArray, SuffixArrayBackend,
+    KmerTable, ProteinsBackend as _, SearchTuning, SuffixArrayBackend,
     kmer_table::AMINO_ACID_COUNT,
     sa_searcher::{SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::SuffixToProteinMappingBackend as _
 };
-use sa_server::{load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
+use sa_server::{ActiveSearcher, load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Serialize;
 use sysinfo::{Pid, System};
 use text_compression::ProteinTextBackend as _;
@@ -473,7 +473,7 @@ fn proteins_mapped() -> bool {
 /// This is derived from the actual data sizes, **not** from disk file sizes, so it remains
 /// accurate when new structures are added to the `Searcher`. When you add a new structure,
 /// extend this function with its memory calculation.
-fn theoretical_memory(searcher: &Searcher<SuffixArray>, mapping_type: &str, proteins_mapped: bool) -> u64 {
+fn theoretical_memory(searcher: &ActiveSearcher, mapping_type: &str, proteins_mapped: bool) -> u64 {
     let text_len = searcher.proteins.text().len() as u64;
     let protein_count = searcher.proteins.len() as u64;
 
@@ -574,7 +574,7 @@ fn measure_process_memory() -> u64 {
 
 #[allow(clippy::too_many_arguments)]
 fn run_benchmark(
-    searcher: &Searcher<SuffixArray>,
+    searcher: &ActiveSearcher,
     peptides: &[String],
     max_matches: usize,
     equate_il: bool,
@@ -775,7 +775,7 @@ fn expand_cells(args: &Args, file_bucket: &str) -> Vec<GridCell> {
 /// previously attached to its owning slot (`table5`/`table6`) first. All swaps are `Option`
 /// moves (pointer-sized), so this is cheap to call once per cell regardless of sweep order.
 fn ensure_kmer_table(
-    searcher: &mut Searcher<SuffixArray>,
+    searcher: &mut ActiveSearcher,
     table5: &mut Option<KmerTable>,
     table6: &mut Option<KmerTable>,
     k: usize
@@ -823,7 +823,7 @@ struct CellSpec<'a> {
 /// Runs one config for `args.runs` reps, prints the summary line, and appends one aggregated
 /// record to `output_file`.
 fn run_cell(
-    searcher: &Searcher<SuffixArray>,
+    searcher: &ActiveSearcher,
     peptides: &[String],
     args: &Args,
     spec: CellSpec,
@@ -942,7 +942,7 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
         let dims: Vec<String> = args.dims.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         println!("dims           : {}", dims.join(" "));
     }
-    println!("backend        : {}", if cfg!(feature = "mmap") { "mmap" } else { "preloaded" });
+    println!("backend        : {}", sa_server::backend_summary());
     println!("kmer sizes     : {:?}", matrix_kmers(args));
     println!("mlp batches    : {:?}", args.matrix_batches);
     println!("tuning         : {:?}", tuning_from(args)?);
@@ -984,7 +984,7 @@ const WARMUP_BATCH_SIZE: usize = 100_000;
 
 /// Touches every page of every mmap-backed region, populating the page cache. Leaves CPU
 /// caches and the TLB cold — pair with `warmup_pipeline` for those.
-fn warmup_touch_pages(searcher: &Searcher<SuffixArray>) {
+fn warmup_touch_pages(searcher: &ActiveSearcher) {
     rayon::scope(|s| {
         s.spawn(|_| searcher.sa.touch_all_pages());
         s.spawn(|_| searcher.proteins.touch_all_pages());
@@ -994,7 +994,7 @@ fn warmup_touch_pages(searcher: &Searcher<SuffixArray>) {
 
 /// Pushes `count` peptides from `<index-dir>/warmup.txt` through the full search + retrieval
 /// pipeline, in batches, discarding the results. Stops early if the file runs out.
-fn warmup_pipeline(searcher: &Searcher<SuffixArray>, args: &Args, count: usize) -> Result<(), Box<dyn Error>> {
+fn warmup_pipeline(searcher: &ActiveSearcher, args: &Args, count: usize) -> Result<(), Box<dyn Error>> {
     let warmup_path = args.index_dir.join("warmup.txt");
     eprintln!(
         "Warming up with {} peptides from {} (batch size {})...",
@@ -1043,7 +1043,7 @@ fn warmup_pipeline(searcher: &Searcher<SuffixArray>, args: &Args, count: usize) 
 // than recomputed here, which is what pushes this past the argument limit.
 #[allow(clippy::too_many_arguments)]
 fn run_matrix(
-    mut searcher: Searcher<SuffixArray>,
+    mut searcher: ActiveSearcher,
     args: &Args,
     mapping_type: &str,
     sa_type: &str,

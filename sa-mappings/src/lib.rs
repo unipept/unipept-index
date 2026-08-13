@@ -7,7 +7,7 @@
 //! index into the metadata a search result actually reports.
 //!
 //! Like the rest of the index it has two backends, selected by the `mmap` feature and resolved
-//! through the [`proteins::Proteins`] alias. Both hand out [`proteins::ProteinRef`], which
+//! by naming one of the two structs. Both hand out [`proteins::ProteinRef`], which
 //! borrows rather than copies, so the two differ only in where the bytes live.
 
 pub mod proteins;

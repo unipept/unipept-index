@@ -9,14 +9,15 @@
 //! This module also owns every loader that needs the mapping — including the one producing an
 //! *owned* metadata table alongside a mapped text, which lives here rather than in `preloaded`
 //! because it is the mapping that has to be opened and kept alive. The three of them share
-//! [`layout`] for the header and `preloaded`'s `read_metadata_section` for the entries, so the
+//! `layout` for the header and `preloaded`'s `read_metadata_section` for the entries, so the
 //! storage combinations cannot drift apart in how they read the same file.
 
 use std::{error::Error, path::Path, sync::Arc};
 
 use memmap2::Mmap;
 use text_compression::{
-    InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, ReadBinary, ReadBinaryMmap, bit_array_byte_size
+    InMemoryProteinText, LoadIndex, MmapBackedProteinText, ProteinTextBackend, ReadBinary, ReadBinaryMmap,
+    bit_array_byte_size
 };
 
 use super::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
@@ -25,12 +26,11 @@ use super::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
 
 /// Protein table borrowed from a memory mapping.
 ///
-/// `T` is the text backend. It defaults to [`MmapBackedProteinText`], which borrows the text
-/// section of the very same mapping, but it may be instantiated at [`InMemoryProteinText`] to copy
-/// the text into owned RAM while the much larger metadata table stays mapped. The text is the
-/// hottest structure in the index and the metadata the biggest, so that pairing is the point of
-/// the parameter; which one this build uses is decided by the `Proteins` alias in [`super`].
-pub struct MmapBackedProteins<T = MmapBackedProteinText> {
+/// `T` is the text backend. At [`MmapBackedProteinText`] the text borrows the text section of the
+/// very same mapping; at [`InMemoryProteinText`] it is copied into owned RAM while the much larger
+/// metadata table stays mapped. The text is the hottest structure in the index and the metadata
+/// the biggest, so that second pairing is the point of the parameter.
+pub struct MmapBackedProteins<T> {
     /// The mapping of `proteins.bin`, shared with `text` when the text is mapped too.
     pub mmap: Arc<Mmap>,
     /// The concatenated protein text.
@@ -328,6 +328,32 @@ impl ReadBinaryMmap for super::InMemoryProteins<MmapBackedProteinText> {
         let proteins = read_metadata_section(&mut &mmap[l.meta_offset..])?;
 
         Ok(Self::new(text, proteins))
+    }
+}
+
+// ── LoadIndex ─────────────────────────────────────────────────────────────────
+
+// Three of the four pairings load through the mapping, and this is where that fact is recorded.
+// `proteins.bin` holds the text and the metadata in one file, so it has to be *mapped* whenever
+// either section is mapped — not merely when the metadata is. The odd one out is the last impl
+// below, whose metadata is owned; the fourth pairing, with nothing mapped, takes the owned route
+// in `super::preloaded`. This used to be a `#[cfg]` predicate spelled out at every loader.
+
+impl LoadIndex for MmapBackedProteins<MmapBackedProteinText> {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        Self::read_binary_mmap(path)
+    }
+}
+
+impl LoadIndex for MmapBackedProteins<InMemoryProteinText> {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        Self::read_binary_mmap(path)
+    }
+}
+
+impl LoadIndex for super::InMemoryProteins<MmapBackedProteinText> {
+    fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
+        Self::read_binary_mmap(path)
     }
 }
 

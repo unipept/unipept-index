@@ -8,8 +8,8 @@
 //! file.
 //!
 //! **Storage.** [`InMemorySA`] holds owned memory and dispatches over the packing at runtime;
-//! `MmapBackedSA` decodes straight out of a memory mapping and handles either packing itself. The
-//! `mmap` feature picks which one [`SuffixArray`] means; see the crate docs.
+//! [`MmapBackedSA`] decodes straight out of a memory mapping and handles either packing itself.
+//! Both are always compiled and the searcher is generic over them; see the crate docs.
 //!
 //! A third property, **sparseness**, is a build parameter rather than a storage choice: the array
 //! may index only every n-th text position, trading search work for size. Every type above carries
@@ -38,28 +38,16 @@
 
 use std::{error::Error, io::Write};
 
-#[cfg(feature = "mmap")]
 pub mod mmap;
 pub mod preloaded;
 #[cfg(test)]
 mod test_utils;
 
-#[cfg(feature = "mmap")]
 pub use mmap::MmapBackedSA;
 pub use preloaded::{
     CompressedSA, InMemoryRangeIter, InMemorySA, OriginalRangeIter, OriginalSA, dump_compressed_suffix_array,
     dump_suffix_array, load_compressed_suffix_array
 };
-
-/// Type alias — resolves to the active suffix-array backend for this build.
-#[cfg(feature = "mmap")]
-pub type SuffixArray = MmapBackedSA;
-/// Type alias — resolves to the active suffix-array backend for this build.
-///
-/// Owned memory, because this is a preloaded build. Unlike the other three structures the suffix
-/// array has no `preloaded-*` override: it follows `mmap` alone.
-#[cfg(not(feature = "mmap"))]
-pub type SuffixArray = InMemorySA;
 
 /// Writes the 10-byte header both packings share; see the module docs for the layout.
 pub(super) fn write_sa_header(
@@ -83,8 +71,8 @@ pub(super) fn write_sa_header(
 
 /// Common interface implemented by every SA storage backend.
 ///
-/// - [`OriginalSA`] and [`CompressedSA`] — owned memory, one packing each (always available).
-/// - `MmapBackedSA` — memory-mapped, either packing (mmap feature only).
+/// - [`OriginalSA`] and [`CompressedSA`] — owned memory, one packing each.
+/// - [`MmapBackedSA`] — memory-mapped, either packing.
 /// - [`InMemorySA`] — dispatches over `OriginalSA`/`CompressedSA` at runtime.
 pub trait SuffixArrayBackend: Send + Sync {
     /// The concrete iterator type returned by [`Self::iter_range`].

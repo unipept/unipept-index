@@ -12,6 +12,8 @@
 //! * `tuning` — the performance knobs; `results` — what a search returns.
 //! * `metrics` — the counters, which cost nothing unless the `metrics` feature is on.
 
+#[cfg(test)]
+mod backend_agreement;
 mod batched;
 pub(crate) mod metrics;
 mod orchestrate;
@@ -25,7 +27,7 @@ mod tuning;
 
 pub use orchestrate::DEFAULT_MLP_BATCH;
 pub use results::{BoundSearchResult, SearchAllSuffixesResult};
-use sa_mappings::proteins::{Proteins, ProteinsBackend};
+use sa_mappings::proteins::ProteinsBackend;
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
 use tryptic::TrypticQuery;
 pub(crate) use tuning::MAX_RESULT_PREALLOC;
@@ -38,7 +40,7 @@ use crate::{
         BoundSearch::{Maximum, Minimum},
         metrics::SearchMetrics
     },
-    suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingBackend}
+    suffix_to_protein_index::SuffixToProteinMappingBackend
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -50,18 +52,14 @@ enum BoundSearch {
 
 /// Everything needed to search a peptide against the index, plus the search itself.
 ///
-/// The three generic parameters are the storage backends, which the `mmap` feature resolves at
-/// compile time; see the crate docs. They default to the aliases for the active build, so most
-/// callers write `Searcher<SuffixArray>`.
+/// The three generic parameters are the storage backends. Both implementations of each are always
+/// compiled and nothing here names one, so a caller is free to combine them however it likes;
+/// `sa-server` picks one combination per build in its `backends` module.
 ///
 /// Construct with [`Searcher::new`], then optionally attach a k-mer table with
 /// [`Searcher::with_kmer_table`]. The searcher is immutable during search and `Sync`, so one
 /// instance serves every request.
-pub struct Searcher<
-    SA: SuffixArrayBackend,
-    P: ProteinsBackend = Proteins,
-    STPM: SuffixToProteinMappingBackend = SuffixToProteinMapping
-> {
+pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> {
     pub sa: SA,
     pub proteins: P,
     pub suffix_index_to_protein: STPM,

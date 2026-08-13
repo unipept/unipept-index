@@ -5,11 +5,15 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# The only storage features in the workspace. They forward to nothing: all they do is pick which
+# concrete type each `Active*` alias in `src/backends.rs` names.
 [features]
-mmap = ["sa-index/mmap", "sa-mappings/mmap"]
-preloaded-text = ["sa-index/preloaded-text", "sa-mappings/preloaded-text"]
-preloaded-proteins = ["sa-index/preloaded-proteins", "sa-mappings/preloaded-proteins"]
-preloaded-mapping = ["sa-index/preloaded-mapping"]
+mmap = []
+# Per-structure overrides — keep this one structure in owned RAM while the rest stays mapped.
+# All three are no-ops without `mmap`, where everything is owned already.
+preloaded-text = []
+preloaded-proteins = []
+preloaded-mapping = []
 
 [dependencies]
 axum = { version = "0.7.4", features = ["macros"] }
@@ -18,3 +22,4 @@ tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros"] }
 sa-index = { path = "../sa-index" }
 clap = { version = "4.5.1", features = ["derive"] }
 sa-mappings = { path = "../sa-mappings" }
+text-compression = { path = "../text-compression" }

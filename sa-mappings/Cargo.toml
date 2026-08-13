@@ -8,16 +8,9 @@ edition = "2021"
 [dev-dependencies]
 tempdir = "0.3.7"
 
-[features]
-mmap = ["dep:memmap2", "text-compression/mmap"]
-# Per-structure overrides: keep this structure in owned RAM even in an mmap build.
-# All three are no-ops without `mmap`, where everything is preloaded already.
-preloaded-text = ["text-compression/preloaded-text"]
-preloaded-proteins = []
-
 [dependencies]
 fa-compression = { path = "../fa-compression" }
 prefetch = { path = "../prefetch" }
 bytelines = "2.5.0"
 text-compression = { path = "../text-compression" }
-memmap2 = { version = "0.9", optional = true }
+memmap2 = "0.9"

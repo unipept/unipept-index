@@ -8,11 +8,13 @@ it. This repository is a Cargo workspace of several crates that depend on each o
 ## The one thing to know first: storage is a build-time choice
 
 Every storage structure in the index has two implementations — one holding **owned memory**, one
-borrowing a **memory mapping** — and which you get is a *compile-time* choice made by features.
-There is no runtime switch, and no dispatch anywhere in the search path.
+borrowing a **memory mapping**. Both are always compiled, and the library crates are generic over
+which they are handed; **the choice is made by `sa-server`, at compile time, through features on
+that crate alone** (`sa-server/src/backends.rs`). There is no runtime switch, and no dispatch
+anywhere in the search path.
 
-**No crate declares `default = [...]`, so a plain `cargo build --release` gives you the preloaded
-backend.** The production server is built with `--features mmap`.
+**`sa-server` declares no `default = [...]`, so a plain `cargo build --release -p sa-server` gives
+you the preloaded backend.** The production server is built with `--features mmap`.
 
 | | preloaded (default) | `--features mmap` |
 |---|---|---|
@@ -39,6 +41,10 @@ This exists because the structures are not alike: the text is read once per char
 while the metadata table is the largest thing in the index and read once per reported result. So
 `--features mmap,preloaded-text` keeps the index mapped but the hottest structure resident — worth
 measuring on your own data before choosing a default.
+
+These nine feature combinations are the ones the server exposes; the types themselves compose into
+sixteen, and `sa-index`'s `backend_agreement` test builds every one of them and asserts they return
+identical results.
 
 A running server reports what it was compiled with:
 
@@ -89,11 +95,11 @@ instead of ~36%.
 git clone https://github.com/unipept/unipept-index.git
 cd unipept-index
 
-cargo build --release                    # preloaded backend
-cargo build --release --features mmap    # memory-mapped backend
+cargo build --release -p sa-server                    # preloaded backend
+cargo build --release -p sa-server --features mmap    # memory-mapped backend
 
 # ... or mix: map everything except the protein text
-cargo build --release --features mmap,preloaded-text
+cargo build --release -p sa-server --features mmap,preloaded-text
 ```
 
 ## Building an index
@@ -165,14 +171,16 @@ curl -X POST http://localhost:3000/search \
 
 ## Testing
 
-Because the backend is a compile-time choice, so is what gets tested:
+Both backends of every structure are always compiled, so one run covers them all — the searcher's
+fixtures build each combination by naming its types, and `backend_agreement` asserts the sixteen
+give identical answers:
 
 ```bash
-cargo test                  # preloaded backend
-cargo test --all-features   # memory-mapped backend, plus the metrics instrumentation
+cargo test                                  # everything, both backends
+cargo test -p sa-index --features metrics   # the one remaining feature
 ```
 
-Both are run by CI. Lints:
+CI additionally checks that all nine of `sa-server`'s feature combinations typecheck. Lints:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
@@ -194,7 +202,7 @@ silently ignores.
 | `text-compression` | the concatenated protein text, packed at 5 bits per residue |
 | `bitarray` | dense arrays of fixed-width values |
 | `fa-compression` | encoding for functional annotations |
-| `binary-traits` | the read/write traits every on-disk structure implements |
+| `binary-traits` | the read/write/load traits every on-disk structure implements |
 | `prefetch` | one portable software-prefetch hint |
 | `libsais64-rs` | bindings to the suffix-array construction library |
 | `sa-benchmarks` | measurement harness (see below) |
