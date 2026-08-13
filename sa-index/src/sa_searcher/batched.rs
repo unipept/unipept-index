@@ -14,9 +14,9 @@ use text_compression::ProteinTextBackend;
 use super::{
     BoundSearch,
     BoundSearch::{Maximum, Minimum},
-    BoundSearchResult, MAX_RESULT_PREALLOC, SearchAllSuffixesResult, Searcher, TRYPTIC_EXTENSION_CHARS,
+    BoundSearchResult, MAX_RESULT_PREALLOC, SearchAllSuffixesResult, Searcher,
     metrics::Timer,
-    tryptic_extension_chars
+    tryptic::{TRYPTIC_EXTENSION_CHARS, tryptic_extension_chars}
 };
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
@@ -199,7 +199,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             let sub: Vec<&[u8]> = active.iter().map(|&i| &strings[i][skip..]).collect();
             let t_bounds = Timer::start();
             let bounds = self.search_bounds_batched(&sub);
-            self.search_bounds_ns.add(t_bounds.elapsed_ns());
+            self.metrics.search_bounds_ns.add(t_bounds.elapsed_ns());
 
             let t_iter = Timer::start();
             for (ai, &i) in active.iter().enumerate() {
@@ -247,7 +247,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     }
                 }
             }
-            self.match_iter_ns.add(t_iter.elapsed_ns());
+            self.metrics.match_iter_ns.add(t_iter.elapsed_ns());
         }
 
         // Left-extended phase. One batched bound search per extension character, so the streams
@@ -285,7 +285,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 } else {
                     self.search_bounds_batched(&extended)
                 };
-                self.search_bounds_ns.add(t_bounds.elapsed_ns());
+                self.metrics.search_bounds_ns.add(t_bounds.elapsed_ns());
 
                 let t_iter = Timer::start();
                 for (ai, &i) in active.iter().enumerate() {
@@ -310,7 +310,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(&mut matching[i])));
                     }
                 }
-                self.match_iter_ns.add(t_iter.elapsed_ns());
+                self.metrics.match_iter_ns.add(t_iter.elapsed_ns());
             }
         }
 
@@ -366,19 +366,14 @@ impl<'a> BsStream<'a> {
     }
 }
 
-#[cfg(all(test, not(feature = "mmap")))]
+#[cfg(test)]
 mod tests {
-    use sa_mappings::proteins::{Protein, Proteins, ProteinsBackend as _};
-    use text_compression::ProteinText;
-
-    use crate::{
-        SuffixArray,
-        array::OriginalSA,
-        sa_searcher::{
-            SearchAllSuffixesResult, Searcher,
-            test_utils::{TRYPTIC_FIXTURE, get_example_proteins, searcher_over_text, tryptic_fixture_peptides}
-        },
-        suffix_to_protein_index::{BitVecSuffixToProtein, SparseSuffixToProtein, SuffixToProteinMapping}
+    use crate::sa_searcher::{
+        SearchAllSuffixesResult,
+        test_utils::{
+            EXAMPLE_SA_SPARSE3, Mapping, TRYPTIC_FIXTURE, example_searcher, example_searcher_with,
+            repeated_residue_searcher, searcher_over_text, tryptic_fixture_peptides
+        }
     };
 
     #[test]
@@ -412,22 +407,13 @@ mod tests {
         }
 
         // Dense/original SA (sample_rate 1)
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-            1
-        ));
-        let stp = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
+        let searcher = example_searcher();
         let peptides: Vec<&[u8]> =
             vec![b"A", b"AC", b"AI", b"CLA", b"KCRLY", b"VAA", b"CVAA", b"LACVAA", b"C", b"ZZ", b"$"];
         check_batched!(&searcher, &peptides);
 
         // Sparse SA (sample_rate 3) — exercises skip = 0, 1, 2
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(vec![9, 0, 3, 12, 15, 6, 18], 3));
-        let stp = SparseSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::Sparse(stp));
+        let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, Mapping::Sparse);
         let peptides: Vec<&[u8]> = vec![b"CLA", b"ACVAA", b"KCRLY", b"VAA", b"LACVAA", b"CVAA", b"CLACVAA", b"ZZZ"];
         check_batched!(&searcher, &peptides);
     }
@@ -501,14 +487,7 @@ mod tests {
 
     #[test]
     fn test_batched_empty() {
-        let proteins = get_example_proteins();
-        let sa = SuffixArray::Original(OriginalSA(
-            vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-            1
-        ));
-        let stp = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
-
+        let searcher = example_searcher();
         assert!(searcher.search_matching_suffixes_batched(&[], usize::MAX, false, false).is_empty());
     }
 
@@ -517,17 +496,8 @@ mod tests {
     // raw test SA is not L->I normalized (see the scalar k-mer test for the reason).
     #[test]
     fn test_batched_with_kmer_table() {
-        let make = || {
-            let proteins = get_example_proteins();
-            let stp = BitVecSuffixToProtein::new(proteins.text());
-            let sa = SuffixArray::Original(OriginalSA(
-                vec![19, 10, 2, 13, 9, 8, 11, 5, 0, 3, 12, 15, 6, 1, 4, 17, 14, 16, 7, 18],
-                1
-            ));
-            Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp))
-        };
-        let reference = make();
-        let mut kmered = make();
+        let reference = example_searcher();
+        let mut kmered = example_searcher();
         kmered.build_kmer_table(3);
 
         let peptides: Vec<&[u8]> = vec![b"VAA", b"CVAA", b"KCR", b"KCRLY", b"AC", b"ZZZ"];
@@ -549,19 +519,7 @@ mod tests {
     // range_size >= max_matches and range_size < max_matches fast-path branches.
     #[test]
     fn test_batched_il_free_fast_path_at_scale() {
-        let n = 70usize;
-        let mut input = "A".repeat(n);
-        input.push('$');
-        let text = ProteinText::from_string(&input);
-        let proteins = Proteins::new(text, vec![Protein {
-            uniprot_id: String::new(),
-            taxon_id: 0,
-            functional_annotations: vec![]
-        }]);
-        let sa = SuffixArray::Original(OriginalSA((0..=n as i64).rev().collect(), 1));
-        let stp = BitVecSuffixToProtein::new(proteins.text());
-        let searcher = Searcher::new(sa, proteins, SuffixToProteinMapping::BitVec(stp));
-
+        let searcher = repeated_residue_searcher('A', 70);
         let peptides: Vec<&[u8]> = vec![b"A", b"A", b"A"];
         for &mm in &[usize::MAX, 10usize] {
             let scalar: Vec<_> =

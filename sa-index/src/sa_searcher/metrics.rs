@@ -38,8 +38,7 @@ mod imp {
 
         /// Overwrites the counter. Test/setup helper, not for the hot path.
         ///
-        /// Its only callers are the metrics tests, which live behind
-        /// `#[cfg(all(test, not(feature = "mmap")))]`, so it reads as dead under `--all-features`.
+        /// Only the `drain_*` tests below call it, so it is dead in a non-test build.
         #[allow(dead_code)]
         #[inline]
         pub fn store(&self, v: u64) {
@@ -116,3 +115,123 @@ mod imp {
 }
 
 pub use imp::{Counter, Timer};
+use sa_mappings::proteins::ProteinsBackend;
+
+use super::Searcher;
+use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
+
+/// Every counter the search accumulates, as one field on [`Searcher`] rather than four.
+///
+/// Zero-sized without the `metrics` feature, so the whole struct costs nothing and every `add`
+/// below folds away with it.
+#[derive(Debug, Default)]
+pub struct SearchMetrics {
+    /// Total nanoseconds spent inside `search_bounds()` across all queries (since last drain).
+    pub(super) search_bounds_ns: Counter,
+    /// Total nanoseconds spent iterating matches in `search_matching_suffixes()` (since last drain).
+    pub(super) match_iter_ns: Counter,
+    /// Candidate suffixes inspected by `iterate_sa_range` (since last drain), i.e. every entry
+    /// the SA-range scan looked at, accepted or not.
+    pub(super) candidates_examined: Counter,
+    /// Candidate suffixes `iterate_sa_range` accepted as real matches (since last drain).
+    ///
+    /// Together with `candidates_examined` this settles why tryptic search is ~12.5x slower
+    /// than non-tryptic on 5–10 aa peptides: a low accepted/examined ratio means the scan is
+    /// simply sifting ~1/ratio times more candidates to reach `max_matches` (make each check
+    /// cheaper), whereas a ratio near 1 with the cutoff rarely reached means whole SA ranges
+    /// are being scanned to exhaustion (a `max_candidates` scan cap is the fix).
+    pub(super) candidates_accepted: Counter
+}
+
+impl SearchMetrics {
+    pub(super) const fn new() -> Self {
+        Self {
+            search_bounds_ns: Counter::new(),
+            match_iter_ns: Counter::new(),
+            candidates_examined: Counter::new(),
+            candidates_accepted: Counter::new()
+        }
+    }
+}
+
+impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
+    /// Returns `(search_bounds_ns, match_iter_ns)` accumulated since the last call and resets both
+    /// counters to zero.  Safe to call concurrently with ongoing searches (relaxed ordering).
+    ///
+    /// Present in both feature configurations so callers need no `cfg`; without the `metrics`
+    /// feature it always returns `(0, 0)`.
+    pub fn drain_timing_ns(&self) -> (u64, u64) {
+        (self.metrics.search_bounds_ns.drain(), self.metrics.match_iter_ns.drain())
+    }
+
+    /// Returns `(candidates_examined, candidates_accepted)` accumulated by `iterate_sa_range`
+    /// since the last call and resets both counters to zero. Same contract as
+    /// `drain_timing_ns`: always present, always `(0, 0)` without the `metrics` feature.
+    ///
+    /// The ratio is the SA-range scan's acceptance rate; the tryptic paths are the interesting
+    /// ones, since a non-tryptic I/L-free query never enters `iterate_sa_range` at all.
+    pub fn drain_candidate_counts(&self) -> (u64, u64) {
+        (self.metrics.candidates_examined.drain(), self.metrics.candidates_accepted.drain())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sa_searcher::test_utils::example_searcher;
+
+    // drain_timing_ns returns the accumulated counters and resets them to zero.
+    // Without the `metrics` feature the counters are no-op ZSTs, so the drain is always (0, 0)
+    // — the API stays present either way so callers need no `cfg`.
+    #[test]
+    fn test_drain_timing_ns() {
+        let searcher = example_searcher();
+        assert_eq!(searcher.drain_timing_ns(), (0, 0));
+
+        searcher.metrics.search_bounds_ns.store(123);
+        searcher.metrics.match_iter_ns.store(456);
+        let expected = if cfg!(feature = "metrics") { (123, 456) } else { (0, 0) };
+        assert_eq!(searcher.drain_timing_ns(), expected);
+        assert_eq!(searcher.drain_timing_ns(), (0, 0)); // reset after draining
+    }
+
+    // Same contract for the candidate counters.
+    #[test]
+    fn test_drain_candidate_counts() {
+        let searcher = example_searcher();
+        assert_eq!(searcher.drain_candidate_counts(), (0, 0));
+
+        searcher.metrics.candidates_examined.store(70);
+        searcher.metrics.candidates_accepted.store(7);
+        let expected = if cfg!(feature = "metrics") { (70, 7) } else { (0, 0) };
+        assert_eq!(searcher.drain_candidate_counts(), expected);
+        assert_eq!(searcher.drain_candidate_counts(), (0, 0)); // reset after draining
+    }
+
+    // With `metrics` on, `iterate_sa_range` must actually count what it scans — and only what
+    // *it* scans: the counters exist to measure the acceptance rate of the validating path, so
+    // the fast path (which accepts a whole SA range without inspecting entries) must not
+    // contribute. A text of all 'L' searched for "I" with equate_il=false enters the validating
+    // path and rejects every candidate: 70 examined, 0 accepted.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_candidate_counts_are_accumulated() {
+        use crate::sa_searcher::{SearchAllSuffixesResult, test_utils::searcher_over_text};
+
+        let n = 70usize;
+        let searcher = searcher_over_text(&format!("{}$", "L".repeat(n)), 1);
+
+        // "I" matches all 70 'L' positions during the bound search (L is normalized to I), but
+        // equate_il=false rejects every one of them: acceptance rate 0.
+        searcher.drain_candidate_counts();
+        assert_eq!(
+            searcher.search_matching_suffixes(b"I", usize::MAX, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(searcher.drain_candidate_counts(), (n as u64, 0));
+
+        // Same range with equate_il=true accepts everything it examines — but takes the fast
+        // path, which bypasses iterate_sa_range entirely, so nothing is counted at all.
+        searcher.search_matching_suffixes(b"I", usize::MAX, true, false);
+        assert_eq!(searcher.drain_candidate_counts(), (0, 0));
+    }
+}
