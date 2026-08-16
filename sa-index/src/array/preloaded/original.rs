@@ -97,12 +97,20 @@ fn write_vec_i64(vec: Vec<i64>, writer: &mut impl Write) -> std::io::Result<()> 
     Ok(())
 }
 
-/// Reads little-endian `i64`s into `vec` until the reader is exhausted, in 8 KiB chunks so a
-/// UniProt-scale body does not need a second copy of itself in memory. Callers bound the reader to
-/// the body they want; a trailing partial entry is dropped.
+/// Bytes pulled out of the reader per iteration of the refill loop below.
+///
+/// Must stay at or above `binary_traits::load_owned`'s `BufReader` capacity, for the reason spelled
+/// out at `bitarray::binary`'s constant of the same name: below it, `BufReader::read` declines to
+/// bypass its own buffer and every byte of the body is copied twice. The two constants are separate
+/// only because the two `fill_buffer` helpers are; they belong in step.
+const READ_CHUNK_BYTES: usize = 4 << 20;
+
+/// Reads little-endian `i64`s into `vec` until the reader is exhausted, in [`READ_CHUNK_BYTES`]
+/// chunks so a UniProt-scale body does not need a second copy of itself in memory. Callers bound
+/// the reader to the body they want; a trailing partial entry is dropped.
 fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result<()> {
     vec.clear();
-    let mut buffer = vec![0; 8 * 1024];
+    let mut buffer = vec![0; READ_CHUNK_BYTES];
 
     loop {
         let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;

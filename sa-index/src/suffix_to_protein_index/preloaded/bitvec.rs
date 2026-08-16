@@ -119,9 +119,20 @@ impl WriteBinary for BitVecSuffixToProtein {
     }
 }
 
+/// Bytes read per iteration below. Kept at or above `binary_traits::load_owned`'s `BufReader`
+/// capacity for the reason spelled out at `bitarray::binary`'s constant of the same name: a
+/// destination smaller than that capacity makes `BufReader::read` decline to bypass its own buffer,
+/// and every byte gets copied twice.
+const READ_CHUNK_BYTES: usize = 4 << 20;
+
 /// Reads the body of a bitvec mapping, after the type byte
 /// [`InMemorySuffixToProteinMapping::read_binary`](super::InMemorySuffixToProteinMapping) consumed,
 /// and rebuilds `Rank9` from the raw bits.
+///
+/// Reads whole words, and pushes whole words. It used to read one `u64` per `read_exact` and then
+/// `push_bit` once **per bit** — a call per position in the protein text, which at UniProt scale is
+/// the most expensive thing in a preloaded startup. `push_block` appends the same word in one
+/// operation, so the file's own layout (LSB of block 0 first) is the layout that goes in.
 pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffixToProtein, Box<dyn Error>> {
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
@@ -130,24 +141,35 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     let block_count = u64::from_le_bytes(buf8) as usize;
 
     let mut bits = BitVector::with_capacity(bit_len);
-    let mut bits_pushed: u64 = 0;
+    let mut buffer = vec![0u8; READ_CHUNK_BYTES];
 
-    for _ in 0..block_count {
-        reader.read_exact(&mut buf8)?;
-        let block = u64::from_le_bytes(buf8);
-        let bits_in_block = std::cmp::min(64, bit_len - bits_pushed);
-        for bit_pos in 0..bits_in_block {
-            bits.push_bit((block >> bit_pos) & 1 == 1);
-            bits_pushed += 1;
+    let mut words_left = block_count;
+    while words_left > 0 {
+        let words = words_left.min(buffer.len() / 8);
+        let chunk = &mut buffer[..words * 8];
+        reader.read_exact(chunk)?;
+        for word in chunk.chunks_exact(8) {
+            bits.push_block(u64::from_le_bytes(word.try_into().unwrap()));
         }
+        words_left -= words;
     }
 
+    // `push_block` appends 64 bits at a time, so the vector now holds `block_count * 64` bits while
+    // the file declared `bit_len` — up to 63 more than there are text positions. `truncate` drops
+    // them *and* zeroes the tail of the final word (`clear_extra_bits`), which is what makes this
+    // byte-for-byte the vector the old per-bit loop produced. `Rank9`'s counts and
+    // `suffix_to_protein`'s `rank1` both read `bit_len`, so an over-long vector is not cosmetic.
+    bits.truncate(bit_len);
+
     // Read and discard the superblock array the `WriteBinary` impl above emitted: `Rank9::new`
-    // recomputes those counts from the raw bits. Only the mmap reader consumes them.
-    let sb_count = block_count / 8 + 1;
-    let mut discard = [0u8; 16];
-    for _ in 0..sb_count {
-        reader.read_exact(&mut discard)?;
+    // recomputes those counts from the raw bits. Only the mmap reader consumes them. Skipped in the
+    // same large chunks rather than 16 bytes at a time: at two bytes per word it is a quarter of the
+    // body's size, so a per-cell loop here would undo most of what the loop above just bought.
+    let mut skip_left = (block_count / 8 + 1) * 16;
+    while skip_left > 0 {
+        let bytes = skip_left.min(buffer.len());
+        reader.read_exact(&mut buffer[..bytes])?;
+        skip_left -= bytes;
     }
 
     Ok(BitVecSuffixToProtein { rank: Rank9::new(bits) })
@@ -172,13 +194,21 @@ mod tests {
     /// The reader rebuilds `Rank9` from the raw bits and skips the superblocks the writer emitted,
     /// so the second text is long enough to make that several cells rather than one — skip the
     /// wrong number of them and the bits that follow decode as garbage.
+    ///
+    /// The last two texts straddle the word boundary the reader's `truncate` exists for.
+    /// `many_proteins_text(n, l)` is `n * (l + 1)` positions long, so 32x8 = 256 bits fills its
+    /// final word exactly (nothing to truncate) while 33x8 = 264 leaves 8 bits of it in use (56 to
+    /// drop, and to zero). Re-serialising is what makes that a byte-level check rather than a
+    /// behavioural one: a stale bit above `bit_len` cannot change any `rank1` answer below it, so
+    /// `assert_agree` alone would pass with a vector 63 bits too long.
     #[test]
     fn test_bitvec_roundtrip() {
-        for text in [sample_text(), many_proteins_text(300, 5)] {
+        for text in [sample_text(), many_proteins_text(300, 5), many_proteins_text(32, 7), many_proteins_text(33, 7)] {
             let buf = to_binary(BitVecSuffixToProtein::new(&text));
             assert_eq!(buf[0], 2u8);
             let restored = read_bitvec_mapping(&mut Cursor::new(&buf[1..])).unwrap();
             assert_agree(&BitVecSuffixToProtein::new(&text), &restored, text.len());
+            assert_eq!(to_binary(restored), buf, "the reloaded mapping is not the one that was written");
         }
     }
 }

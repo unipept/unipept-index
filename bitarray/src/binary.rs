@@ -16,10 +16,24 @@ pub(crate) fn write_words<W: Write>(data: &[u64], writer: &mut W) -> Result<()> 
     Ok(())
 }
 
+/// Bytes pulled out of the reader per iteration of the refill loop below.
+///
+/// Chosen to be **larger than the caller's `BufReader` capacity**, not for its own sake. Every
+/// preloaded structure is read through `binary_traits::load_owned`, whose `BufReader` uses the
+/// default 8 KiB; `BufReader::read` only bypasses that internal buffer when the destination slice
+/// is at least as large as its capacity. At 8 KiB it never was, so each request was served partly
+/// from the internal buffer and partly from a fresh refill — one syscall *and two memcpys* per
+/// 8 KiB, over the whole suffix array and the whole protein text. Above the capacity the bypass
+/// applies: one syscall and one copy straight into this buffer.
+///
+/// So this is not a knob to tidy downwards. Anything below `load_owned`'s `BufReader` capacity
+/// silently restores the double copy.
+const READ_CHUNK_BYTES: usize = 4 << 20;
+
 /// Clears `data` and refills it by reading little-endian `u64` words from `reader`.
 pub(crate) fn read_words_into<R: BufRead>(data: &mut Vec<u64>, mut reader: R) -> Result<()> {
     data.clear();
-    let mut buffer = vec![0u8; 8 * 1024];
+    let mut buffer = vec![0u8; READ_CHUNK_BYTES];
     loop {
         let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
         for chunk in buffer[..bytes_read].chunks_exact(8) {
