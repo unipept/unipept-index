@@ -195,8 +195,8 @@ def host_facts() -> dict[str, str]:
         "cores": str(os.cpu_count() or 0),
         "kernel": f"{platform.system()} {platform.release()}",
         "arch": platform.machine(),
-        "rustc": _first_line(["rustc", "--version"]),
-        "cargo": _first_line(["cargo", "--version"]),
+        "rustc": tool_version("rustc"),
+        "cargo": tool_version("cargo"),
         "python": platform.python_version(),
     }
     facts.update(_memory())
@@ -207,6 +207,35 @@ def host_facts() -> dict[str, str]:
     )
     facts["systemd_run"] = "present" if has_systemd_run() else "absent"
     return facts
+
+
+def tool_version(tool: str) -> str:
+    """`<tool> --version`, asked exactly the way `bench.build` invokes cargo.
+
+    `sudo` replaces PATH with `secure_path`, and rustup installs cargo and rustc under the invoking
+    user's `~/.cargo/bin` — so asking root's PATH answers "not installed" for a toolchain that builds
+    perfectly well. Builds are handed back to the invoking user through `as_user` with a login shell
+    (see `build._cargo_build`), and the probe has to take that same route or it is answering a
+    different question from the one the run depends on.
+    """
+    if dropping_privileges():
+        # -lc: a login shell, because that is what sources the profile that puts cargo on PATH. The
+        # same spelling as the build, so the two cannot disagree about whether a toolchain exists.
+        result = subprocess.run(
+            as_user(["bash", "-lc", f"{tool} --version"]), capture_output=True, text=True, check=False
+        )
+        lines = result.stdout.strip().splitlines()
+        return lines[0] if result.returncode == 0 and lines else "?"
+    return _first_line([tool, "--version"])
+
+
+def tool_version_here(tool: str) -> str:
+    """`<tool> --version` in THIS process's environment, whoever it is running as.
+
+    Only interesting next to `tool_version`: when they disagree, the toolchain exists but the route
+    the build takes cannot see it, which is a different problem with a different fix.
+    """
+    return _first_line([tool, "--version"])
 
 
 def _cpu_model() -> str:

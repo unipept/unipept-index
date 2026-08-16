@@ -208,7 +208,7 @@ cells, 184 million queries" is the difference between a coffee break and an over
 
 A `warn` prints and the run continues — a dirty tree or a busy box invalidates a comparison, but
 whether to run anyway is the operator's call. A `FAIL` (a short peptide file, a missing k-mer bucket,
-no toolchain, a non-optional suite this machine cannot run) stops the session with nothing run. The
+a non-optional suite this machine cannot run) stops the session with nothing run. The
 `status` column says `run`, `skip` (optional and blocked — it will be reported as skipped) or `FAIL`,
 and a resumed session says how many of each suite's cells already have results.
 
@@ -219,6 +219,12 @@ Three ways to ask without running:
 ./sa-benchmarks/run.sh ram --dry-run     # the same, plus the per-cell plan and each cell's command
 ./sa-benchmarks/run.sh all --check && nohup sudo ./sa-benchmarks/run.sh all &
 ```
+
+The toolchain check is asked the way `bench/build.py` invokes cargo — as the invoking user under a
+login shell — because `sudo` replaces PATH with `secure_path` and a rustup toolchain lives in that
+user's `~/.cargo/bin`. It never fails the run either way: refusing to start a session that would
+have built fine is worse than the seconds cargo takes to say so itself, and the builds all happen
+before the first cell.
 
 `--check` builds nothing, writes nothing — not even a session directory — and exits **1** when the
 run could not start, so it gates an overnight sweep from a shell script. It reports a fresh session,

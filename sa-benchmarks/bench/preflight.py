@@ -25,6 +25,7 @@ progress bar re-totals from the real grid once the arms exist.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -184,18 +185,48 @@ def _machine(repo: Path, profile: Profile, plans: list[SuitePlan]) -> list[Check
         )
     )
 
-    # Builds, not measurements: without a toolchain the session cannot even start, and finding that
-    # out here costs nothing while finding it out after the plan is printed looks like a bug.
-    missing = [tool for tool in ("cargo", "rustc") if facts[tool] == "?"]
-    checks.append(
-        Check("toolchain", FAIL, f"{' and '.join(missing)} not runnable — no arm can be built")
-        if missing
-        else Check("toolchain", OK, f"{facts['rustc']} · {facts['cargo']}")
-    )
+    checks.append(_toolchain_check(facts))
 
     checks += _privilege_checks(plans, facts)
     checks += _storage_checks(profile, facts)
     return checks
+
+
+def _toolchain_check(facts: dict[str, str]) -> Check:
+    """Can the arms be built — asked along the route `bench.build` actually takes.
+
+    Under `sudo`, PATH is replaced by `secure_path` and a rustup toolchain lives in the invoking
+    user's `~/.cargo/bin`, so a probe of root's PATH answers "no toolchain" for a box that builds
+    fine. Builds are handed back to that user under a login shell, and so is this.
+
+    Never a `FAIL`, deliberately, however it comes out. The two mistakes are not symmetric: a false
+    negative here would refuse to start a session that would have worked, while a false positive
+    costs the seconds it takes cargo to say so itself — and the builds run before the first cell, so
+    a real missing toolchain still stops the run before anything is measured.
+    """
+    missing = [tool for tool in ("cargo", "rustc") if facts[tool] == "?"]
+    if not missing:
+        return Check("toolchain", OK, f"{facts['rustc']} · {facts['cargo']}")
+
+    named = " and ".join(missing)
+    # Runnable here but not along the build's route: the toolchain exists, the build just will not
+    # find it. Worth separating, because the fix is the invoking user's shell profile, not rustup.
+    if rig.dropping_privileges() and all(rig.tool_version_here(tool) != "?" for tool in missing):
+        user = os.environ.get("SUDO_USER", "the invoking user")
+        return Check(
+            "toolchain",
+            WARN,
+            f"{named} runs here but not under `bash -lc` as {user}, which is how builds run — "
+            f"add ~/.cargo/bin to that account's login profile if the build fails",
+        )
+    if rig.is_root() and not rig.dropping_privileges():
+        return Check(
+            "toolchain",
+            WARN,
+            f"{named} not runnable as root (sudo's secure_path drops ~/.cargo/bin) — prefer "
+            f"'sudo ./sa-benchmarks/run.sh ...' from your own account, which hands builds back to you",
+        )
+    return Check("toolchain", WARN, f"{named} not runnable — the first build will fail if this is real")
 
 
 def _privilege_checks(plans: list[SuitePlan], facts: dict[str, str]) -> list[Check]:
