@@ -1,0 +1,75 @@
+description = "The three accelerators crossed: k-mer table x mlp_batch x validate_batch"
+
+mode = "matrix"
+ordering = "sequential"
+
+notes = """
+The one deliberately MULTIPLICATIVE suite in the harness, and the only one that needs to be.
+
+`kmer`, `mlp` and `validate` each sweep their own knob against a fixed background, which answers
+"what is this knob's curve" at a cost that adds rather than multiplies. What they cannot answer is
+whether the three optima are simultaneously reachable — a set of one-at-a-time winners is only the
+best configuration if the knobs do not interact, and here there is reason to think they might:
+
+  * the k-mer table removes most of the binary search's probes, which is most of what `mlp_batch`
+    was overlapping. Batching has less latency to hide once a table is attached.
+  * `mlp_batch` and `validate_batch` both hold misses in flight, against a fixed number of
+    line-fill buffers per core, so their outstanding misses go roughly as their PRODUCT.
+  * the table changes which of the two phases dominates, and the two batches live in different
+    phases.
+
+So the axes are deliberately coarse — three values each, not the full curves — because the question
+is whether the peak MOVES, not where exactly it sits. `kmer`, `mlp` and `validate` own the
+resolution; this suite owns the corners.
+
+All four `equate_il` x `tryptic` combinations, `mixed` only. Adding the length regimes on top would
+be a second multiplication for a suite that is already the expensive one, and `defaults` reports
+what each regime costs at the shipped tuple.
+
+Read the winners table first. If every context picks the same tuple, the three knobs are separable
+and their individual suites can be trusted on their own. If the winner moves, the tuple that ships
+has to be chosen for the context that matters, and the individual curves are each reporting one
+slice through a surface.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts.
+"""
+
+[defaults]
+runs = 20
+amount = 10000
+max_matches = 10000
+files = ["mixed"]
+
+[[sweep]]
+name = "combos"
+strategy = "full"
+arms = ["preloaded", "mmap", "pprot"]
+kmer = [0, 5, 6]
+equate_il = [true]
+tryptic = [true, false]
+base_every = 12
+
+[sweep.tune]
+mlp_batch      = [1, 16, 64]
+validate_batch = [16, 64, 256]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

@@ -17,15 +17,17 @@ them was a comment in one or more of the scripts this replaces:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import grid
 from .config import TUNE_PREFIX, Cell, Suite
 from .profile import Profile
-from .rig import check_peptide_supply, drop_caches, is_root
+from .rig import RigError, check_peptide_supply, drop_caches, is_root
 
 #: Exit status of a process killed by SIGKILL, which under a cgroup ceiling means the OOM killer.
 OOM_EXIT = 137
@@ -53,13 +55,20 @@ class Runner:
         binaries: dict[str, Path],
         out_dir: Path,
         echo=print,
+        progress=None,
     ) -> None:
         self.suite = suite
         self.profile = profile
         self.binaries = binaries
         self.out_dir = out_dir
         self.echo = echo
-        out_dir.mkdir(parents=True, exist_ok=True)
+        #: Optional `bench.progress.Progress`; the runner is the only place that knows when a cell
+        #: has finished and what it was worth, so it is what advances the bar.
+        self.progress = progress
+        # Not created here: `--check` and `--dry-run` build a Runner purely to expand and weigh the
+        # cell list, and a question about a run should not leave a session directory behind.
+        self._grid: dict[tuple, list[dict]] = {}
+        self._grid_key: tuple | None = None
 
     # -- planning
 
@@ -67,34 +76,126 @@ class Runner:
         """Suite defaults with this cell's axis values laid over them."""
         return {**self.suite.defaults, **cell.axes}
 
-    def preflight(self, cells: list[Cell]) -> None:
-        """Checks the query supply for every distinct (peptide file, runs x amount) the plan needs.
+    @property
+    def grid(self) -> dict[tuple, list[dict]]:
+        """`(arm, threads, ceiling_gb) -> [grid cell]` for a `[[sweep]]` suite; empty otherwise.
 
-        Up front, because the harness consumes lines sequentially: a short file shortens the later
-        reps rather than failing, so the run completes and measures something else.
+        Recomputed once the arms are built, because the shipped tuning defaults are read out of a
+        binary: before the build there may be none to ask, and a dry run then reports a cell count
+        that is an upper bound (see `tuning_defaults`).
+        """
+        key = tuple(sorted(self.binaries))
+        if self._grid_key != key:
+            self._grid = self._expand_grid()
+            self._grid_key = key
+        return self._grid
+
+    def _expand_grid(self) -> dict[tuple, list[dict]]:
+        if not self.suite.sweeps:
+            return {}
+        return grid.expand(
+            self.suite.sweeps,
+            tuning_defaults(self.binaries, self.profile.repo, echo=self.echo),
+            suite_axes=self.suite.axes,
+            suite_files=self.suite.defaults.get("files", []),
+            suite_defaults=self.suite.defaults,
+        )
+
+    def grid_for(self, cell: Cell) -> list[dict]:
+        """This cell's in-process grid: the blocks that named its arm, thread count and ceiling."""
+        key = (cell.arm.name, cell.axes.get("threads", "default"), cell.axes.get("ceiling_gb", 0))
+        return self.grid.get(key, [])
+
+    def applicable(self, cells: list[Cell]) -> list[Cell]:
+        """Drops the processes no `[[sweep]]` block asked for.
+
+        `[axes]` is a product over every arm, but a block may name only some of them — the thread
+        ladder is swept on the mapped arm and only sampled on the preloaded one, because a preloaded
+        index load is the most expensive thing in the suite and there are no faults there to
+        overlap. Those combinations are absences by design, not gaps, so they are dropped here
+        rather than each becoming a process that pays an index load to run nothing.
+        """
+        if not self.suite.sweeps:
+            return cells
+        kept = [cell for cell in cells if self.grid_for(cell)]
+        for cell in cells:
+            if not self.grid_for(cell):
+                self.echo(f"  no sweep covers {cell.label} — not run")
+        return kept
+
+    def weight(self, cell: Cell) -> int:
+        """Timed queries this cell will run — its share of the session's cost.
+
+        What the progress bar apportions itself over, and what a plan totals. Not the cell count:
+        cells differ by orders of magnitude, so counting them would describe a different run.
+        """
+        settings = self.settings(cell)
+        runs, amount = int(settings.get("runs", 100)), int(settings.get("amount", 10_000))
+        if self.suite.sweeps:
+            return grid.query_count(self.grid_for(cell), runs, amount)
+        return runs * amount
+
+    def requirements(self, cells: list[Cell]) -> dict[str, int]:
+        """Peptide-file name -> lines these cells will consume from it.
+
+        Separate from `check_supply` so the same arithmetic can be reported before a run starts
+        and enforced when it does, rather than the two drifting apart.
         """
         needed: dict[str, int] = {}
         for cell in cells:
             settings = self.settings(cell)
             if self.suite.mode == "matrix":
-                # Matrix mode re-reads the first `amount` lines for every cell, so it needs `amount`
-                # lines, not `runs * amount`.
-                for name in self.suite.matrix.get("files", []):
-                    needed[name] = max(needed.get(name, 0), int(settings.get("amount", 10_000)))
+                # Every grid cell re-reads the same prefix of the file, so the requirement is the
+                # largest `amount` any cell asks for — not the sum, and not `runs * amount`.
+                for entry in self.grid_for(cell):
+                    name = entry["file"]
+                    wanted = int(entry.get("amount", settings.get("amount", 10_000)))
+                    needed[name] = max(needed.get(name, 0), wanted)
                 continue
             name = settings["peptides"]
             required = int(settings.get("runs", 100)) * int(settings.get("amount", 10_000))
             needed[name] = max(needed.get(name, 0), required)
+        return needed
 
-        for name, required in needed.items():
+    def check_supply(self, cells: list[Cell]) -> None:
+        """Enforces the query supply for every distinct (peptide file, runs x amount) the plan needs.
+
+        The harness consumes lines sequentially, so a short file does not fail — it shortens the
+        later reps, and the run completes having measured something else. `bench.preflight` reports
+        this before the session starts; this is where it is enforced, so a cell can never run
+        against a file that cannot feed it however the runner was reached.
+        """
+        for name, required in self.requirements(cells).items():
             check_peptide_supply(self.profile.peptide_file(name), required)
 
     # -- execution
 
+    def completed(self, cell: Cell) -> bool:
+        """True when `run_cell` would skip this cell: it already has results, or a did-not-fit marker.
+
+        Resuming is cell-granular, so this is also what the plan and the progress bar have to weigh
+        a resumed session by — counting work that will not be done again would predict a session
+        several times longer than it is.
+        """
+        jsonl = self.out_dir / f"{cell.label}.jsonl"
+        return (jsonl.exists() and jsonl.stat().st_size > 0) or (self.out_dir / f"{cell.label}.oom").exists()
+
     def run(self, cells: list[Cell]) -> list[CellResult]:
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        # Weighed once, before the first cell: a cell that finishes writes its own jsonl, and asking
+        # afterwards whether it was already complete would answer yes for everything.
+        weights = {cell.label: 0 if self.completed(cell) else self.weight(cell) for cell in cells}
+        if self.progress:
+            self.progress.begin_suite(self.suite.name, sum(weights.values()), len(cells))
+
         results = []
         for cell in cells:
-            results.append(self.run_cell(cell))
+            result = self.run_cell(cell)
+            results.append(result)
+            if self.progress:
+                self.progress.cell_done(
+                    weights[cell.label], ran=result.status != "skipped", seconds=result.seconds
+                )
         return results
 
     def run_cell(self, cell: Cell) -> CellResult:
@@ -116,7 +217,9 @@ class Runner:
 
         started = time.monotonic()
         with log.open("w") as handle:
-            completed = subprocess.run(command, stdout=handle, stderr=subprocess.STDOUT, check=False)
+            completed = subprocess.run(
+                command, stdout=handle, stderr=subprocess.STDOUT, env=self._env(cell), check=False
+            )
         elapsed = time.monotonic() - started
 
         if completed.returncode == 0:
@@ -151,7 +254,7 @@ class Runner:
         command += ["--max-matches", str(settings.get("max_matches", 10_000))]
 
         if self.suite.mode == "matrix":
-            command += self._matrix_args(settings)
+            command += self._sweep_args(cell, settings)
         else:
             command += ["--peptide-file", str(self.profile.peptide_file(settings["peptides"]))]
             command += self._single_args(cell, settings)
@@ -159,6 +262,58 @@ class Runner:
         if settings.get("no_theoretical_memory"):
             command.append("--no-theoretical-memory")
         return command
+
+    def _sweep_args(self, cell: Cell, settings: dict[str, Any]) -> list[str]:
+        """A `[[sweep]]` suite: the driver expands the grid and hands the harness the cell list.
+
+        The grid file is written beside the results rather than to a temporary path, because it is
+        the record of what this process was asked to run — a report that cannot be traced back to a
+        cell list is a report that cannot be reproduced.
+        """
+        cells = self.grid_for(cell)
+        if not cells:
+            raise RigError(
+                f"no [[sweep]] block covers {cell.label} — every cell of a matrix suite must have "
+                f"work to do, or the process pays an index load for nothing"
+            )
+
+        # Suites name peptide files by profile key ("mixed"); the harness knows them by the stem of
+        # the path it was handed ("peptides_5_50"). Translated here, at the boundary between the
+        # two, rather than by teaching either side about the other's naming. The key travels along
+        # as `bucket` and is what the records carry, so a report reads in the suite's vocabulary on
+        # every machine — the stem is one profile's filename, not a property of the measurement.
+        files = sorted({entry["file"] for entry in cells})
+        paths = {name: self.profile.peptide_file(name) for name in files}
+        cells = [{**entry, "bucket": entry["file"], "file": paths[entry["file"]].stem} for entry in cells]
+        # In `grids/`, not beside the results: `records.load_dir` globs `*.jsonl` over the results
+        # directory, and a grid file is JSONL too — left there it would be read back as a few
+        # hundred records with no measurements in them.
+        grid_path = grid.write(cells, self.out_dir / "grids" / f"{cell.label}.jsonl")
+
+        args = ["--grid-file", str(grid_path)]
+        args += ["--matrix", "--matrix-files", ",".join(str(path) for path in paths.values())]
+        for k in sorted({entry["kmer_k"] for entry in cells} - {0}):
+            args += self._kmer_file_arg(k)
+        if settings.get("runs_target_band"):
+            args += ["--runs-target-band", str(settings["runs_target_band"])]
+            args += ["--min-runs", str(settings.get("min_runs", 5))]
+        return args
+
+    def _kmer_file_arg(self, k: int) -> list[str]:
+        """`--kmer-file k=<path>`, or nothing when the table has to be built in-process.
+
+        Same trade as `_kmer_args`: a table the profile does not have is built rather than dropped,
+        because dropping it would quietly measure a different index while building it only costs
+        startup time.
+        """
+        table = self.profile.kmer_table(f"k{k}")
+        if table:
+            return ["--kmer-file", f"{k}={table}"]
+        self.echo(
+            f"  note: profile '{self.profile.name}' has no pre-built 'k{k}' table, so it is built "
+            f"in-process instead (same table, paid at startup)"
+        )
+        return []
 
     def _single_args(self, cell: Cell, settings: dict[str, Any]) -> list[str]:
         args: list[str] = []
@@ -199,36 +354,42 @@ class Runner:
         )
         return ["--build-kmer-table", str(k)]
 
-    def _matrix_args(self, settings: dict[str, Any]) -> list[str]:
-        matrix = self.suite.matrix
-        files = [str(self.profile.peptide_file(name)) for name in matrix.get("files", [])]
-        args = ["--matrix", "--matrix-files", ",".join(files)]
-        if "batches" in matrix:
-            args += ["--matrix-batches", ",".join(str(batch) for batch in matrix["batches"])]
-        for key, flag in (("k5", "--kmer5-file"), ("k6", "--kmer6-file")):
-            if key in self.profile.kmer_tables:
-                args += [flag, str(self.profile.kmer_tables[key])]
-        if matrix.get("kmer6"):
-            args.append("--matrix-kmer6")
-        return args
-
     def _wrapper(self, settings: dict[str, Any]) -> list[str]:
-        """`systemd-run --scope` prefix imposing this cell's memory ceiling and thread count."""
+        """`systemd-run --scope` prefix imposing this cell's memory ceiling.
+
+        Only a ceiling needs the scope. Pinning threads is setting an environment variable, which
+        `_env` does directly — routing that through systemd-run too would have made every thread
+        sweep need root, cgroup v2 and a working `--setenv`, none of which the thread count itself
+        requires. When a cell has both, the scope is already there and carries the variable across
+        it (`rig.setenv_reaches_child` is the probe that this actually happens).
+        """
         ceiling = float(settings.get("ceiling_gb", 0) or 0)
-        threads = settings.get("threads", "default")
-        constrained = ceiling > 0
-        pinned = str(threads) != "default"
-        if not (constrained or pinned):
+        if ceiling <= 0:
             return []
 
         wrapper = ["systemd-run", "--scope", "--quiet"]
-        if pinned:
+        threads = settings.get("threads", "default")
+        if str(threads) != "default":
             wrapper.append(f"--setenv=RAYON_NUM_THREADS={threads}")
-        if constrained:
-            # Swap off, so the floor is a clean OOM rather than a measurement of the swap device.
-            wrapper += ["-p", f"MemoryMax={ceiling:g}G", "-p", "MemorySwapMax=0"]
+        # Swap off, so the floor is a clean OOM rather than a measurement of the swap device.
+        wrapper += ["-p", f"MemoryMax={ceiling:g}G", "-p", "MemorySwapMax=0"]
         wrapper.append("--")
         return wrapper
+
+    def _env(self, cell: Cell) -> dict[str, str]:
+        """The child's environment: this process's, plus the cell's thread count when it pins one.
+
+        Set unconditionally, even when `_wrapper` has already passed it through `--setenv`, so the
+        two paths cannot disagree about what a cell ran at.
+        """
+        env = dict(os.environ)
+        threads = self.settings(cell).get("threads", "default")
+        if str(threads) != "default":
+            env["RAYON_NUM_THREADS"] = str(threads)
+        else:
+            # An inherited value would silently pin every "default" cell to whatever the shell had.
+            env.pop("RAYON_NUM_THREADS", None)
+        return env
 
     # -- dry run
 
@@ -237,15 +398,62 @@ class Runner:
         lines = [
             f"suite      : {self.suite.name} ({self.suite.mode} mode, {self.suite.ordering} ordering)",
             f"arms       : " + ", ".join(f"{arm.name}[{arm.feature_string or 'default'}]" for arm in self.suite.arms),
-            f"cells      : {len(cells)}",
+            f"processes  : {len(cells)}" if self.suite.sweeps else f"cells      : {len(cells)}",
             f"results    : {self.out_dir}",
             "",
         ]
+        total_queries = 0
         for cell in cells:
             settings = self.settings(cell)
-            reps = int(settings.get("runs", 100)) * int(settings.get("amount", 10_000))
-            lines.append(f"  {cell.describe()}   ({reps:,} queries)")
+            runs, amount = int(settings.get("runs", 100)), int(settings.get("amount", 10_000))
+            if self.suite.sweeps:
+                # A process, not a measurement: what costs time is the grid inside it, and the
+                # index load it pays once for all of them.
+                inner = self.grid_for(cell)
+                queries = grid.query_count(inner, runs, amount)
+                lines.append(f"  {cell.describe()}   ({len(inner)} grid cells, {queries:,} queries)")
+            else:
+                queries = runs * amount
+                lines.append(f"  {cell.describe()}   ({queries:,} queries)")
+            total_queries += queries
+
+        if self.suite.sweeps:
+            grid_cells = sum(len(self.grid_for(cell)) for cell in cells)
+            lines += [
+                "",
+                f"total      : {len(cells)} index loads, {grid_cells} grid cells, "
+                f"{total_queries:,} timed queries",
+            ]
         return lines
+
+
+def tuning_defaults(binaries: dict[str, Path], repo: Path, echo=print) -> dict[str, Any]:
+    """The shipped `SearchTuning`, read out of a built harness.
+
+    A grid that sweeps one knob has to hold the others at their shipped values, and this side must
+    know what those are to tell "the default point" from "the swept value that happens to equal it"
+    — the two are one measurement and must not be run twice. Asking the binary rather than keeping a
+    copy here is what stops that copy from going stale the day a default is re-tuned, silently and
+    while still producing plausible tables.
+
+    Before the arms are built there may be nothing to ask. That only happens under `--dry-run`, and
+    the consequence is bounded: the default point stops deduplicating against the swept values equal
+    to it, so the planned cell count is an upper bound by at most one cell per knob. Said out loud
+    rather than guessed at.
+    """
+    for candidate in [*binaries.values(), repo / "target" / "release" / "sa-benchmarks"]:
+        if not candidate.exists():
+            continue
+        result = subprocess.run(
+            [str(candidate), "--tuning-defaults"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    echo(
+        "  note: no harness binary to read the shipped tuning defaults from, so the planned cell "
+        "count is an upper bound (a swept value equal to a default will not fold into the base cell)"
+    )
+    return {}
 
 
 def _warmup_for(cell: Cell, warmup: Any) -> str | None:

@@ -250,9 +250,17 @@ def _first_line(command: list[str]) -> str:
         return "?"
 
 
+#: `wc -l` on a full-database peptide file is seconds, not milliseconds, and the answer cannot change
+#: during a run. The preflight asks for every file once and the runner asks again per suite, so a
+#: session of eleven suites would otherwise pay for the same count a dozen times.
+_LINE_COUNTS: dict[Path, int] = {}
+
+
 def count_lines(path: Path) -> int:
-    result = subprocess.run(["wc", "-l", str(path)], capture_output=True, text=True, check=True)
-    return int(result.stdout.split()[0])
+    if path not in _LINE_COUNTS:
+        result = subprocess.run(["wc", "-l", str(path)], capture_output=True, text=True, check=True)
+        _LINE_COUNTS[path] = int(result.stdout.split()[0])
+    return _LINE_COUNTS[path]
 
 
 def check_peptide_supply(path: Path, needed: int) -> None:

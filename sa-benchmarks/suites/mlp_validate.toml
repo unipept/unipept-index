@@ -1,0 +1,67 @@
+description = "mlp_batch x validate_batch — the one two-knob plane with a mechanism behind it"
+
+mode = "matrix"
+ordering = "sequential"
+
+notes = """
+The two batches crossed. `mlp` and `validate` each own one of them as a curve against a fixed
+background; this suite is the plane those two curves are slices through, and it exists because there
+is a specific reason to think the slices are not the whole picture.
+
+The mechanism: both knobs hold in-flight misses. `mlp_batch` interleaves whole peptide searches per
+rayon task; `validate_batch` interleaves candidate suffixes inside one range scan. They stack — the
+misses outstanding at any moment go roughly as their PRODUCT — against a fixed number of line-fill
+buffers per core. Past that limit the extra requests queue rather than overlap, so the best value of
+each should depend on the other, and the ridge through the plane should run diagonally.
+
+That is the whole question: **is the ridge diagonal?** If it is, neither curve can be read on its
+own and the pair has to be chosen together. If the peak sits at the same `mlp_batch` for every
+`validate_batch`, the two are separable and `mlp` and `validate` are sufficient.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts.
+
+Related but not the same: `combos` adds the k-mer table as a third axis at a coarser resolution, and
+asks whether all three accelerators are simultaneously reachable. This suite is the fine-grained
+two-knob picture.
+"""
+
+[defaults]
+runs = 20
+amount = 10000
+max_matches = 10000
+files = ["mixed"]
+
+[[sweep]]
+name = "plane"
+strategy = "pairs"
+arms = ["preloaded", "mmap", "pprot"]
+kmer = [5]
+equate_il = [true]
+tryptic = [true, false]
+base_every = 12
+
+[sweep.tune]
+mlp_batch      = [1, 4, 16, 64]
+validate_batch = [16, 32, 64, 128, 256]
+
+[[sweep.pairs]]
+axes = ["mlp_batch", "validate_batch"]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

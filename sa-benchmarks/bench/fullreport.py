@@ -24,9 +24,10 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, records, rig
+from . import config, preflight, records, rig
 from .html import render_page
 from .profile import Profile, ProfileError, load as load_profile
+from .progress import Progress
 from .report import Report, Table
 
 
@@ -46,13 +47,22 @@ def run_all(args, repo: Path) -> int:
     from .__main__ import run_suite
 
     try:
-        plan = _load_plan(repo)
+        plan = load_plan(repo)
         profile = load_profile(args.profile, repo)
     except (ProfileError, config.ConfigError, rig.RigError) as error:
         print(f"error: {error}")
         return 1
 
     state = rig.git_state(repo)
+    if args.report_only:
+        # Re-rendering names the session it re-renders. Falling back to a fresh timestamped
+        # directory would silently produce an empty report instead of the one that was asked for.
+        if not args.out:
+            print("error: --report-only needs --out <session dir> naming the session to re-render")
+            return 1
+        if not args.out.is_dir():
+            print(f"error: no session at {args.out}")
+            return 1
     session = args.out or (profile.scratch / f"{state.short}-{time.strftime('%Y%m%d-%H%M%S')}")
     session.mkdir(parents=True, exist_ok=True)
 
@@ -63,11 +73,35 @@ def run_all(args, repo: Path) -> int:
     print(f"== session {session} ==")
     print(f"== suites: {', '.join(names)} ==\n")
 
+    # One preflight for the whole session, before the first build. Suites that need root run last,
+    # so without this a session can spend an evening on `defaults` and only then discover it was
+    # never going to be able to run `ram` — and nobody learns how big the run is until it is over.
+    progress = None
+    if not args.report_only:
+        flight = preflight.check(names, args, repo, profile, session, optional=optional)
+        print("\n".join(preflight.render(flight, header=f"preflight — {len(names)} suites")))
+        print()
+        # Under --dry-run the checks are the deliverable, not a gate: a plan is usually being read on
+        # a machine other than the one that will run it.
+        if not flight.ok and not args.dry_run:
+            print("error: preflight failed; nothing was run")
+            return 1
+        if not args.dry_run:
+            progress = Progress(flight.weights)
+
+    echo = progress.echo if progress else print
     outcomes: list[SuiteOutcome] = []
     for name in names:
-        outcome = _run_one(run_suite, name, args, repo, session, optional)
+        outcome = _run_one(run_suite, name, args, repo, session, optional, progress)
         outcomes.append(outcome)
-        print(f"-- {name}: {outcome.status}{(' — ' + outcome.reason) if outcome.reason else ''}\n")
+        # Under a second means the suite never started (blocked, misconfigured); a clock there
+        # would read as "it ran, and took no time".
+        clock = f" in {outcome.seconds / 60:.1f} min" if outcome.seconds >= 1 else ""
+        echo(f"-- {name}: {outcome.status}{clock}{(' — ' + outcome.reason) if outcome.reason else ''}\n")
+        if not args.dry_run:
+            _write_timings(session, outcomes)
+    if progress:
+        progress.close()
 
     if args.dry_run:
         return 0
@@ -92,28 +126,64 @@ def run_all(args, repo: Path) -> int:
     return 0
 
 
-def _run_one(run_suite, name: str, args, repo: Path, session: Path, optional: set[str]) -> SuiteOutcome:
+def _run_one(
+    run_suite,
+    name: str,
+    args,
+    repo: Path,
+    session: Path,
+    optional: set[str],
+    progress: Progress | None = None,
+) -> SuiteOutcome:
     """Runs one suite, converting a can't-run into a recorded skip when the suite is optional."""
-    print(f"===== {name} =====")
+    echo = progress.echo if progress else print
+    echo(f"===== {name} =====")
     started = time.monotonic()
     try:
-        _, report = run_suite(name, args, repo, session=session)
+        # `checked`: the session-wide preflight above already cleared this suite, and re-running it
+        # per suite would re-print the same block a dozen times.
+        _, report = run_suite(name, args, repo, session=session, echo=echo, progress=progress, checked=True)
     except rig.RigError as error:
+        # A suite that never started still holds its share of the bar; without this the session
+        # could only ever reach the fraction the suites that did run were worth.
+        if progress:
+            progress.drop_suite(name)
         if name in optional:
             return SuiteOutcome(name, "skipped", reason=str(error), seconds=time.monotonic() - started)
         return SuiteOutcome(name, "failed", reason=str(error), seconds=time.monotonic() - started)
     except (ProfileError, config.ConfigError) as error:
         # A misconfigured suite must not take the whole session down: the other four still answer
         # their questions, and the report will say this one did not.
+        if progress:
+            progress.drop_suite(name)
         return SuiteOutcome(name, "failed", reason=str(error), seconds=time.monotonic() - started)
 
     elapsed = time.monotonic() - started
     if report is None:
         # `--dry-run` plans but produces nothing; calling that "ok" would read as a completed suite.
         return SuiteOutcome(name, "planned", seconds=elapsed)
-    outcome = SuiteOutcome(name, "ok", report=report, seconds=elapsed)
+    # A re-render's own duration is not what the suite cost, and printing it under "wall clock"
+    # would quietly replace a six-minute sweep with the second it took to redraw its page.
+    outcome = SuiteOutcome(name, "ok", report=report, seconds=0.0 if args.report_only else elapsed)
     outcome.settings = _settings_line(name, args, repo)
     return outcome
+
+
+def _write_timings(session: Path, outcomes: list[SuiteOutcome]) -> None:
+    """Per-suite wall clock, rewritten after every suite finishes.
+
+    `report.json` carries the same numbers, but only once the whole session is over — and the
+    sessions whose timings are most worth having are the ones that were interrupted. Written after
+    each suite so the file is always current for the suites that have run.
+    """
+    payload = {
+        "total_minutes": round(sum(outcome.seconds for outcome in outcomes) / 60, 1),
+        "suites": {
+            outcome.name: {"status": outcome.status, "minutes": round(outcome.seconds / 60, 1)}
+            for outcome in outcomes
+        },
+    }
+    (session / "timings.json").write_text(json.dumps(payload, indent=2) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -129,10 +199,23 @@ def _assemble(
     _provenance(report, profile, state, session, outcomes)
 
     report.heading("Suites")
-    table = Table(headers=["suite", "status", "wall clock", "note"], aligns=["<", "<", ">", "<"])
+    table = Table(
+        headers=["suite", "status", "wall clock", "share", "note"], aligns=["<", "<", ">", ">", "<"]
+    )
+    total = sum(outcome.seconds for outcome in outcomes)
     for outcome in outcomes:
-        table.row(outcome.name, outcome.status, f"{outcome.seconds / 60:.1f} min", outcome.reason)
+        clock = "-" if outcome.seconds < 1 else f"{outcome.seconds / 60:.1f} min"
+        share = f"{outcome.seconds / total * 100:.0f}%" if total and outcome.seconds >= 1 else "-"
+        table.row(outcome.name, outcome.status, clock, share, outcome.reason)
+    table.row("total", "", f"{total / 60:.1f} min", "", "")
     report.table(table)
+    # Said because it decides what to cut when a session has to fit in a night: a suite's clock is
+    # its own cells plus whichever arms it was the first to need.
+    report.note(
+        "Wall clock is per suite and includes the arm builds that suite paid for; every later suite "
+        "reuses those binaries, so the first suite in the order carries the build cost for all of "
+        "them. The same numbers, per suite, are in `timings.json` and `report.json`."
+    )
 
     for outcome in outcomes:
         report.heading(outcome.name, level=2)
@@ -232,12 +315,10 @@ def _settings_line(name: str, args, repo: Path) -> str:
     if suite.axes:
         parts.append("axes " + ", ".join(f"{axis}={values}" for axis, values in sorted(suite.axes.items())))
     if suite.mode == "matrix":
-        # A matrix suite's grid lives under [matrix], not [axes] — without this its line would say
-        # nothing about what was actually swept.
-        grid = suite.matrix
-        parts.append(f"files {'/'.join(grid.get('files', []))}")
-        parts.append(f"mlp batches {grid.get('batches', [])}")
-        parts.append(f"6-mer {'included' if grid.get('kmer6') else 'excluded'}")
+        # A matrix suite's grid lives in its [[sweep]] blocks, not in [axes] — without this its line
+        # would say nothing about what was actually swept.
+        parts.append("files " + "/".join(defaults.get("files", [])))
+        parts.append("sweeps " + ", ".join(block.get("name", "?") for block in suite.sweeps))
     return " · ".join(parts)
 
 
@@ -259,7 +340,7 @@ def _machine_readable(state: rig.GitState, outcomes: list[SuiteOutcome]) -> dict
     }
 
 
-def _load_plan(repo: Path) -> dict:
+def load_plan(repo: Path) -> dict:
     path = config.suites_dir(repo) / "all.toml"
     if not path.exists():
         raise config.ConfigError(f"no master plan at {path}")

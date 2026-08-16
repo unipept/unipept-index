@@ -1,0 +1,76 @@
+description = "Both prefetch distances, crossed — and whether either is worth keeping as a knob"
+
+mode = "matrix"
+ordering = "sequential"
+
+notes = """
+Two knobs, one mechanism at two points in the search:
+
+  * `prefetch_threshold`          — how large a candidate range has to be before the two-pass
+                                    validation path is used at all, rather than a straight scan.
+  * `retrieval_prefetch_distance` — how far ahead the retrieval loop issues its hints while walking
+                                    the matched suffixes.
+
+Both are software prefetch distances, so both are bets on how far ahead the hardware needs to be
+told about a load. A distance too short does not cover the latency; too long and the line is
+evicted before it is used, or the extra hints displace something useful. The interesting shape is
+therefore a plateau with soft edges, and the useful answer is usually "anywhere in the middle".
+
+Swept as a full 4x4 cross rather than two curves, which is honest at sixteen points and lets the
+report say whether the two distances interact — they are consuming the same hardware, so a plane
+costs almost nothing extra and is the only way to find out.
+
+**This suite is expected to conclude that neither knob pays.** Both read flat in every context
+measured so far, and `docs/design/README.md` records that scalar k-mer prefetch was already killed
+for the same reason: median +0.3%, inside the noise floor, removed rather than left as a knob. A
+run that confirms flatness across both length regimes and both backends is grounds for deleting
+these two fields from `SearchTuning` — which is the point of running it. Read the resolution table
+first: a process whose residual is wider than the effects below it has not shown flatness, it has
+shown nothing.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts.
+"""
+
+[defaults]
+runs = 20
+amount = 10000
+max_matches = 10000
+# `mixed` only. Both knobs are about covering memory latency, which is a property of the access
+# pattern rather than of peptide length, and a flat result does not become more informative for
+# being confirmed in four regimes. Widen this if the plane turns out NOT to be flat.
+files = ["mixed"]
+
+[[sweep]]
+name = "plane"
+strategy = "full"
+arms = ["preloaded", "mmap", "pprot"]
+kmer = [5]
+equate_il = [true]
+tryptic = [true, false]
+base_every = 8
+
+[sweep.tune]
+prefetch_threshold          = [8, 16, 32, 64]
+retrieval_prefetch_distance = [8, 16, 32, 64]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks. Kept alongside the two extremes everywhere, because
+# a result that holds for both of them can still fail for the configuration actually deployed.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

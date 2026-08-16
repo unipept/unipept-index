@@ -6,10 +6,17 @@
 //!
 //! Two modes:
 //!   * single run  — one config from the CLI flags, `--runs` reps, one record per rep;
-//!   * `--matrix`  — load the index once and sweep the `grid` of configs
-//!     (k-mer table × equate_il × tryptic × MLP batch) across several peptide files,
-//!     writing one aggregated record (median rep + spread) per config. `--dry-run` prints
-//!     the planned config list without touching the index.
+//!   * `--matrix`  — load the index once and sweep a grid of configs across several peptide
+//!     files, writing one aggregated record (median rep + spread) per config. `--dry-run`
+//!     prints the planned config list without touching the index.
+//!
+//! The matrix grid is always the driver's: `--grid-file` names a JSONL cell list, one object per
+//! line, and each cell may set any `SearchTuning` knob plus its own rep count and query count.
+//! This binary carries no grid of its own — it used to, and a grid described half in Rust and half
+//! in TOML could only be widened by editing both, so every suite's sweep now lives in its suite
+//! file. That is also what lets a sweep vary knobs this binary has never heard of: cells are
+//! resolved through `SearchTuning`'s own serde representation, so a knob added to that struct is
+//! sweepable the same day, and a misspelled one is an error rather than a silent no-op.
 //!
 //! Dev-only: this crate is a workspace member but is excluded from `default-members`, so a
 //! plain `cargo build` skips it. Build and run it explicitly:
@@ -45,11 +52,12 @@ use rayon::prelude::*;
 use sa_index::{
     KmerTable, ProteinsBackend as _, SearchTuning, SuffixArrayBackend,
     kmer_table::AMINO_ACID_COUNT,
+    peptide_search::ProteinInfo,
     sa_searcher::{SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::SuffixToProteinMappingBackend as _
 };
 use sa_server::{ActiveSearcher, load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, System};
 use text_compression::ProteinTextBackend as _;
 
@@ -75,7 +83,24 @@ use text_compression::ProteinTextBackend as _;
 ///     which storage arm was built — used to survive only in the file name (`c167_pprot_t96.jsonl`),
 ///     so every driver script needed its own file-name parser and every one of them could disagree
 ///     about what a run meant. Now the coordinates travel inside the record.
-const SCHEMA_VERSION: u32 = 9;
+/// v10: matrix grids can be supplied by the driver (`--grid-file`), so `config` gains `sweep` and
+///     `grid_slot`. `sweep` names the block of the suite a cell came from; two blocks may measure
+///     the same configuration at different rep counts, and comparing across them would compare
+///     precisions rather than configurations. `grid_slot` distinguishes repeats of one
+///     configuration inside a single process — the drift cadence writes the same tuning point
+///     several times, and keyed on `config` alone those records would collapse into one.
+/// v11: `peptide_source` is the name the SUITE gave the file, not the file's stem, when a grid cell
+///     supplies one (`bucket`). A profile maps `mixed` to whatever that machine calls the file, so
+///     keying a report on the stem meant the same bucket was called `mixed` on one box and
+///     `peptides_5_50` on another — and a baseline comparison across two such boxes silently
+///     matched nothing. Cells without a `bucket` still record the stem.
+/// v12: the two phases production runs after retrieval are measured too, when a cell asks for them
+///     (`response`): turning each `ProteinRef` into a `ProteinInfo` — an fa-compression decode plus
+///     an accession `String` — and serialising the lot to JSON, which is what `sa-server` returns.
+///     They are recorded BESIDE `total_duration_ns` and never inside it: widening the timed region
+///     would change what every suite's throughput means and invalidate every baseline, including
+///     the regression gate. `throughput_qps` is still search plus retrieval, exactly as in v11.
+const SCHEMA_VERSION: u32 = 12;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -213,43 +238,56 @@ struct Args {
     #[arg(long)]
     help_tuning: bool,
 
-    /// Run the full parameter matrix in one process: loads the index once, then sweeps the
-    /// grid (see `expand_cells`) for each `--matrix-files` entry. Writes one aggregated
-    /// record per config to <output>/<label>.jsonl.
+    /// Print `SearchTuning::default()` as JSON and exit.
+    ///
+    /// The machine-readable twin of `--help-tuning`, and the reason the driver does not carry its
+    /// own copy of the defaults: a grid that sweeps one knob has to hold the others at the shipped
+    /// value, and a second copy of those values would go stale the day one is re-tuned — silently,
+    /// while still producing plausible tables.
+    #[arg(long)]
+    tuning_defaults: bool,
+
+    /// Run a parameter matrix in one process: loads the index once, then sweeps the cell list from
+    /// `--grid-file` for each `--matrix-files` entry. Writes one aggregated record per cell to
+    /// <output>/<label>.jsonl.
     #[arg(long)]
     matrix: bool,
 
-    /// Matrix mode: comma-separated peptide files; each becomes one "file" dimension.
-    /// File stems must be "small" / "medium" / "large" for the tryptic-collapse rule in
-    /// `expand_cells` to apply; unrecognised stems get the full (uncollapsed) grid.
+    /// Matrix mode: comma-separated peptide files; each becomes one "file" dimension. A grid cell
+    /// may name a file stem to restrict itself to one of them.
     #[arg(long, value_delimiter = ',')]
     matrix_files: Vec<PathBuf>,
 
-    /// Matrix mode: pre-built 5-mer table file (falls back to building one if omitted).
-    #[arg(long)]
-    kmer5_file: Option<PathBuf>,
-
-    /// Matrix mode: pre-built 6-mer table file (falls back to building one if omitted).
-    /// Only loaded/built at all when --matrix-kmer6 is set.
-    #[arg(long)]
-    kmer6_file: Option<PathBuf>,
-
-    /// Matrix mode: MLP batch sizes to sweep, comma-separated (1 = scalar). e.g. 1,8,16,32.
-    #[arg(long, value_delimiter = ',', default_values_t = vec![1usize, 16])]
-    matrix_batches: Vec<usize>,
-
-    /// Matrix mode: include the 6-mer table in the grid. Off by
-    /// default — the full-DB sweep showed 6-mer vs 5-mer inside the noise floor (p90 3.9%)
-    /// on medium/small and only +4.1% on large, for 3.06 GB vs 127 MB resident. Also gates
-    /// whether the (expensive) 6-mer table is built/loaded at all.
+    /// Matrix mode: the cell list to sweep, as JSONL — one `GridCell` per line. Required by
+    /// `--matrix`.
     ///
-    /// That verdict holds only while the index is resident. Under a memory ceiling the 6-mer is
-    /// +18.4% and -27.9% major faults against no table, where a 5-mer is +3.2% / -6.2% — barely
-    /// distinguishable from nothing. The table's value there is working-set size (~1 SA page per
-    /// query at k=6 vs ~7 at k=5), not probe count, and that only matters once pages can be
-    /// evicted. See the `sa-index` crate docs.
+    /// The grid is the driver's, not the harness's. Every cell names its k-mer size, its search
+    /// options and any `SearchTuning` overrides, and may carry its own `runs` and `amount`: a
+    /// screening sweep looking for 10% effects does not need the rep count that resolves 4%, and
+    /// paying for it on every cell is most of what makes a wide sweep slow.
     #[arg(long)]
-    matrix_kmer6: bool,
+    grid_file: Option<PathBuf>,
+
+    /// Matrix mode: a pre-built k-mer table, as `K=PATH`. Repeatable.
+    ///
+    /// Only the k values the grid actually uses are loaded; anything it names without a file here
+    /// is built in-process instead.
+    #[arg(long = "kmer-file", value_parser = parse_kmer_file, value_name = "K=PATH")]
+    kmer_files: Vec<(usize, PathBuf)>,
+
+    /// Stop a matrix cell early once its own p10..p90 half-spread is under this percentage.
+    ///
+    /// A fixed rep count spends the worst cell's budget on every cell, and most cells are quiet.
+    /// With a target band each cell runs `--min-runs` reps, then keeps going only while it is still
+    /// too noisy to read, up to `--runs`. The reps actually taken are recorded in `stats.runs`, so
+    /// a cell that hit the cap is visible rather than merely noisy. Off by default: `defaults`
+    /// measured its 3.9% floor at a fixed 20 reps and must keep doing so.
+    #[arg(long)]
+    runs_target_band: Option<f64>,
+
+    /// Matrix mode: reps to run before `--runs-target-band` may stop a cell. No effect without it.
+    #[arg(long, default_value_t = 5)]
+    min_runs: u32,
 
     /// Print the planned config list for the matrix sweep and exit, without
     /// loading the index. Use this to eyeball a sweep before committing a multi-hour run.
@@ -291,6 +329,13 @@ fn parse_dim(s: &str) -> Result<(String, String), String> {
         return Err(format!("empty key in '{}'", s));
     }
     Ok((key.to_string(), value.to_string()))
+}
+
+/// Parses one `--kmer-file K=PATH`. Splits on the FIRST `=`, so a path may contain one.
+fn parse_kmer_file(s: &str) -> Result<(usize, PathBuf), String> {
+    let (k, path) = s.split_once('=').ok_or_else(|| format!("expected K=PATH, got '{}'", s))?;
+    let k = k.parse::<usize>().map_err(|_| format!("'{}' is not a k-mer size in '{}'", k, s))?;
+    Ok((k, PathBuf::from(path)))
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +400,20 @@ struct BenchmarkConfig {
     peptide_source: String,
     /// Which sweep produced this record: "single" (non-matrix CLI run) or "grid" (the trimmed
     /// default matrix grid).
-    phase: String
+    phase: String,
+    /// The suite block this cell came from, verbatim from the grid file ("" for the built-in grid).
+    ///
+    /// Blocks carry their own rep and query counts, so two of them may measure the same
+    /// configuration at different precision. Comparing across them would compare how carefully each
+    /// was measured rather than what it measured, which is why the block travels with the record
+    /// instead of being reconstructed from the tuning values.
+    sweep: String,
+    /// Distinguishes repeats of one configuration inside a single process ("a" unless set).
+    ///
+    /// The drift cadence re-measures the reference configuration every few cells; keyed on `config`
+    /// alone those records would be indistinguishable and collapse into one. With the slot they
+    /// stay separate and their trend over the process becomes readable.
+    grid_slot: String
 }
 
 #[derive(Serialize)]
@@ -382,6 +440,15 @@ struct BenchmarkResult {
     candidates_examined: u64,
     /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `metrics`).
     candidates_accepted: u64,
+    /// Nanoseconds turning every `ProteinRef` into the `ProteinInfo` the server returns: an
+    /// fa-compression decode of the functional annotations plus a `String` for the accession, per
+    /// protein hit. 0 unless the cell set `response`.
+    decode_duration_ns: u64,
+    /// Nanoseconds serialising those results to JSON, the last thing the server does before the
+    /// bytes go out. 0 unless the cell set `response`.
+    serialise_duration_ns: u64,
+    /// Bytes of JSON the request would have returned. 0 unless the cell set `response`.
+    response_bytes: u64,
     /// Page faults taken across the timed region (search + retrieval), not for the whole process.
     ///
     /// `major_faults` are the ones that reached disk. On a box where the index fits they stay near
@@ -421,6 +488,21 @@ struct BenchmarkRecord {
     /// Per-config throughput spread over all reps (matrix mode only; omitted otherwise).
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<RunStats>
+}
+
+/// Half the p10..p90 spread of these reps, as a percent of their median.
+///
+/// The same statistic the driver calls `band`, computed here so a cell can decide whether it has
+/// run enough reps yet. Costs one sort per rep, against a rep that pushes tens of thousands of
+/// peptides through the index — not a cost worth avoiding.
+fn band_of(results: &[BenchmarkResult]) -> f64 {
+    let mut qps: Vec<f64> = results.iter().map(|result| result.throughput_qps).collect();
+    qps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = percentile(&qps, 0.50);
+    if median <= 0.0 {
+        return f64::INFINITY;
+    }
+    (percentile(&qps, 0.90) - percentile(&qps, 0.10)) / 2.0 / median * 100.0
 }
 
 /// Linear-interpolated percentile of an already-sorted (ascending) slice. `p` in [0, 1].
@@ -579,6 +661,7 @@ fn run_benchmark(
     max_matches: usize,
     equate_il: bool,
     tryptic: bool,
+    response: bool,
     theoretical_max_memory: u64,
     baseline_memory: u64
 ) -> BenchmarkResult {
@@ -627,6 +710,33 @@ fn run_benchmark(
     let retrieved: Vec<Vec<_>> = matched_suffixes.par_iter().map(|suf| searcher.retrieve_proteins(suf)).collect();
     let retrieval_duration_ns = retrieval_start.elapsed().as_nanos() as u64;
 
+    // Phase 3, only when the cell asks for it: everything production does between "we have the
+    // proteins" and "the client has bytes". `search_all_peptides` builds a `ProteinInfo` per hit —
+    // decoding the functional annotations and allocating the accession — and `sa-server` serialises
+    // the result. Neither was measured anywhere, so no suite could say what fraction of a real
+    // request its throughput described.
+    //
+    // Opt-in because it is potentially the largest cost in a run: at a 10,000 cutoff it decodes up
+    // to that many annotations per peptide. The knob suites are not measuring it and must not pay
+    // for it.
+    //
+    // NOT added to `total_duration_ns`. See the v12 schema note: throughput keeps meaning search
+    // plus retrieval, or every baseline in every suite silently changes meaning.
+    let (decode_duration_ns, serialise_duration_ns, response_bytes) = if response {
+        let decode_start = Instant::now();
+        let decoded: Vec<Vec<ProteinInfo>> = retrieved
+            .iter()
+            .map(|proteins| proteins.iter().map(|protein| ProteinInfo::from(*protein)).collect())
+            .collect();
+        let decode_ns = decode_start.elapsed().as_nanos() as u64;
+
+        let serialise_start = Instant::now();
+        let bytes = serde_json::to_vec(&decoded).map(|out| out.len()).unwrap_or(0);
+        (decode_ns, serialise_start.elapsed().as_nanos() as u64, bytes as u64)
+    } else {
+        (0, 0, 0)
+    };
+
     // Aggregate stats
     let query_hit_count = matched_suffixes.len();
     let suffix_hit_count: usize = matched_suffixes.iter().map(|s| s.len()).sum();
@@ -657,6 +767,9 @@ fn run_benchmark(
         match_iter_ns,
         candidates_examined,
         candidates_accepted,
+        decode_duration_ns,
+        serialise_duration_ns,
+        response_bytes,
         major_faults: majflt_after.saturating_sub(majflt_before),
         minor_faults: minflt_after.saturating_sub(minflt_before)
     }
@@ -666,13 +779,196 @@ fn run_benchmark(
 // Matrix mode: grid generation
 // ---------------------------------------------------------------------------
 
-/// One cell of the trimmed default grid.
-#[derive(Clone, Copy, Debug)]
+/// One line of a `--grid-file`, before its tuning overrides are resolved.
+///
+/// `deny_unknown_fields` is the same bargain `SearchTuning` makes: a driver that writes a key this
+/// binary does not know is told so, rather than having it dropped and reporting the shipped
+/// configuration under the swept one's name.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GridSpec {
+    /// Peptide-file stem this cell belongs to. Absent = run it against every `--matrix-files` entry.
+    #[serde(default)]
+    file: Option<String>,
+    /// What the suite calls that file (`mixed`, `small`). Recorded as `peptide_source` so a report
+    /// reads in the suite's vocabulary rather than in one machine's file names. Absent = the stem.
+    #[serde(default)]
+    bucket: Option<String>,
+    #[serde(default)]
+    kmer_k: usize,
+    #[serde(default = "yes")]
+    equate_il: bool,
+    #[serde(default)]
+    tryptic: bool,
+    /// `SearchTuning` overrides for this cell; anything absent keeps the shipped default.
+    #[serde(default)]
+    tune: BTreeMap<String, serde_json::Value>,
+    /// Reps and queries for this cell. Absent = the invocation's `--runs` / `--amount-of-peptides`.
+    #[serde(default)]
+    runs: Option<u32>,
+    #[serde(default)]
+    amount: Option<usize>,
+    /// Match cutoff for this cell. Absent = the invocation's `--max-matches`.
+    ///
+    /// Unlike every `SearchTuning` field this is NOT a pure performance knob: a cutoff that binds
+    /// truncates the result and sets `cutoff_used`. A suite that sweeps it is trading answers for
+    /// time, and its report has to say so.
+    #[serde(default)]
+    max_matches: Option<usize>,
+    /// Time the two phases production runs after retrieval — the `ProteinInfo` decode and the JSON
+    /// serialisation. Off by default because it is expensive and most suites are not measuring it.
+    #[serde(default)]
+    response: bool,
+    /// The suite block this cell came from, and its slot among repeats of the same configuration.
+    #[serde(default)]
+    sweep: String,
+    #[serde(default = "slot_a")]
+    grid_slot: String
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn slot_a() -> String {
+    "a".to_string()
+}
+
+/// One cell of a matrix sweep, with its tuning fully resolved.
+///
+/// `--dry-run` and the real sweep both go through this same resolved form, so the planned cell
+/// list cannot diverge from the one that runs — which is what makes a dry run worth eyeballing
+/// before committing to a multi-hour sweep.
+#[derive(Clone, Debug)]
 struct GridCell {
+    bucket: Option<String>,
+    max_matches: Option<usize>,
+    response: bool,
     kmer_k: usize,
     equate_il: bool,
     tryptic: bool,
-    mlp_batch: usize
+    tuning: SearchTuning,
+    runs: u32,
+    amount: usize,
+    sweep: String,
+    grid_slot: String
+}
+
+impl GridCell {
+    /// How this cell reads in the dry run and in the per-cell progress line.
+    fn describe(&self) -> String {
+        let tuning = serde_json::to_value(self.tuning)
+            .ok()
+            .and_then(|value| {
+                value.as_object().map(|map| {
+                    map.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(" ")
+                })
+            })
+            .unwrap_or_default();
+        format!(
+            "kmer={:<2} il={:<5} tr={:<5} {}  [{} runs x {} peptides]{}",
+            self.kmer_k,
+            self.equate_il,
+            self.tryptic,
+            tuning,
+            self.runs,
+            self.amount,
+            if self.sweep.is_empty() { String::new() } else { format!("  <{}:{}>", self.sweep, self.grid_slot) }
+        )
+    }
+}
+
+/// A resolved grid: cells paired with the peptide file each is restricted to (None = every file).
+type Grid = Vec<(Option<String>, GridCell)>;
+
+/// `--grid-file`, or the error explaining that matrix mode has no grid of its own.
+fn require_grid_file(args: &Args) -> Result<&Path, Box<dyn Error>> {
+    args.grid_file
+        .as_deref()
+        .ok_or_else(|| "--matrix requires --grid-file: the grid is the driver's, not the harness's".into())
+}
+
+/// Reads a `--grid-file` and resolves every cell's tuning against the shipped defaults.
+///
+/// Resolution happens here, up front, rather than per cell during the sweep: a typo in the last
+/// line of a grid file should fail before the index is loaded, not four hours into the run.
+fn load_grid_file(path: &Path, args: &Args) -> Result<Grid, Box<dyn Error>> {
+    let base = tuning_from(args)?;
+    let mut cells = Vec::new();
+
+    for (lineno, line) in BufReader::new(File::open(path)?).lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let spec: GridSpec = serde_json::from_str(&line)
+            .map_err(|error| format!("{}:{}: {}", path.display(), lineno + 1, error))?;
+
+        // Through the same `field=value` path `--tune` uses, so the grid file and the flag cannot
+        // disagree about what a value means or about which fields exist.
+        let overrides: Vec<(String, String)> = spec
+            .tune
+            .iter()
+            .map(|(field, value)| {
+                let raw = match value {
+                    serde_json::Value::String(text) => text.clone(),
+                    other => other.to_string()
+                };
+                (field.clone(), raw)
+            })
+            .collect();
+        let tuning = apply_tuning(base, &overrides)
+            .map_err(|error| format!("{}:{}: {}", path.display(), lineno + 1, error))?;
+
+        cells.push((
+            spec.file.clone(),
+            GridCell {
+                bucket: spec.bucket,
+                max_matches: spec.max_matches,
+                response: spec.response,
+                kmer_k: spec.kmer_k,
+                equate_il: spec.equate_il,
+                tryptic: spec.tryptic,
+                tuning,
+                runs: spec.runs.unwrap_or(args.runs),
+                amount: spec.amount.unwrap_or(args.amount_of_peptides),
+                sweep: spec.sweep,
+                grid_slot: spec.grid_slot
+            }
+        ));
+    }
+
+    if cells.is_empty() {
+        return Err(format!("{} contains no grid cells", path.display()).into());
+    }
+    Ok(cells)
+}
+
+/// The cells to run for one peptide file: those the grid did not restrict to a different one.
+fn cells_for(grid: &Grid, file_bucket: &str) -> Vec<GridCell> {
+    grid.iter()
+        .filter(|(file, _)| file.as_deref().is_none_or(|name| name == file_bucket))
+        .map(|(_, cell)| cell.clone())
+        .collect()
+}
+
+/// Every k-mer size this run needs, so only those tables are loaded or built.
+///
+/// Derived from the cells that will actually run, not from every line of the grid file: a grid
+/// shared between peptide files may name a k that none of *this* invocation's files reaches, and
+/// building a 6-mer table nothing queries costs 3 GB and several minutes.
+fn kmer_sizes(args: &Args, grid: &Grid) -> Vec<usize> {
+    let mut sizes: Vec<usize> = args
+        .matrix_files
+        .iter()
+        .flat_map(|path| {
+            let source = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("?").to_string();
+            cells_for(grid, &source).into_iter().map(|cell| cell.kmer_k)
+        })
+        .collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+    sizes
 }
 
 /// The `SearchTuning` the CLI asks for: the shipped defaults with any `--tune` overrides applied.
@@ -729,74 +1025,27 @@ fn print_tuning_help() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// The k-mer table sizes the matrix sweeps. `0` means "no table attached".
-fn matrix_kmers(args: &Args) -> Vec<usize> {
-    if args.matrix_kmer6 { vec![0, 5, 6] } else { vec![0, 5] }
+/// The pre-built file for a k-mer size, or None when there is none and the table must be built.
+fn kmer_table_path(args: &Args, k: usize) -> Option<&PathBuf> {
+    args.kmer_files.iter().find(|(size, _)| *size == k).map(|(_, path)| path)
 }
 
-/// Expands the grid for one peptide-file bucket. This is the single source of truth for the
-/// planned cell list: both `run_matrix` and `print_dry_run` go through it, so `--dry-run`
-/// cannot drift from what a real run would execute — which is what makes `--dry-run` worth
-/// eyeballing before committing to a multi-hour sweep.
+/// Swaps the k-mer table of size `k` into `searcher.kmer_table`, parking whatever was previously
+/// attached back in the pool first. All swaps are `Option` moves (pointer-sized), so this is cheap
+/// to call once per cell regardless of sweep order.
 ///
-/// Full sweep is kmer × equate_il × mlp_batch, doubled for tryptic=true/false — except tryptic
-/// on the small/medium buckets, which collapses to one representative cell: the last full run
-/// showed all 30 small/tryptic cells landing at 653-684 qps (a flat line, not a grid), so
-/// sweeping kmer/batch/equate_il there just re-measures a constant at ~1/6 of the whole
-/// matrix's wall time. `large` keeps the full sweep since tryptic there is retrieval/search
-/// volume bound, not constant.
-fn expand_cells(args: &Args, file_bucket: &str) -> Vec<GridCell> {
-    let kmers = matrix_kmers(args);
-    let batches = &args.matrix_batches;
-    let sweep = |tryptic: bool| -> Vec<GridCell> {
-        let mut v = Vec::new();
-        for &kmer_k in &kmers {
-            for equate_il in [true, false] {
-                for &mlp_batch in batches {
-                    v.push(GridCell { kmer_k, equate_il, tryptic, mlp_batch });
-                }
-            }
-        }
-        v
-    };
-
-    let mut cells = sweep(false);
-    if matches!(file_bucket, "small" | "medium") {
-        // Representative cell only, at production defaults (5-mer table, MLP batch 16,
-        // equate_il on) — enough to catch a gross regression without re-measuring a constant.
-        cells.push(GridCell { kmer_k: 5, equate_il: true, tryptic: true, mlp_batch: 16 });
-    } else {
-        cells.extend(sweep(true));
+/// The pool is keyed by k rather than being two named slots, so a grid may name any k values it
+/// likes; `k` with no entry in the pool means "run with no table", which is how `kmer_k = 0` works.
+fn ensure_kmer_table(searcher: &mut ActiveSearcher, pool: &mut HashMap<usize, KmerTable>, k: usize) {
+    if let Some(table) = searcher.kmer_table.take() {
+        pool.insert(table.k, table);
     }
-    cells
-}
-
-/// Swaps the k-mer table of size `k` into `searcher.kmer_table`, returning whatever was
-/// previously attached to its owning slot (`table5`/`table6`) first. All swaps are `Option`
-/// moves (pointer-sized), so this is cheap to call once per cell regardless of sweep order.
-fn ensure_kmer_table(
-    searcher: &mut ActiveSearcher,
-    table5: &mut Option<KmerTable>,
-    table6: &mut Option<KmerTable>,
-    k: usize
-) {
-    if let Some(t) = searcher.kmer_table.take() {
-        match t.k {
-            5 => *table5 = Some(t),
-            6 => *table6 = Some(t),
-            _ => {}
-        }
-    }
-    searcher.kmer_table = match k {
-        5 => table5.take(),
-        6 => table6.take(),
-        _ => None
-    };
+    searcher.kmer_table = pool.remove(&k);
 }
 
 /// Everything `run_cell` needs about one matrix cell that isn't the searcher, the peptides,
-/// the CLI args, or the output file: the index-wide facts (fixed for a whole run), the
-/// peptide-file facts (fixed per file), and the cell's own coordinates.
+/// the CLI args, the cell itself, or the output file: the index-wide facts (fixed for a whole
+/// run) and the peptide-file facts (fixed per file).
 #[derive(Clone, Copy)]
 struct CellSpec<'a> {
     // -- index-wide
@@ -813,42 +1062,46 @@ struct CellSpec<'a> {
     p_max: usize,
     // -- per cell
     theoretical_max: u64,
-    equate_il: bool,
-    tryptic: bool,
-    mlp_batch: usize,
-    kmer_k: usize,
     phase: &'a str
 }
 
-/// Runs one config for `args.runs` reps, prints the summary line, and appends one aggregated
+/// Runs one config for its rep count, prints the summary line, and appends one aggregated
 /// record to `output_file`.
 fn run_cell(
     searcher: &ActiveSearcher,
     peptides: &[String],
     args: &Args,
     spec: CellSpec,
+    cell: &GridCell,
     output_file: &mut File
 ) -> Result<(), Box<dyn Error>> {
-    // Run every rep, then summarise: one record per config with a spread, and the median-qps
-    // rep kept as the representative detailed `result`.
-    let mut results: Vec<BenchmarkResult> = (0..args.runs)
-        .map(|_| {
-            run_benchmark(
-                searcher,
-                peptides,
-                args.max_matches,
-                spec.equate_il,
-                spec.tryptic,
-                spec.theoretical_max,
-                spec.baseline_memory
-            )
-        })
-        .collect();
+    // Run reps, then summarise: one record per config with a spread, and the median-qps rep kept
+    // as the representative detailed `result`. With `--runs-target-band` the loop stops as soon as
+    // the spread is tight enough to read, which is most cells; without it every cell runs the full
+    // count, which is what `defaults` needs.
+    let mut results: Vec<BenchmarkResult> = Vec::with_capacity(cell.runs as usize);
+    while (results.len() as u32) < cell.runs {
+        results.push(run_benchmark(
+            searcher,
+            peptides,
+            cell.max_matches.unwrap_or(args.max_matches),
+            cell.equate_il,
+            cell.tryptic,
+            cell.response,
+            spec.theoretical_max,
+            spec.baseline_memory
+        ));
+        if let Some(target) = args.runs_target_band {
+            if results.len() as u32 >= args.min_runs && band_of(&results) <= target {
+                break;
+            }
+        }
+    }
 
     let mut qps: Vec<f64> = results.iter().map(|r| r.throughput_qps).collect();
     qps.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let stats = RunStats {
-        runs: args.runs,
+        runs: results.len() as u32,
         qps_min: qps[0],
         qps_p10: percentile(&qps, 0.10),
         qps_p50: percentile(&qps, 0.50),
@@ -874,20 +1127,15 @@ fn run_cell(
     };
 
     eprintln!(
-        "  {} {} il={} tr={} batch={} kmer={} tuning{{vb={} pt={} rpd={}}}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}){}",
+        "  {} {} {}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}, {} reps){}",
         spec.source,
         spec.phase,
-        spec.equate_il,
-        spec.tryptic,
-        spec.mlp_batch,
-        spec.kmer_k,
-        searcher.tuning.validate_batch,
-        searcher.tuning.prefetch_threshold,
-        searcher.tuning.retrieval_prefetch_distance,
+        cell.describe(),
         stats.qps_p50,
         band,
         stats.qps_p10,
         stats.qps_p90,
+        stats.runs,
         accept_note,
     );
 
@@ -907,18 +1155,23 @@ fn run_cell(
             mapping_storage: sa_server::MAPPING_BACKEND,
             sample_rate: spec.sample_rate,
             bits_per_value: spec.bits_per_value,
-            equate_il: spec.equate_il,
-            tryptic: spec.tryptic,
-            max_matches: args.max_matches,
+            equate_il: cell.equate_il,
+            tryptic: cell.tryptic,
+            // The cell's cutoff, not the invocation's — a suite that sweeps `max_matches` runs
+            // every cell at a different one, and recording the CLI value made all of them look
+            // like the same measurement.
+            max_matches: cell.max_matches.unwrap_or(args.max_matches),
 
-            kmer_k: spec.kmer_k,
+            kmer_k: cell.kmer_k,
             amount_of_peptides: peptides.len(),
             peptide_length_min: spec.p_min,
             peptide_length_max: spec.p_max,
             peptide_source: spec.source.to_string(),
             tuning: searcher.tuning,
             tuning_defaults: SearchTuning::default(),
-            phase: spec.phase.to_string()
+            phase: spec.phase.to_string(),
+            sweep: cell.sweep.clone(),
+            grid_slot: cell.grid_slot.clone()
         },
         result: representative,
         stats: Some(stats)
@@ -942,34 +1195,41 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
         let dims: Vec<String> = args.dims.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         println!("dims           : {}", dims.join(" "));
     }
+    // Same load-and-resolve the real run does, so a typo in the grid file surfaces here rather
+    // than after the index is mapped.
+    let path = require_grid_file(args)?;
+    let grid = load_grid_file(path, args)?;
+
     println!("backend        : {}", sa_server::backend_summary());
-    println!("kmer sizes     : {:?}", matrix_kmers(args));
-    println!("mlp batches    : {:?}", args.matrix_batches);
+    println!("grid           : {}", path.display());
+    println!("kmer sizes     : {:?}", kmer_sizes(args, &grid));
     println!("tuning         : {:?}", tuning_from(args)?);
-    println!("runs/config    : {}", args.runs);
+    println!("runs/config    : {}{}", args.runs, match args.runs_target_band {
+        Some(target) => format!(" (max; stops at a ±{:.1}% band after {} reps)", target, args.min_runs),
+        None => " (fixed)".to_string()
+    });
     println!();
 
     let mut grand_total = 0usize;
+    let mut grand_queries = 0usize;
 
     for pep_path in &args.matrix_files {
         let source = pep_path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
         // Same expansion the real run uses — a dry run cannot diverge from it.
-        let cells = expand_cells(args, source);
+        let cells = cells_for(&grid, source);
         println!("== {} ==", source);
         println!("  grid: {} configs", cells.len());
-        for c in &cells {
-            println!("    kmer={:<2} il={:<5} tr={:<5} batch={:<3}", c.kmer_k, c.equate_il, c.tryptic, c.mlp_batch);
+        for cell in &cells {
+            println!("    {}", cell.describe());
+            grand_queries += cell.runs as usize * cell.amount;
         }
         grand_total += cells.len();
         println!();
     }
 
-    println!(
-        "TOTAL this backend: {} configs x {} runs = {} timed executions",
-        grand_total,
-        args.runs,
-        grand_total * args.runs as usize
-    );
+    // Queries, not configs, is what the wall clock tracks once cells may differ in size: a tryptic
+    // cell at a tenth the query count is a tenth of the cost, and a config count hides that.
+    println!("TOTAL this backend: {} configs, {} timed queries", grand_total, grand_queries);
     println!("Run once per backend (preloaded, mmap) for the full sweep.");
     Ok(())
 }
@@ -1034,11 +1294,11 @@ fn warmup_pipeline(searcher: &ActiveSearcher, args: &Args, count: usize) -> Resu
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// Matrix mode: load the index once, then sweep the grid (see `expand_cells`) for each
-/// peptide file. The k-mer tables are swapped in/out (moved, not cloned) so the big 6-mer
-/// table is built/loaded at most once (and only at all if `--matrix-kmer6` is set). Each
-/// config runs `runs` reps but writes a single aggregated record (median-qps rep as `result`,
-/// plus a `stats` spread) to <output>/<label>.jsonl.
+/// Matrix mode: load the index once, then sweep the driver's `--grid-file` for each peptide file.
+/// The k-mer tables are swapped in/out (moved, not cloned) so each is built or loaded at most once,
+/// and only the sizes the grid actually names are touched at all. Each config runs its own rep
+/// count but writes a single aggregated record (median-qps rep as `result`, plus a `stats` spread)
+/// to <output>/<label>.jsonl.
 // Index-wide facts the caller already computed while loading; they are threaded through rather
 // than recomputed here, which is what pushes this past the argument limit.
 #[allow(clippy::too_many_arguments)]
@@ -1055,36 +1315,25 @@ fn run_matrix(
     if args.matrix_files.is_empty() {
         return Err("--matrix requires at least one --matrix-files entry".into());
     }
-    let kmers = matrix_kmers(args);
+    let grid = load_grid_file(require_grid_file(args)?, args)?;
+    let kmers = kmer_sizes(args, &grid);
 
-    // Build/load the 5-mer table (always in scope — the grid's default kmer set includes it)
-    // and, only if requested, the 6-mer table: at 3.06 GB vs 127 MB for a sub-noise-floor
-    // difference (see expand_cells / --matrix-kmer6), it isn't worth the build/load cost
-    // unless someone explicitly opts in.
-    let mut table5: Option<KmerTable> = Some(match &args.kmer5_file {
-        Some(p) => {
-            eprintln!("Loading 5-mer table from {}...", p.display());
-            load_kmer_table_file(p.to_str().unwrap())?
-        }
-        None => {
-            eprintln!("Building 5-mer table...");
-            KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), 5)
-        }
-    });
-    let mut table6: Option<KmerTable> = if args.matrix_kmer6 {
-        Some(match &args.kmer6_file {
-            Some(p) => {
-                eprintln!("Loading 6-mer table from {}...", p.display());
-                load_kmer_table_file(p.to_str().unwrap())?
+    // Load or build exactly the tables the grid names, and no others. On the full database the
+    // 6-mer costs 3.06 GB resident against the 5-mer's 127 MB, so a grid that does not ask for it
+    // must not pay for it — see the `kmer` suite for what that buys.
+    let mut tables: HashMap<usize, KmerTable> = HashMap::new();
+    for &k in kmers.iter().filter(|&&k| k > 0) {
+        match kmer_table_path(args, k) {
+            Some(path) => {
+                eprintln!("Loading {}-mer table from {}...", k, path.display());
+                tables.insert(k, load_kmer_table_file(path.to_str().unwrap())?);
             }
             None => {
-                eprintln!("Building 6-mer table...");
-                KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), 6)
+                eprintln!("Building {}-mer table...", k);
+                tables.insert(k, KmerTable::build_from_sa(&searcher.sa, searcher.proteins.text(), k));
             }
-        })
-    } else {
-        None
-    };
+        }
+    }
 
     // Warm the page cache once (matters for mmap); CPU caches warm over the repeated runs.
     eprintln!("Warming up (touching all pages)...");
@@ -1103,7 +1352,7 @@ fn run_matrix(
     // walks every protein's metadata length, which is not free at full-DB scale).
     let mut theoretical_by_k: HashMap<usize, u64> = HashMap::new();
     for &k in &kmers {
-        ensure_kmer_table(&mut searcher, &mut table5, &mut table6, k);
+        ensure_kmer_table(&mut searcher, &mut tables, k);
         let m =
             if args.no_theoretical_memory { 0 } else { theoretical_memory(&searcher, mapping_type, proteins_mapped()) };
         theoretical_by_k.insert(k, m);
@@ -1113,25 +1362,30 @@ fn run_matrix(
     let output_path = args.output.join(format!("{}.jsonl", args.label));
     let mut output_file = OpenOptions::new().create(true).write(true).truncate(true).open(&output_path)?;
     let commit = env!("GIT_COMMIT_HASH").to_string();
-    let tuning = tuning_from(args)?;
 
     for pep_path in &args.matrix_files {
-        let peptides: Vec<String> = BufReader::new(File::open(pep_path)?)
-            .lines()
-            .take(args.amount_of_peptides)
-            .collect::<Result<_, _>>()?;
-        if peptides.len() < args.amount_of_peptides {
-            return Err(format!(
-                "{} has only {} peptides, need {}",
-                pep_path.display(),
-                peptides.len(),
-                args.amount_of_peptides
-            )
-            .into());
-        }
-        let (p_min, p_max) =
-            peptides.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
         let source = pep_path.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+        let cells = cells_for(&grid, &source);
+        if cells.is_empty() {
+            eprintln!("-- {} : no cells in the grid, skipping --", source);
+            continue;
+        }
+
+        // Cells may ask for different query counts, so read the largest once and let each cell
+        // take the prefix it needs. Every cell then queries the same peptides in the same order,
+        // which is what keeps a cheap screening cell comparable with the cells around it.
+        let wanted = cells.iter().map(|cell| cell.amount).max().unwrap_or(args.amount_of_peptides);
+        let peptides: Vec<String> =
+            BufReader::new(File::open(pep_path)?).lines().take(wanted).collect::<Result<_, _>>()?;
+        if peptides.len() < wanted {
+            return Err(
+                format!("{} has only {} peptides, need {}", pep_path.display(), peptides.len(), wanted).into()
+            );
+        }
+        let bucket = cells
+            .iter()
+            .find_map(|cell| cell.bucket.clone())
+            .unwrap_or_else(|| source.clone());
 
         // Everything the cells of this file share; the per-cell fields are filled in below.
         let base_spec = CellSpec {
@@ -1142,32 +1396,27 @@ fn run_matrix(
             bits_per_value,
             baseline_memory,
             commit: &commit,
-            source: &source,
-            p_min,
-            p_max,
+            // What the suite calls this file, not what the filesystem does. Every cell of one file
+            // carries the same bucket, so the first one that names it settles it for the file.
+            source: &bucket,
+            p_min: 0,
+            p_max: 0,
             theoretical_max: 0,
-            equate_il: false,
-            tryptic: false,
-            mlp_batch: 1,
-            kmer_k: 0,
             phase: "grid"
         };
 
-        eprintln!("-- {} : grid --", source);
-        for cell in expand_cells(args, &source) {
-            ensure_kmer_table(&mut searcher, &mut table5, &mut table6, cell.kmer_k);
-            searcher.tuning = tuning;
-            // The grid's own axis, applied the same way as every other knob.
-            searcher.tuning.mlp_batch = cell.mlp_batch;
-            let spec = CellSpec {
-                theoretical_max: theoretical_by_k[&cell.kmer_k],
-                equate_il: cell.equate_il,
-                tryptic: cell.tryptic,
-                mlp_batch: cell.mlp_batch,
-                kmer_k: cell.kmer_k,
-                ..base_spec
-            };
-            run_cell(&searcher, &peptides, args, spec, &mut output_file)?;
+        eprintln!("-- {} : {} cells --", bucket, cells.len());
+        for cell in &cells {
+            ensure_kmer_table(&mut searcher, &mut tables, cell.kmer_k);
+            searcher.tuning = cell.tuning;
+            // Per cell, not per file: cells may take different prefixes of the same stream, and a
+            // length range describing lines the cell never queried would misreport the workload.
+            let queried = &peptides[..cell.amount];
+            let (p_min, p_max) =
+                queried.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
+            let spec =
+                CellSpec { theoretical_max: theoretical_by_k[&cell.kmer_k], p_min, p_max, ..base_spec };
+            run_cell(&searcher, queried, args, spec, cell, &mut output_file)?;
         }
     }
     eprintln!("Matrix complete → {}", output_path.display());
@@ -1180,6 +1429,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // when running one.
     if std::env::args().any(|arg| arg == "--help-tuning") {
         return print_tuning_help();
+    }
+    if std::env::args().any(|arg| arg == "--tuning-defaults") {
+        println!("{}", serde_json::to_string(&SearchTuning::default())?);
+        return Ok(());
     }
 
     let args = Args::parse();
@@ -1420,7 +1673,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             peptide_source: peptide_source.clone(),
             tuning: searcher.tuning,
             tuning_defaults: SearchTuning::default(),
-            phase: "single".to_string()
+            phase: "single".to_string(),
+            // A single run is one configuration measured once: it belongs to no suite block, and
+            // there is nothing for it to be a repeat of.
+            sweep: String::new(),
+            grid_slot: "a".to_string()
         };
 
         let result = run_benchmark(
@@ -1429,6 +1686,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             args.max_matches,
             args.equate_il,
             args.tryptic,
+            // A single CLI run has no grid to opt in with; `--matrix` is where the response phase
+            // lives, because only a suite can decide it is worth what it costs.
+            false,
             theoretical_max,
             baseline_memory
         );

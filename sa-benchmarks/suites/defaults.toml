@@ -1,4 +1,4 @@
-description = "The production-default grid across small/medium/large, both backends — the regression gate"
+description = "What this version does at production defaults, across the length regimes and both backends"
 
 # Matrix mode: ONE process per backend loads the index once and sweeps the whole grid in-process.
 # Index loads dominate everything else at full-database scale (37e9 suffixes), so a process per
@@ -7,52 +7,64 @@ mode = "matrix"
 ordering = "sequential"
 
 notes = """
-This is the sweep to run after any change to the search path. It measures what ships: production
-defaults, both storage backends, across the three peptide length regimes.
+This is the sweep to run after any change to the search path, and the only one to run on every
+commit. It answers ONE question — what does this version do at the settings that ship — and it
+answers it at high precision, which is what makes a delta against a baseline mean something.
+
+Everything is held at the production configuration except the two SEARCH OPTIONS, `equate_il` and
+`tryptic`, which are not tuning at all: they are what the caller asked for. Both are in production
+use, they change the shape of the search rather than its parameters, and a regression that only
+shows up under one of them is a regression this suite has to catch. Four rows per length regime.
+
+What is deliberately NOT here, and where it went:
+
+  * the k-mer tables      -> `run.sh kmer`
+  * the MLP batch curve   -> `run.sh mlp`
+  * `validate_batch`      -> `run.sh validate`
+  * the prefetch distances -> `run.sh prefetch`
+
+Those used to be folded in, which made this suite a 34-row grid that took six times as long and
+re-measured settled questions on every commit. The split is not just cheaper: a regression gate and
+a parameter sweep want opposite things from a run. The gate wants few cells at high precision so a
+3% move is visible; the sweep wants many cells at whatever precision fits the budget. One grid
+cannot be both, and when it tried, it was the gate that lost.
 
 Read the `noise` column before the `mmap/pre` column. The measured run-to-run noise floor on the
 full database is 3.9%, and any delta below that — or below a cell's own measured band — is noise,
 not signal.
 
-The grid is kmer {none, 5-mer} x equate_il x tryptic x mlp_batch {1, 16}, with tryptic collapsed to
-one representative cell on the small and medium files: in the last full run all 30 small/tryptic
-cells landed at 653-684 qps, a flat line rather than a grid, and sweeping it there re-measures a
-constant at about a sixth of the whole matrix's wall time. `large` keeps the full sweep, where
-tryptic is bound by search and retrieval volume rather than being constant.
-
-There are two different batches in the searcher, and BOTH are production values:
-
-  * `mlp_batch` — the CROSS-QUERY batch: how many independent peptide searches are interleaved per
-    rayon task to hide DRAM latency. 1 is scalar; 16 is `DEFAULT_MLP_BATCH`, what `search_all_peptides`
-    passes on every server request.
-  * `SearchTuning::validate_batch` — candidates per two-pass validation batch inside
-    `iterate_sa_range`, default 64. `sa-server` never assigns `tuning`, so this is what ships too.
-
-The difference is not production-vs-not, it is swept-vs-held. This grid varies `mlp_batch` because
-it is a coarse structural choice with a large effect, and holds every `SearchTuning` field at its
-default because prior measurement already settled them — `validate_batch` in particular is a cliff
-rather than a peak (16 costs ~10%, 128 gains nothing), so sweeping it would re-measure a decision.
-
-Held values are not assumed: the run records every `SearchTuning` field, and the summary prints back
-what these cells actually ran at. If that line does not read 64 / 32 / 32, this run
-was not measuring the defaults. To put those knobs under test, set MATRIX_TUNING_* and compare
-against a run at the defaults.
-
-The 6-mer table is off by default. With the index resident it is inside the noise floor on
-medium/small and only +4.1% on large, for 3.06 GB resident against 127 MB. That verdict does NOT
-hold under a memory ceiling — see the `ram` suite.
+Held values are not assumed: the run records every `SearchTuning` field and the summary prints back
+what these cells actually ran at. If that line does not read the shipped values, this run was not
+measuring the defaults.
 """
 
 [defaults]
 # 20 reps matches the measured 3.9% noise floor; do not lower it without re-checking that floor.
+# This is the one suite where precision is the point, so there is no `runs_target_band` here — a
+# cell that stops early stops at a band this suite exists to resolve.
 runs = 20
 amount = 10000
 max_matches = 10000
+# `mixed` is the unbucketed 5..50 file — the query mix a server actually sees, and the one
+# number to quote. The three buckets are there to say WHERE a change landed, since peptide length
+# moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
+files = ["mixed", "small", "medium", "large"]
 
-[matrix]
-files = ["small", "medium", "large"]
-batches = [1, 16]
-kmer6 = false
+# Production defaults: 5-mer table, MLP batch 16, every SearchTuning field at its shipped value.
+# `strategy = "base"` means exactly that — one tuning point, taken from the binary itself rather
+# than restated here, so this suite cannot drift from `SearchTuning::default()`.
+[[sweep]]
+name = "defaults"
+strategy = "base"
+# Time what happens AFTER retrieval as well: turning each hit into the `ProteinInfo` the server
+# returns (an fa-compression decode plus an accession String) and serialising the lot to JSON.
+# Only here — it is expensive, and it is the one measurement that says what
+# fraction of a real request every other suite's throughput actually describes.
+response = true
+arms = ["preloaded", "mmap", "pprot", "pprot+m"]
+kmer = [5]
+equate_il = [true, false]
+tryptic = [true, false]
 
 [[arms]]
 name = "preloaded"
@@ -61,3 +73,22 @@ features = []
 [[arms]]
 name = "mmap"
 features = ["mmap"]
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks. Kept alongside the two extremes everywhere, because
+# a result that holds for both of them can still fail for the configuration actually deployed.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+# One instrumented arm, which used to be a suite of its own. `metrics` swaps the searcher's
+# zero-sized counters for real atomics — the only way to get the binary-search/range-scan split and
+# the candidate acceptance rate — and it perturbs what it measures by ~2%. So it is ONE arm, kept
+# out of every throughput table and verdict in this suite, feeding the "inside the search" section
+# and nothing else. It rides here rather than in a separate suite because the question it answers —
+# what is tryptic actually doing — is a question about the four search options, which is exactly
+# what this grid varies.
+name = "pprot+m"
+features = ["mmap", "preloaded-proteins"]
+metrics = true

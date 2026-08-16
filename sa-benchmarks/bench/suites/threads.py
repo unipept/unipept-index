@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..charts import Series, lines
+from ..charts import Series, by_residency, lines
 from ..config import Suite
 from ..records import Record, Summary, delta_pct, group, noise_floor, summarise, unfit_cells
 from ..report import Report, Table, band, caveats, count, gb, pct, qps
@@ -44,12 +44,14 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
                             else None
                             for threads in thread_counts
                         ],
-                        slot,
+                        arm=arm,
+                        tip={"arm": arm},
                     )
-                    for slot, arm in enumerate(arms)
+                    for arm in by_residency(arms)
                 ],
                 caption,
                 unit=" qps",
+                y_title="throughput (qps)",
                 x_title="RAYON_NUM_THREADS",
             ),
             caption,
@@ -106,7 +108,7 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
 
     notes = caveats(list(cells.values()))
     if notes:
-        report.heading("caveats", level=3).lines([f"  * {note}" for note in notes])
+        report.heading("caveats", level=3, folded=True).lines([f"  * {note}" for note in notes])
     if suite.notes:
         report.note(suite.notes)
 

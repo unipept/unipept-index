@@ -1,0 +1,58 @@
+description = "The candidate-validation batch, one knob against a fixed background"
+
+mode = "matrix"
+ordering = "sequential"
+
+notes = """
+One knob: `SearchTuning::validate_batch`, the number of candidate suffixes processed per two-pass
+batch inside `iterate_sa_range`. It is NOT the cross-query batch — that is `mlp_batch`, and `mlp`
+owns it. This one batches within a single peptide's range scan; that one batches across peptides.
+The two crossed are `mlp_validate`.
+
+Expect a CLIFF, not a peak. The established result is that 16 -> 32 buys about 10% and the curve
+plateaus above it: the batch exists to hold enough candidate reads in flight to cover one memory
+latency, and once it does, more does nothing. A peak in the middle of the range is therefore
+suspicious and usually means the process drifted — read the resolution table first.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts."""
+
+[defaults]
+runs = 20
+amount = 10000
+max_matches = 10000
+files = ["mixed", "small", "medium", "large"]
+
+[[sweep]]
+name = "curve"
+strategy = "ofat"
+arms = ["preloaded", "mmap", "pprot"]
+kmer = [5]
+equate_il = [true]
+tryptic = [true, false]
+# The reference cell is re-measured every 12 cells, so drift across the process becomes a measured
+# series rather than an unknown folded into every result. ~8% overhead; see the resolution table.
+base_every = 12
+
+[sweep.tune]
+validate_batch = [16, 32, 64, 128, 256]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

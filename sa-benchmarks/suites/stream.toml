@@ -1,0 +1,63 @@
+description = "How throughput depends on how many peptides are in one call"
+
+mode = "matrix"
+ordering = "sequential"
+
+notes = """
+The one suite that varies the query count, because everywhere else it has to be fixed: two cells
+that ran different stream lengths are not comparable, so a suite holding everything else constant
+must hold this constant too. Here it IS the variable.
+
+The mechanism is occupancy. `search_all_matching_suffixes` splits its input with
+`par_chunks(tuning.mlp_batch)`, so a call of N peptides produces `N / mlp_batch` rayon tasks. At the
+10,000 every other suite measures, that is 625 tasks and the machine is saturated. At a realistic
+50-peptide request it is three, and on a twelve-core box nine cores idle for the whole call.
+Retrieval has the same shape: it parallelises over the peptides that matched.
+
+So every throughput figure in this report is an upper bound taken at the one call size that
+guarantees full occupancy, and this suite is what says how far below it a real request lands. The
+number to take away is the KNEE — the smallest call size that reaches within the floor of the
+saturated figure. That is a number for client documentation, and it is not 10,000.
+
+Per-rep wall time varies enormously down this sweep: the small cells run few queries and finish in
+milliseconds, so their bands are wide. Read the resolution table and the per-cell band before any
+delta near the bottom of the range.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts.
+"""
+
+[defaults]
+runs = 20
+max_matches = 10000
+files = ["mixed", "small", "medium", "large"]
+# The fallback for blocks that do not sweep it; `amounts` below is what actually varies.
+amount = 10000
+
+[[sweep]]
+name = "stream"
+strategy = "base"
+arms = ["preloaded", "mmap", "pprot"]
+kmer = [5]
+equate_il = [true]
+tryptic = [true, false]
+amounts = [10, 100, 1000, 10000]
+base_every = 12
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

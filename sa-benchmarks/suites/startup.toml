@@ -29,9 +29,11 @@ peptides = "mixed"
 kmer_table = "k5"
 warmup = "all"
 
-# All nine configurations: everything preloaded, everything mapped, and the seven mixtures. A
-# feature that is declared but not forwarded through every crate produces a byte-identical binary,
-# which the build step rejects — that check is why every one of these rows means something.
+# The three configurations every other suite measures: both extremes and the one mixture that
+# turned out to matter. A feature that is declared but not forwarded through every crate produces a
+# byte-identical binary, which the build step rejects — that check is why each of these rows means
+# something. `check_answers.sh` still exercises all nine, because correctness is not a per-suite
+# question and a configuration nobody benchmarks can still ship.
 [[arms]]
 name = "preloaded"
 features = []
@@ -41,29 +43,9 @@ name = "mmap"
 features = ["mmap"]
 
 [[arms]]
-name = "ptext"
-features = ["mmap", "preloaded-text"]
-
-[[arms]]
+# Everything mapped except the protein store. The nine-way per-structure sweep that used to live
+# here answered which structures are worth preloading; it settled on this one, and re-running the
+# other six configurations on every session was re-deriving a decision rather than checking it.
+# Add an arm back if a structure's storage becomes a live question again.
 name = "pprot"
 features = ["mmap", "preloaded-proteins"]
-
-[[arms]]
-name = "pmap"
-features = ["mmap", "preloaded-mapping"]
-
-[[arms]]
-name = "ptext+pprot"
-features = ["mmap", "preloaded-text", "preloaded-proteins"]
-
-[[arms]]
-name = "ptext+pmap"
-features = ["mmap", "preloaded-text", "preloaded-mapping"]
-
-[[arms]]
-name = "pprot+pmap"
-features = ["mmap", "preloaded-proteins", "preloaded-mapping"]
-
-[[arms]]
-name = "all3"
-features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

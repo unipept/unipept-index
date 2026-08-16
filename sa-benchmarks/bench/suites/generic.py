@@ -35,7 +35,7 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
             count(summary.major_faults),
             gb(summary.rss_gb),
         )
-    report.table(table)
+    report.table(table, raw=True)
 
     from ..report import caveats
 

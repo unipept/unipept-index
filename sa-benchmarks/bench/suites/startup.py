@@ -28,11 +28,13 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
         dict(key)["arm"]: summarise(cell) for key, cell in group(loaded).items() if "arm" in dict(key)
     }
 
+    ordered = [arm.name for arm in suite.arms if arm.name in summaries]
+    _verdict_tiles(report, summaries, ordered)
+
     # Part-to-whole per configuration, horizontal because the configuration names are long. What
     # this shows that the table cannot: preloading a structure does not remove its cost, it moves
     # the cost into a different segment of the same bar.
     report.heading("summary", level=3)
-    ordered = [arm.name for arm in suite.arms if arm.name in summaries]
     report.chart(
         stacked_rows(
             ordered,
@@ -41,16 +43,18 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
                     name=label,
                     values=[summaries[arm].startup.get(field, 0) / 1000 for arm in ordered],
                     slot=slot,
+                    tip={"phase": label},
                 )
                 for slot, (field, label) in enumerate(PHASES + (("warmup_ms", "warmup"),))
             ],
             "Time before the first query can be answered",
             unit="s",
+            x_title="time to first query (s)",
         ),
         "Time before the first query can be answered",
     )
 
-    report.heading("per configuration", level=3)
+    report.heading("per configuration", level=3, folded=True)
     table = Table(
         headers=["config", *(label for _, label in PHASES), "load", "warmup", "total", "RSS GB"],
         aligns=["<"] + [">"] * (len(PHASES) + 4),
@@ -74,7 +78,7 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
             seconds(total),
             gb(summary.rss_gb),
         )
-    report.table(table)
+    report.table(table, raw=True)
 
     if suite.drop_caches:
         report.para("Page cache dropped before every configuration: these are cold-boot numbers.")
@@ -85,3 +89,39 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
         )
     if suite.notes:
         report.note(suite.notes)
+
+
+def _verdict_tiles(report: Report, summaries: dict, ordered: list[str]) -> None:
+    """What each configuration costs before it can answer anything, as three numbers.
+
+    The trade this suite exists to price is one sentence — preloading buys nothing at query time
+    that it does not pay for at load time — and it is legible as the gap between the slowest and the
+    fastest arm to first query. The per-phase breakdown underneath is where that gap comes from.
+    """
+    timed = [
+        (arm, (summaries[arm].startup.get("load_total_ms") or 0) + (summaries[arm].startup.get("warmup_ms") or 0))
+        for arm in ordered
+        if summaries[arm].startup.get("load_total_ms") is not None
+    ]
+    if not timed:
+        return
+    fastest = min(timed, key=lambda entry: entry[1])
+    slowest = max(timed, key=lambda entry: entry[1])
+    rss = [(arm, summaries[arm].rss_gb) for arm in ordered if summaries[arm].rss_gb]
+    spread = slowest[1] - fastest[1]
+
+    report.verdict(
+        [
+            ("fastest to first query", fastest[0], f"{fastest[1] / 1000:.1f}s", "good"),
+            ("slowest", slowest[0], f"{slowest[1] / 1000:.1f}s", ""),
+            (
+                "resident after load",
+                f"{max(value for _, value in rss):.1f} GB" if rss else "",
+                f"{min(value for _, value in rss):.1f} GB at the lightest" if rss else "",
+                "",
+            ),
+        ],
+        f"`{slowest[0]}` waits {spread / 1000:.1f}s longer than `{fastest[0]}` before its first "
+        f"answer. What that buys at query time is what `defaults` and `ram` measure — preloading "
+        f"does not remove a structure's cost, it moves it out of the query and into the load.",
+    )

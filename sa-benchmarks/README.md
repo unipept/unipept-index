@@ -16,16 +16,47 @@ sudo ./sa-benchmarks/run.sh all          # every suite, into one report.md
 
 | Suite | Answers | Needs root |
 |---|---|---|
-| `defaults` | What this version does at production defaults, across small/medium/large peptides, on both storage backends. The regression gate. | no |
-| `detail` | Where the time goes inside a search: binary search against range scan, candidate acceptance rate, and the MLP batch curve. Instrumented, so its throughput is perturbed. | no |
-| `startup` | What each of the nine storage configurations costs before it can answer the first query. | only for `--cold` |
+| `defaults` | What this version does at production defaults, across the length regimes and every storage arm, varying only `equate_il` and `tryptic`. Carries one instrumented arm for the phase split and the candidate acceptance rate. The regression gate. | no |
+| `kmer` | What each k-mer table buys against attaching none, per length regime, with the table's resident cost beside the win. | no |
+| `mlp` | The cross-query MLP batch curve, per length regime — whether batching still finds anything to overlap. | no |
+| `combos` | The three accelerators crossed — k-mer table x `mlp_batch` x `validate_batch` — to test whether their individual optima are simultaneously reachable. | no |
+| `startup` | What each of the three storage configurations costs before it can answer the first query. | only for `--cold` |
 | `ram` | How the storage arms scale as the RAM ceiling falls, and where they cross over. | yes |
 | `threads` | Whether thread oversubscription pays, by how much, and what it costs when RAM is ample. | yes |
+| `validate` | What `validate_batch` should be, one knob against a fixed background. | no |
+| `mlp_validate` | `mlp_batch` x `validate_batch` as a plane: do the two batches interact, or can their curves be read separately? | no |
+| `stream` | How throughput depends on the number of peptides in one call — the only suite that varies the query count, which every other one holds fixed. | no |
+| `prefetch` | Both prefetch distances crossed, and whether either is worth keeping as a knob at all. | no |
 | `all` | Every suite in one session, into one `report.md` + `report.json`. | partially — see below |
+
+Every suite is in `all`, including the four knob suites, so one session produces one report. A
+knob's curve only means something against what the same box did on the same commit at the shipped
+settings, and running the tuning half in a separate session compares two machines' moods rather
+than two configurations. Any suite still runs on its own when that is all you need — see the
+re-tuning runbook below.
+
+Three storage arms run in every suite: **preloaded** (everything in owned RAM), **mmap** (everything
+mapped) and **pprot** (mapped except the protein store, which is what retrieval walks). The two
+extremes bracket the behaviour; `pprot` is the configuration that turned out to be worth deploying,
+and a result that holds at both extremes can still fail in the middle.
+
+`tryptic` is swept in every suite; `equate_il` only in `defaults`. Both are what the caller asked
+for rather than tuning, but only one of them changes the WORK: the instrumented arm shows tryptic
+examining 9x fewer candidates, accepting ~2% of them against ~11%, and inverting the
+binary-search/range-scan split, while equate_il moves none of the three. So a knob's answer has to
+hold across tryptic before it is an answer about the default, and `defaults` is where the
+caller-visible cost of equate_il is priced. Crossing it everywhere cost 45% of the sweep and changed
+a resolved verdict in 2 of 23 contexts.
+
+`defaults` answers one question at high precision; `kmer`, `mlp` and `tuning` each answer one more,
+at whatever precision fits. That split is deliberate: a regression gate wants few cells resolved
+tightly enough that a 3% move is visible, and a parameter sweep wants many cells at whatever
+precision the budget allows. One grid cannot be both, and when `defaults` tried to be, it was the
+gate that lost — a 34-row matrix re-measuring the k-mer and batch questions on every commit.
 
 `run.sh all` runs each suite in order into one session directory, sharing one built binary per arm.
 Suites it cannot run on this machine are **skipped and reported as skipped**, never silently
-omitted — so a report from a laptop shows filled `defaults`/`detail`/`startup` sections and an
+omitted — so a report from a laptop shows filled `defaults`/`kmer`/`startup` sections and an
 explicit `not run — needs root` for `ram` and `threads`.
 
 ## The report
@@ -35,19 +66,94 @@ Every run — a single suite or the whole session — writes **`report.html`** n
 consumes as its `--baseline`.
 
 The page is one self-contained file with no external references, so it survives being `scp`'d off
-the benchmark server and opened from disk:
+the benchmark server and opened from disk.
+
+**Every suite opens with its answer.** A row of stat tiles states what it found — the best value
+against the shipped one, the gain, and how many of its contexts cleared their own floor — followed
+by one sentence applying the rule in "Re-tuning the defaults" below: a value that wins everywhere is
+proposed as a default, one that wins somewhere is a deployment knob, one that wins nowhere leaves
+its default alone. Then the figure, then the grid it came from, folded.
+
+**One figure per suite, not one per length regime.** The regimes are panels of a single
+small-multiple grid sharing one scale and one legend. They used to be four sibling sections, each
+scaled to its own maximum — 176 of the page's 204 figures, and the one comparison the split invites
+was the one it made impossible. Knob curves facet the same way, at (regime x context), so no panel
+carries more than the three storage arms; the old single-axes version drew twenty-four lines, three
+times what the palette can tell apart.
+
+**A plane is drawn twice.** The knob planes (`prefetch`, `mlp_validate`, `combos`) carry a switch
+choosing what a cell says. `throughput` is what the pair measured, on a ramp scaled to that plane;
+`vs shipped` is the signed difference against the shipped pair, neutral inside the noise floor. The
+second is the suites' actual finding and the first is what makes it readable: on a suite where
+nothing clears its floor — which is most of them — the diverging view is correct and is a grid of
+identical neutral cells, so it opens on throughput. Because the ramp is scaled per plane, each one
+prints its own spread beside the floor: a plane that varies by less than its noise has no shape,
+whatever the colours suggest.
+
+**Only `defaults` times the whole request.** A request has four phases — `search`,
+`retrieval`, then `decode` (unpacking each hit's annotations) and `serialise` (writing the JSON).
+Phases 3-4 are measured only where a sweep sets `response = true` in its `[[sweep]]` block, which is
+`defaults.toml` and nowhere else, because paying for them on every cell of every
+knob sweep would cost more than the knobs being measured. So the `time split` in the other suites
+has two segments rather than four, and every throughput number outside `defaults` describes
+search plus retrieval only. What fraction of a real request that is — 2% to 94%, depending almost
+entirely on how big the answer is — is the `what a request actually costs` section of `defaults`,
+and it is the number to read every other suite's gains through.
+
+**The phase split is a share, not a duration.** Composition is a ratio, and the length regimes
+differ by two orders of magnitude in absolute time, which left the short ones a few pixels tall
+exactly where the split mattered. Every column is normalised to itself and the absolute
+milliseconds stay in the hover; the magnitudes are the `search time` and `retrieval time` variants
+of the same switch.
+
+Other things the page does:
 
 - a **sidebar** built from the report's own headings, with a status dot per suite, so a skipped
   `ram` is visible before you scroll;
-- a **filter box** that hides non-matching rows across every table at once — how a 34-row grid
-  becomes the four rows in question;
+- a **filter box** that hides non-matching rows across every table at once, plus per-table chips —
+  how a ninety-row sweep becomes the four rows in question;
+- a **search-mode control** in the header, since `tryptic` is swept in every suite and half the page
+  is therefore a tryptic figure beside its non-tryptic twin. It hides the figures of the mode you
+  are not reading and moves the `tryptic` chip on every table that has one, so the tables narrow
+  with the pictures. It opens on non-tryptic and remembers the pick. A figure that carries tryptic
+  as an axis of its own — the `defaults` grid — is not a duplicate of anything and is never hidden;
 - **click-to-sort** columns, parsing the numbers out of `1,234,567` and `+4.2%`, with cells that
   aren't numbers (`VOID`, `did not fit`) sorting to the bottom rather than interleaving;
 - **marked cells** for the outcomes that must not be skimmed past: `VOID`, `REGRESSION`, did-not-fit,
-  and signed deltas.
+  and signed deltas;
+- **hover glossaries** on the column headings, which is where the definitions of `band`, `slots`,
+  `drift` and `floor` live rather than in a paragraph repeated under every suite.
 
 The renderer never changes what a suite said — it classifies cells by matching the strings the
 suites already emit, so there is still one analysis behind the terminal, the markdown and the page.
+
+### Colour
+
+The three storage arms take **one hue each** (`--arm-1..3` in `bench/html.py`): `mmap` blue,
+`pprot` orange, `preloaded` green, assigned in residency order and never reassigned, so an arm keeps
+its colour whatever a filter leaves on screen. Everything else categorical takes `--s1..s5` in fixed
+order. `bench/selftest.py` fails if any legend shows two series in one colour.
+
+They were a single-hue ordinal ramp, because the arms genuinely are an ordinal axis — how much is
+resident. It did not survive contact: reading a ramp means judging which of two blues is darker, and
+`mmap` against `pprot` is the one comparison this report exists to make. Three hues separate at a
+glance, at facet size, and in a screenshot; the residency ORDER still lives in `charts.ARM_ORDER`,
+where it can be read exactly instead of estimated from a tint.
+
+Before substituting any of them, re-run the data-viz validator — the arms are now a categorical
+palette, so they face the categorical gates (lightness band, chroma floor, CVD separation,
+normal-vision floor, contrast). The current three pass in both modes; light-mode green sits at
+2.74:1 on the surface, under the 3:1 contrast gate, and the documented relief applies — every chart
+here sits beside the table holding the same numbers, and every legend is labelled.
+
+### Re-rendering without re-running
+
+Changing how the report LOOKS never needs the sweep again — `--report-only` rebuilds `report.html`
+and `report.md` from a finished session's jsonl:
+
+```bash
+./sa-benchmarks/run.sh all --report-only --out <scratch>/<commit>-<ts>
+```
 
 ## Setting up a machine
 
@@ -67,6 +173,91 @@ query is a guaranteed hit.
 `profiles/local.toml` is gitignored. Results never go in the repo — they land under the profile's
 `scratch`.
 
+## Before anything runs: the preflight
+
+Every run — one suite or `all` — starts by printing what it is about to do and whether the box can
+do it. Nothing is built until that block is on screen, and a `FAIL` in it aborts the session.
+
+```
+== preflight — 11 suites ==
+
+  ok    host         AMD EPYC 7502P · 64 cores · Linux 6.1.0 x86_64
+  warn  tree         DIRTY — these numbers are not attributable to that commit
+  warn  load         14.02 / 11.80 / 9.61 (1 / 5 / 15 min) on 64 cores — a co-tenant job ...
+  ok    privileges   running as root
+  ok    cgroups      v2 memory controller available · systemd-run present
+  ok    index        184.20 GB in /mnt/data/uniprot-2026-01/suffix-array
+  ok    scratch      412.6 GB free at /mnt/data/tmp/bench
+
+  suite         processes   grid cells        queries   status
+  defaults              4           64     12,800,000   run
+       queries (needs/has): mixed 10,000/1,000,000 · small 10,000/138,062 · ...
+  ...
+  ram                  24           24     24,000,000   skip   needs root (cgroup ceilings ...)
+  total                28         1006    184,335,500   9 suite(s) to run
+
+  ok to run, with the warnings above
+```
+
+Two things it exists for. **Nothing that can be asked up front is asked late**: under `all` the
+suites that need root run last, so without this a session could spend the evening on `defaults` and
+only then discover it was never going to be able to run `ram`. The peptide supply, the cgroup probe,
+the toolchain, the free space and every profile path are checked once, before the first build, for
+every suite in the session. **The size is stated before it is paid for**: "28 processes, 1,006 grid
+cells, 184 million queries" is the difference between a coffee break and an overnight run.
+
+A `warn` prints and the run continues — a dirty tree or a busy box invalidates a comparison, but
+whether to run anyway is the operator's call. A `FAIL` (a short peptide file, a missing k-mer bucket,
+no toolchain, a non-optional suite this machine cannot run) stops the session with nothing run. The
+`status` column says `run`, `skip` (optional and blocked — it will be reported as skipped) or `FAIL`,
+and a resumed session says how many of each suite's cells already have results.
+
+Three ways to ask without running:
+
+```bash
+./sa-benchmarks/run.sh all --check       # the checks and the plan table, nothing else
+./sa-benchmarks/run.sh ram --dry-run     # the same, plus the per-cell plan and each cell's command
+./sa-benchmarks/run.sh all --check && nohup sudo ./sa-benchmarks/run.sh all &
+```
+
+`--check` builds nothing, writes nothing — not even a session directory — and exits **1** when the
+run could not start, so it gates an overnight sweep from a shell script. It reports a fresh session,
+so nothing counts as already complete; pass `--out <dir>` to ask about a session being resumed.
+`--dry-run` never gates (a plan is usually read on a machine other than the one that will run it).
+
+## While it runs: the progress bar
+
+```
+[############..................]  41.3%  ·  kmer 2/3 in 6.1m  ·  elapsed 38.2m  ·  eta ~54.1m
+```
+
+One line, re-drawn in place at the bottom of the terminal, spanning the whole session rather than
+the current suite, with the current suite's own clock beside the session's. Each suite's bar is left
+on screen when it ends, so the scrollback holds one line per suite saying what it cost. Progress is measured in **timed queries, not cells**: a matrix suite's process
+sweeps a whole grid and a tryptic cell at a fifth the query count is a fifth of the cost, so counting
+cells would make the bar lurch and the ETA lie. The ETA extrapolates from the queries this session
+has already completed and the seconds they took — it is empty until the first cell finishes, and
+cells skipped as already-complete are kept out of that average, since they cost no time. A suite that
+is skipped or aborts leaves the total, so the bar still reaches 100%.
+
+When the output is not a terminal (`nohup`, CI, a pipe to `tee`) it degrades to one `progress:` line
+per cell with the same numbers, rather than filling the log with escape codes.
+
+### Where the time went
+
+Each suite's wall clock is reported four ways: live in the bar, as `-- kmer: ok in 21.4 min` when it
+finishes, in the report's **Suites** table (with each suite's share of the session), and in
+`report.json`. Under `all` it is also written to `<session>/timings.json` **after every suite**, so a
+session that is interrupted — or one still running — can still be asked where its evening went:
+
+```bash
+cat "$SESSION/timings.json"
+```
+
+A suite's clock includes the arm builds it paid for, and every later suite reuses those binaries, so
+the first suite in the order carries the build cost for all of them. That is the honest number for
+"what does adding this suite to the session cost" only for suites after the first.
+
 ## Reading the output
 
 Every suite prints its tables with the noise floor beside the deltas, and follows them with the
@@ -83,13 +274,88 @@ prose that says how to read them. Four statistics recur, and none is decoration:
 
 The measured run-to-run noise floor on the full database is **3.9%**. Deltas below it are noise.
 
+**Throughput here is search plus retrieval, and that is not a whole request.** Production then turns
+every hit into the `ProteinInfo` it returns — an fa-compression decode of the annotations plus a
+`String` for the accession — and serialises the result to JSON. `defaults` times both, in its "what
+a request actually costs" section, and reports the share. On the local index a non-tryptic large
+request spends **~12%** of its time in the part every suite measures and the rest in decode and
+serialisation. So a knob that buys 20% of the measured part buys far less than 20% to a caller, and
+that ratio is the first thing to read before any verdict in the rest of the report.
+
+## Re-tuning the defaults
+
+One suite per knob. Run the one whose default is in question — there is no reason to re-measure
+three settled knobs to re-check a fourth:
+
+```bash
+./sa-benchmarks/run.sh mlp        # mlp_batch: the cross-query batch
+./sa-benchmarks/run.sh validate   # validate_batch, plus the mlp_batch x validate_batch plane
+./sa-benchmarks/run.sh prefetch   # both prefetch distances, crossed
+
+./sa-benchmarks/run.sh validate --dry-run                  # cell count and query total, first
+./sa-benchmarks/run.sh validate --runs 1 --amount 1000     # every cell once, to prove the shape
+```
+
+Read each one's **resolution** table before its results. These suites interleave a reference cell
+through every process, so drift is measured and removed rather than folded into the numbers, and
+the reference's leftover scatter is the floor on what that process could resolve at all. A residual
+wider than the effects below it means the run answered nothing, which on a shared box is the common
+outcome rather than the rare one.
+
+The report ends with a verdict per knob. Only a value that wins **every** context it was measured in,
+each time by more than that context's own floor, is proposed as a change to
+`SearchTuning::default()`. A value that wins some contexts and loses others is reported as a
+*deployment knob* — something the server should be able to set, not something to bake into the
+default — and a knob that is flat everywhere leaves its default alone.
+
+Nothing about the knobs is written down on the driver side. The grid is resolved through
+`SearchTuning`'s own serde representation, so **a knob added to that struct is sweepable the same
+day**: give it values in a `[[sweep]]` block and it appears in the curves, the interaction table and
+the verdict without a line of Python changing. A misspelled one is an error, not a setting that
+quietly does nothing.
+
 ## Adding a suite
 
-1. Write `suites/<name>.toml`: `[[arms]]` (feature sets to build) and `[axes]` (values to sweep).
-   Axis names have defined effects and an unknown one is an error — see `bench/config.py`.
+1. Write `suites/<name>.toml`: `[[arms]]` (feature sets to build) and `[axes]` (values to sweep),
+   or `[[sweep]]` blocks for `mode = "matrix"`. Axis names have defined effects and an unknown one
+   is an error — see `bench/config.py`.
 2. Optionally write `bench/suites/<name>.py` with an `analyse(report, suite, records, out_dir)`
    function. Without one, a generic table of every cell is printed.
 3. Add it to `suites/all.toml` if it belongs in the master run.
+
+### Suites that sweep many cells
+
+A suite in `mode = "matrix"` loads the index once per process and sweeps in-process, which at
+full-database scale is the difference between a sweep and a day of index loads. Every such suite is
+built from `[[sweep]]` blocks (see `bench/grid.py`) — the harness carries no grid of its own, so a
+sweep is described in exactly one place. A narrow suite is one block (`defaults`, `kmer`,
+`prefetch`); `validate` is three, and the rule that keeps a wider one affordable is that blocks
+**add** rather than multiply:
+
+* one block varying every knob against **one** context — the curves;
+* one block at **one** tuning point against every context — what each context costs;
+* one small block per knob/context pair that has a mechanism behind it — the interactions.
+
+For one knob and its contexts that is a few dozen cells where a cross-product is thousands, and it
+covers strictly more. Widening a block is a line of TOML; narrowing a cross-product after the run
+is not, because the run is already over.
+
+Two things such a suite gets for free, both of which make lower per-cell rep counts safe:
+
+* **`base_every`** re-measures the reference configuration through the process. Drift then becomes a
+  measured series: every cell is rescaled by the reference interpolated to its own position, and the
+  reference's leftover scatter becomes that process's resolution floor, reported in that suite's
+  **resolution** table. Set it on any suite whose process runs more than a handful of cells —
+  `kmer`, `mlp`, `validate` and `prefetch` all do, and on a shared box their processes routinely
+  move by more than the effects they are measuring. Not `defaults`: its two arms are separate
+  processes, so its exposure is drift *between* them, which an in-process cadence cannot address.
+* **`runs_target_band`** stops a cell once its own spread is tight enough to read. A fixed rep count
+  spends the noisiest cell's budget on every cell.
+
+Only `threads` and `ceiling_gb` may be `[axes]` in matrix mode — a rayon pool is built once per
+process and a cgroup scope wraps one, so neither can change while an index stays loaded. Everything
+else belongs in a block, where it costs a cell rather than an index load. Pinning threads needs no
+root; only a memory ceiling does.
 
 `analyse` appends to a `Report` and never prints, which is what lets the terminal and `report.md`
 show exactly the same analysis.
@@ -104,6 +370,13 @@ they are where the crossover detection, the void-cell rule and the fault-flatnes
 asserts that a cell which was OOM-killed, one whose cap did not bind, and one that never ran each
 appear in the output and stay distinguishable from one another, and that all three renderings
 survive: the page is well-formed, self-contained, and marks those cells.
+
+For `tuning` it also builds a process whose fabricated machine slows by 30% over the run, and puts
+the one real win late in it — so the check passes only if the drift cadence was actually applied,
+not merely recorded. The grid expander is checked separately: that a knob plane absorbs the
+one-at-a-time lines it subsumes rather than re-running them, that two blocks describing the same
+measurement collapse while the same measurement at two precisions does not, and that a misspelled
+context key is an error rather than a silently narrower sweep.
 
 ## Measurement code and shipping binaries
 

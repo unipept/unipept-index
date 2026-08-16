@@ -1,0 +1,85 @@
+description = "What each k-mer table buys, per peptide length regime and per backend"
+
+mode = "matrix"
+ordering = "sequential"
+
+notes = """
+One question: is the k-mer table worth attaching, and if so, which one. Everything else is held at
+the production configuration, so a difference in a row is the table and nothing else.
+
+The mechanism is why this is a suite of its own rather than a column in `defaults`. A search without
+a table binary-searches the suffix array from scratch: a dependent chain of pointer-chasing probes,
+each one a cache miss that cannot be prefetched because its address depends on the previous probe's
+result. A k-mer table skips the first k levels of that chain by looking the prefix up directly. So
+the table's value is a FUNCTION OF PEPTIDE LENGTH — it removes a fixed number of probes, which is a
+large share of a short peptide's work and a small share of a long one's. Reading one number for
+"the k-mer table" averages that away, which is why every row here is per length regime.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts.
+
+Read the table this way:
+
+  * `vs none` is the column that decides. A table that does not clear its row's floor is not a
+    small win, it is no answer — and it still costs its resident bytes.
+  * `table GB` beside it, always. The 6-mer is 2.85 GB resident against the 5-mer's 0.12 GB, a
+    24x cost, and this suite runs UNCONSTRAINED, which is the one regime where
+    that cost is invisible. A 6-mer that wins by less than the floor is a loss. The `table GB`
+    column is computed from k, not measured — the table is dense at 24^k entries of 16 bytes — and
+    it has to be, because one matrix process loads every k the grid names before it sweeps, so
+    process RSS is identical in every row and can attribute nothing.
+  * the two backends should agree on the SIGN. The table shortens the probe chain, which is a
+    property of the search rather than of the storage; if mmap and preloaded disagree about whether
+    a table helps, something else moved.
+
+The verdict this suite is currently expected to reproduce, from the last full-database run: with the
+index resident, the 6-mer is inside the noise floor on medium/small and only +4.1% on large, for
+2.85 GB against 0.12 GB — so the 5-mer ships and the 6-mer does not. That verdict does NOT hold under
+a memory ceiling, where the table's value is working-set size rather than probe count and the 6-mer
+reaches +18.4% against no table. See `ram` for the capped answer; this suite deliberately does not
+sweep ceilings, because a table comparison under a cap is a different experiment with a root
+requirement attached.
+"""
+
+[defaults]
+runs = 20
+amount = 10000
+max_matches = 10000
+# `mixed` is the unbucketed 5..50 file — the query mix a server actually sees, and the one
+# number to quote. The three buckets are there to say WHERE a change landed, since peptide length
+# moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
+files = ["mixed", "small", "medium", "large"]
+
+[[sweep]]
+name = "kmer"
+strategy = "base"
+arms = ["preloaded", "mmap", "pprot"]
+# Drift cadence: the reference is re-measured every 8 cells so the process's own movement is
+# measured and removed rather than folded into every table's delta.
+base_every = 8
+# 0 attaches no table at all, and it is the reference every other row is read against. Add a k here
+# and the profile needs a `kmer_tables.k<n>` entry, or the table is built in-process at startup.
+kmer = [0, 5, 6]
+equate_il = [true]
+tryptic = [true, false]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks. Kept alongside the two extremes everywhere, because
+# a result that holds for both of them can still fail for the configuration actually deployed.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]

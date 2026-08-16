@@ -16,6 +16,12 @@ unrecognised name is an error rather than a silently inert extra dimension:
     equate_il    --equate-il true|false.
     tryptic      --tryptic true|false.
 
+A matrix-mode suite is different: it loads the index once and sweeps in-process, so an axis there
+would cost a whole index load per value. Only `threads` and `ceiling_gb` may be axes (see
+`PROCESS_AXES` — neither can change while a process lives), and everything else it varies goes in
+`[[sweep]]` blocks, which `bench.grid` expands into a grid file the harness reads. That is also the
+only way to sweep a `SearchTuning` knob at matrix-mode cost.
+
 Ordering decides how cells are interleaved in time, which is not cosmetic: it is the only defence
 against machine drift being read as an arm effect.
 
@@ -61,6 +67,14 @@ KNOWN_AXES = {
 #: Prefix for a SearchTuning field used as a sweep axis, e.g. `tune.mlp_batch = [1, 16]`.
 TUNE_PREFIX = "tune."
 
+#: Axes that decide which *process* a cell runs in, rather than what it measures inside one.
+#:
+#: These are the only axes a matrix-mode suite may have. Rayon's global pool is built once per
+#: process before any searcher exists and a cgroup scope wraps a process, so neither can change
+#: while an index stays loaded. Everything else a matrix suite varies belongs in a `[[sweep]]`
+#: block, where it costs a cell rather than a whole index load.
+PROCESS_AXES = ("threads", "ceiling_gb")
+
 ORDERINGS = ("sequential", "palindrome", "abba")
 
 
@@ -74,11 +88,22 @@ class Arm:
 
     name: str
     features: tuple[str, ...]
+    #: Build this arm with sa-index's `metrics` feature. Per arm rather than per suite, so a suite
+    #: can carry ONE instrumented arm alongside its uninstrumented ones — the counters perturb
+    #: throughput (~2% at mlp_batch=1), so an instrumented arm is a different measurement sitting in
+    #: the same run, and every analysis has to keep it out of its throughput tables.
+    metrics: bool = False
 
     @property
     def feature_string(self) -> str:
-        """Comma-separated features, i.e. what goes after `--features`. Empty = default build."""
-        return ",".join(self.features)
+        """Comma-separated features, i.e. what goes after `--features`. Empty = default build.
+
+        `metrics` is included, because this string is what every record reports as the binary that
+        produced it — and an instrumented arm sharing a storage configuration with an uninstrumented
+        one would otherwise be indistinguishable in the records.
+        """
+        features = list(self.features) + (["metrics"] if self.metrics else [])
+        return ",".join(features)
 
 
 @dataclass(frozen=True)
@@ -136,9 +161,12 @@ class Suite:
     drop_caches: bool
     #: Harness settings shared by every cell (runs, amount, warmup, peptides, ...).
     defaults: dict[str, Any] = field(default_factory=dict)
-    #: `mode = "matrix"` only: the grid the harness sweeps in-process.
-    matrix: dict[str, Any] = field(default_factory=dict)
-    #: Build the arms with sa-index's `metrics` feature. Perturbs throughput; see `detail`.
+    #: `mode = "matrix"` only: `[[sweep]]` blocks, which `bench.grid` expands into the grid file the
+    #: harness sweeps in-process. This is the only way a matrix suite says what it measures — the
+    #: harness has no built-in grid of its own, so a sweep cannot be described in two places.
+    sweeps: list[dict[str, Any]] = field(default_factory=list)
+    #: Build EVERY arm with sa-index's `metrics` feature. Prefer the per-arm flag: a suite where
+    #: every arm is instrumented can report no throughput at all.
     metrics: bool = False
     #: Prose printed under this suite's tables, explaining how to read them.
     notes: str = ""
@@ -227,6 +255,9 @@ def load(name: str, repo: Path) -> Suite:
     if ordering == "abba":
         ordering = "palindrome"
 
+    drop_caches = bool(raw.get("drop_caches", False))
+    capped = any(value != 0 for value in axes.get("ceiling_gb", []))
+
     suite = Suite(
         name=name,
         description=raw.get("description", "").strip(),
@@ -234,24 +265,45 @@ def load(name: str, repo: Path) -> Suite:
         arms=arms,
         axes=axes,
         ordering=ordering,
-        needs_root=bool(raw.get("needs_root", False)),
-        drop_caches=bool(raw.get("drop_caches", False)),
+        # Derived, not declared. A cgroup ceiling and `drop_caches` both need root by construction,
+        # and a suite whose ceiling list is the thing being edited should not also have to keep a
+        # boolean in sync with it — a mismatch there fails the run rather than the edit.
+        needs_root=bool(raw.get("needs_root", False)) or drop_caches or capped,
+        drop_caches=drop_caches,
         defaults=raw.get("defaults", {}),
-        matrix=raw.get("matrix", {}),
+        sweeps=raw.get("sweep", []),
         metrics=bool(raw.get("metrics", False)),
         notes=raw.get("notes", "").strip(),
     )
 
-    if suite.drop_caches and not suite.needs_root:
-        raise ConfigError(f"{path}: drop_caches needs root, so needs_root must also be true")
-    if any(value != 0 for value in axes.get("ceiling_gb", [])) and not suite.needs_root:
-        raise ConfigError(f"{path}: a non-zero ceiling_gb needs root (cgroup v2), so set needs_root")
-    if mode == "matrix" and axes:
+    if mode == "matrix":
+        _check_matrix(suite, path)
+    elif suite.sweeps:
         raise ConfigError(
-            f"{path}: mode='matrix' sweeps its grid inside one process, so it cannot also have "
-            f"[axes] — put the grid under [matrix]"
+            f"{path}: [[sweep]] blocks are expanded into a grid the harness sweeps in one process, "
+            f"which only mode='matrix' does. In single mode use [axes] instead."
         )
     return suite
+
+
+def _check_matrix(suite: Suite, path: Path) -> None:
+    """Matrix mode may vary processes through `[axes]` and cells through `[[sweep]]`, nothing else."""
+    if not suite.sweeps:
+        raise ConfigError(
+            f"{path}: mode='matrix' needs at least one [[sweep]] block saying what to sweep. "
+            f"(The harness used to carry a built-in grid selected by a [matrix] table; it no longer "
+            f"does, because a grid described half in TOML and half in Rust could only be widened by "
+            f"editing both.)"
+        )
+
+    stray = sorted(set(suite.axes) - set(PROCESS_AXES))
+    if stray:
+        raise ConfigError(
+            f"{path}: axis '{stray[0]}' cannot be a matrix-mode axis. Matrix mode loads the index "
+            f"once and sweeps in-process, so an axis here would cost a whole index load per value.\n"
+            f"  process axes (one process each): {', '.join(PROCESS_AXES)}\n"
+            f"  everything else goes in a [[sweep]] block, where it costs one cell"
+        )
 
 
 def _flatten_tune(axes: dict) -> dict:
@@ -280,4 +332,4 @@ def _arm(entry: dict, path: Path) -> Arm:
     features = entry.get("features", [])
     if not isinstance(features, list):
         raise ConfigError(f"{path}: arm '{name}': features must be a list")
-    return Arm(name=name, features=tuple(features))
+    return Arm(name=name, features=tuple(features), metrics=bool(entry.get("metrics", False)))
