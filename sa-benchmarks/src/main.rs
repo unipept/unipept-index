@@ -52,7 +52,7 @@ use rayon::prelude::*;
 use sa_index::{
     KmerTable, ProteinsBackend as _, SearchTuning, SuffixArrayBackend,
     kmer_table::AMINO_ACID_COUNT,
-    peptide_search::ProteinInfo,
+    peptide_search::{ProteinInfo, SearchResult, frame_chunks, json_chunk},
     sa_searcher::{SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::SuffixToProteinMappingBackend as _
 };
@@ -100,7 +100,25 @@ use text_compression::ProteinTextBackend as _;
 ///     They are recorded BESIDE `total_duration_ns` and never inside it: widening the timed region
 ///     would change what every suite's throughput means and invalidate every baseline, including
 ///     the regression gate. `throughput_qps` is still search plus retrieval, exactly as in v11.
-const SCHEMA_VERSION: u32 = 12;
+/// v13: v12's `decode_duration_ns` and `serialise_duration_ns` are replaced by a single
+///     `response_duration_ns`, because the pair they formed was not measurable against the rest of
+///     the record. v12 timed both of them SERIALLY while it timed search and retrieval in parallel,
+///     so on a 12-core box the decode share was overstated by up to the core count, and the
+///     "measured share" heatmap built on that comparison was correspondingly wrong. v12 also
+///     serialised a bare `Vec<Vec<ProteinInfo>>` rather than the `Vec<SearchResult>` the server
+///     returns, so `response_bytes` omitted every peptide's `sequence`, `cutoff_used` and object
+///     framing and under-reported the response.
+///
+///     v13 measures the whole proteins-to-bytes phase the way production runs it — the decode
+///     parallel across peptides, the JSON in the shape `sa-server` actually returns — and records it
+///     as one number. **v12 and v13 shares are not comparable**; a baseline comparison across the
+///     boundary will show a large apparent shift in the response phase that is the fix, not a
+///     regression. Expect `response_bytes` to grow for the same reason.
+///
+///     The isolated decoder cost is no longer a field here: it is not a request phase, and
+///     `cargo bench -p fa-compression` measures it properly. `total_duration_ns` and
+///     `throughput_qps` are unchanged and still mean search plus retrieval.
+const SCHEMA_VERSION: u32 = 13;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -440,14 +458,17 @@ struct BenchmarkResult {
     candidates_examined: u64,
     /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `metrics`).
     candidates_accepted: u64,
-    /// Nanoseconds turning every `ProteinRef` into the `ProteinInfo` the server returns: an
-    /// fa-compression decode of the functional annotations plus a `String` for the accession, per
-    /// protein hit. 0 unless the cell set `response`.
-    decode_duration_ns: u64,
-    /// Nanoseconds serialising those results to JSON, the last thing the server does before the
-    /// bytes go out. 0 unless the cell set `response`.
-    serialise_duration_ns: u64,
-    /// Bytes of JSON the request would have returned. 0 unless the cell set `response`.
+    /// Nanoseconds for everything between "we have the proteins" and "the client has bytes":
+    /// decoding each hit's functional annotations, allocating its accession, and serialising the
+    /// whole answer to JSON. 0 unless the cell set `response`.
+    ///
+    /// Measured the way production runs it, which is the whole point of the field — the decode
+    /// parallel across peptides and the JSON in the shape `sa-server` returns. v12 split this in two
+    /// and timed both serially, which inflated the decode share by up to the core count; see the
+    /// v13 note on `SCHEMA_VERSION`.
+    response_duration_ns: u64,
+    /// Bytes of JSON the request would have returned, including per-peptide `sequence`,
+    /// `cutoff_used` and object framing. 0 unless the cell set `response`.
     response_bytes: u64,
     /// Page faults taken across the timed region (search + retrieval), not for the whole process.
     ///
@@ -696,25 +717,36 @@ fn run_benchmark(
     //
     // NoMatches queries are dropped before retrieval, exactly as `search_all_peptides` does —
     // there is nothing to look up for them.
-    let matched_suffixes: Vec<&[i64]> = suffix_results
+    //
+    // The peptide index and the cutoff flag are carried alongside because phase 3 needs them to
+    // rebuild the `SearchResult` the server actually returns; dropping NoMatches loses the
+    // correspondence with `peptides` otherwise.
+    let matched: Vec<(usize, &[i64], bool)> = suffix_results
         .iter()
-        .filter_map(|r| match r {
-            SearchAllSuffixesResult::MaxMatches(suf) | SearchAllSuffixesResult::SearchResult(suf) => {
-                Some(suf.as_slice())
-            }
+        .enumerate()
+        .filter_map(|(index, r)| match r {
+            SearchAllSuffixesResult::MaxMatches(suf) => Some((index, suf.as_slice(), true)),
+            SearchAllSuffixesResult::SearchResult(suf) => Some((index, suf.as_slice(), false)),
             SearchAllSuffixesResult::NoMatches => None
         })
         .collect();
+    let matched_suffixes: Vec<&[i64]> = matched.iter().map(|(_, suffixes, _)| *suffixes).collect();
 
     let retrieval_start = Instant::now();
     let retrieved: Vec<Vec<_>> = matched_suffixes.par_iter().map(|suf| searcher.retrieve_proteins(suf)).collect();
     let retrieval_duration_ns = retrieval_start.elapsed().as_nanos() as u64;
 
     // Phase 3, only when the cell asks for it: everything production does between "we have the
-    // proteins" and "the client has bytes". `search_all_peptides` builds a `ProteinInfo` per hit —
-    // decoding the functional annotations and allocating the accession — and `sa-server` serialises
-    // the result. Neither was measured anywhere, so no suite could say what fraction of a real
-    // request its throughput described.
+    // proteins" and "the client has bytes" — `search_all_peptides` builds a `ProteinInfo` per hit
+    // (an fa-compression decode plus an accession `String`) and `sa-server` serialises the lot.
+    //
+    // Measured in production's shape, which is the entire point of the field and what v12 got
+    // wrong. This calls the same `json_chunk` / `frame_chunks` the server does, on the same rayon
+    // fan-out, so the two cannot drift — the contract phase 2 already carries. v12 instead timed a
+    // serial decode and a serial `serde_json::to_vec` against parallel search and retrieval
+    // numbers, which overstated the phase by up to the core count, and it serialised a bare
+    // `Vec<Vec<ProteinInfo>>` carrying none of the per-peptide `sequence` / `cutoff_used` / object
+    // framing the server returns.
     //
     // Opt-in because it is potentially the largest cost in a run: at a 10,000 cutoff it decodes up
     // to that many annotations per peptide. The knob suites are not measuring it and must not pay
@@ -722,19 +754,24 @@ fn run_benchmark(
     //
     // NOT added to `total_duration_ns`. See the v12 schema note: throughput keeps meaning search
     // plus retrieval, or every baseline in every suite silently changes meaning.
-    let (decode_duration_ns, serialise_duration_ns, response_bytes) = if response {
-        let decode_start = Instant::now();
-        let decoded: Vec<Vec<ProteinInfo>> = retrieved
-            .iter()
-            .map(|proteins| proteins.iter().map(|protein| ProteinInfo::from(*protein)).collect())
+    let (response_duration_ns, response_bytes) = if response {
+        let response_start = Instant::now();
+        let mut chunks: Vec<Vec<u8>> = retrieved
+            .par_iter()
+            .zip(matched.par_iter())
+            .map(|(proteins, &(index, _, cutoff_used))| {
+                json_chunk(&SearchResult {
+                    sequence: &peptides[index],
+                    proteins: proteins.iter().map(|protein| ProteinInfo::from(*protein)).collect(),
+                    cutoff_used
+                })
+            })
             .collect();
-        let decode_ns = decode_start.elapsed().as_nanos() as u64;
-
-        let serialise_start = Instant::now();
-        let bytes = serde_json::to_vec(&decoded).map(|out| out.len()).unwrap_or(0);
-        (decode_ns, serialise_start.elapsed().as_nanos() as u64, bytes as u64)
+        frame_chunks(&mut chunks);
+        let bytes: usize = chunks.iter().map(Vec::len).sum();
+        (response_start.elapsed().as_nanos() as u64, bytes as u64)
     } else {
-        (0, 0, 0)
+        (0, 0)
     };
 
     // Aggregate stats
@@ -767,8 +804,7 @@ fn run_benchmark(
         match_iter_ns,
         candidates_examined,
         candidates_accepted,
-        decode_duration_ns,
-        serialise_duration_ns,
+        response_duration_ns,
         response_bytes,
         major_faults: majflt_after.saturating_sub(majflt_before),
         minor_faults: minflt_after.saturating_sub(minflt_before)

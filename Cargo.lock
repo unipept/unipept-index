@@ -1175,6 +1175,7 @@ name = "sa-index"
 version = "0.1.0"
 dependencies = [
  "bitarray",
+ "fa-compression",
  "memmap2",
  "prefetch",
  "rayon",
@@ -1207,6 +1208,7 @@ dependencies = [
  "sa-index",
  "sa-mappings",
  "serde",
+ "serde_json",
  "text-compression",
  "tokio",
 ]

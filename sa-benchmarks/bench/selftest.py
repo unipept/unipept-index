@@ -312,8 +312,7 @@ COUNTERS = (
     "match_iter_ns",
     "candidates_examined",
     "candidates_accepted",
-    "decode_duration_ns",
-    "serialise_duration_ns",
+    "response_duration_ns",
     "response_bytes",
 )
 
@@ -348,15 +347,18 @@ def _counters(tryptic: bool) -> dict:
     }
 
 
-#: The two phases production runs after retrieval, shaped as the local index measures them: decode
-#: dwarfs search on a non-tryptic request and all but disappears under tryptic, which returns almost
-#: nothing. The fixture has to have that asymmetry, or a report that lost the share column entirely
-#: would still pass.
+#: The phase production runs after retrieval, shaped as the local index measures it: it dwarfs search
+#: on a non-tryptic request and all but disappears under tryptic, which returns almost nothing. The
+#: fixture has to have that asymmetry, or a report that lost the share column entirely would still
+#: pass.
+#:
+#: Sized for the v13 measurement — production's shape, decode parallel across peptides — which is
+#: several times smaller than the serial v12 number for the same work. A fixture carrying the old
+#: serial ratio would let a silent revert to it pass.
 def _response(tryptic: bool) -> dict:
     return {
-        "decode_duration_ns": 300_000 if tryptic else 30_000_000,
-        "serialise_duration_ns": 100_000 if tryptic else 7_500_000,
-        "response_bytes": 85_000 if tryptic else 9_000_000,
+        "response_duration_ns": 250_000 if tryptic else 11_000_000,
+        "response_bytes": 92_000 if tryptic else 9_800_000,
     }
 
 

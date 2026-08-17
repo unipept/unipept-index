@@ -2,16 +2,14 @@ use std::{error::Error, sync::Arc};
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{DefaultBodyLimit, State},
-    http::StatusCode,
+    http::{HeaderValue, Response, header},
+    response::IntoResponse,
     routing::post
 };
 use clap::Parser;
-use sa_index::{
-    SuffixArrayBackend,
-    peptide_search::{SearchResult, search_all_peptides},
-    sa_searcher::Searcher
-};
+use sa_index::{SuffixArrayBackend, peptide_search::search_all_peptides_json, sa_searcher::Searcher};
 use sa_server::{ActiveSearcher, load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Deserialize;
 
@@ -84,13 +82,44 @@ async fn main() {
 /// # Returns
 ///
 /// Returns the search results from the index as a JSON
-async fn search(
-    State(searcher): State<Arc<ActiveSearcher>>,
-    data: Json<InputData>
-) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    let search_result = search_all_peptides(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);
+///
+/// # Why this is not `Json<Vec<SearchResult>>`
+///
+/// `search_all_peptides_json` hands back the body already serialised, one chunk per peptide, built
+/// on the rayon workers that did the search. Serialising here instead would put the whole answer —
+/// hundreds of megabytes on a large non-tryptic request — through a single-threaded
+/// `serde_json::to_vec`, which is the largest serial stretch a request has. It also could not
+/// borrow: a `SearchResult` holds references into the `Searcher`, so it never satisfies the
+/// `'static` bound a response body needs.
+///
+/// The bytes and the headers are exactly what `Json` produced: `content-type: application/json`
+/// and nothing else, with hyper deriving `content-length` from the body. Note that `Vec<u8>`'s own
+/// `IntoResponse` would set `application/octet-stream`, which is why the response is built
+/// explicitly rather than through a header tuple.
+async fn search(State(searcher): State<Arc<ActiveSearcher>>, data: Json<InputData>) -> Response<Body> {
+    let chunks = search_all_peptides_json(&searcher, &data.peptides, data.cutoff, data.equate_il, data.tryptic);
 
-    Ok(Json(search_result))
+    json_response(chunks)
+}
+
+/// Joins pre-serialised JSON chunks into the response `Json` would have produced.
+///
+/// Split out from [`search`] so it can be tested without an index: the chunks are already proved
+/// byte-identical to a single `serde_json` pass by `sa_index::peptide_search`, and this is the
+/// other half — that the HTTP response around them did not change either.
+fn json_response(chunks: Vec<Vec<u8>>) -> Response<Body> {
+    // Sized exactly, so the concatenation neither grows by doubling nor over-allocates.
+    let mut body = Vec::with_capacity(chunks.iter().map(Vec::len).sum());
+    for chunk in &chunks {
+        body.extend_from_slice(chunk);
+    }
+    drop(chunks);
+
+    let mut response = body.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response
 }
 
 /// Starts the server with the provided commandline arguments
@@ -162,4 +191,92 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+    use serde::Serialize;
+
+    use super::*;
+
+    /// The shape `Json<Vec<SearchResult>>` used to serialise, kept here as the reference the new
+    /// response is compared against. It only has to serialise the same way, not be the same type.
+    #[derive(Serialize)]
+    struct ReferenceResult {
+        sequence: String,
+        proteins: Vec<ReferenceProtein>,
+        cutoff_used: bool
+    }
+
+    #[derive(Serialize)]
+    struct ReferenceProtein {
+        taxon: u32,
+        uniprot_accession: String,
+        functional_annotations: String
+    }
+
+    fn reference(count: usize) -> Vec<ReferenceResult> {
+        (0..count)
+            .map(|index| ReferenceResult {
+                sequence: format!("PEPTIDE{index}"),
+                proteins: (0..index)
+                    .map(|protein| ReferenceProtein {
+                        taxon: protein as u32,
+                        uniprot_accession: format!("P{protein:05}"),
+                        functional_annotations: "EC:1.1.1.-;GO:0009279".to_string()
+                    })
+                    .collect(),
+                cutoff_used: index % 2 == 0
+            })
+            .collect()
+    }
+
+    /// Chunks in the shape `sa_index::peptide_search::json_chunk` produces them: each prefixed with
+    /// the `,` that separates it, the first `,` overwritten with `[`, the last carrying the `]`.
+    fn chunks_for(results: &[ReferenceResult]) -> Vec<Vec<u8>> {
+        if results.is_empty() {
+            return vec![b"[]".to_vec()];
+        }
+        let mut chunks: Vec<Vec<u8>> = results
+            .iter()
+            .map(|result| {
+                let mut chunk = vec![b','];
+                serde_json::to_writer(&mut chunk, result).unwrap();
+                chunk
+            })
+            .collect();
+        chunks[0][0] = b'[';
+        chunks.last_mut().unwrap().push(b']');
+        chunks
+    }
+
+    async fn body_bytes(response: Response<Body>) -> Vec<u8> {
+        to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()
+    }
+
+    /// The whole contract of moving serialisation out of `Json`: same bytes, same headers.
+    #[tokio::test]
+    async fn json_response_matches_what_json_would_have_returned() {
+        for count in [0, 1, 2, 17] {
+            let results = reference(count);
+
+            let ours = json_response(chunks_for(&results));
+            let theirs = Json(&results).into_response();
+
+            assert_eq!(ours.status(), theirs.status(), "count={count}");
+            assert_eq!(ours.headers(), theirs.headers(), "count={count}");
+            assert_eq!(body_bytes(ours).await, body_bytes(theirs).await, "count={count}");
+        }
+    }
+
+    /// `Vec<u8>`'s own `IntoResponse` sets `application/octet-stream`, so the content type has to be
+    /// overwritten rather than merely added. A regression here would be invisible to a client that
+    /// parses the body regardless.
+    #[tokio::test]
+    async fn json_response_is_labelled_as_json() {
+        let response = json_response(chunks_for(&reference(3)));
+        assert_eq!(response.headers().get(header::CONTENT_TYPE).unwrap(), "application/json");
+        assert_eq!(response.headers().len(), 1, "Json sets exactly one header");
+    }
 }

@@ -90,10 +90,10 @@ identical neutral cells, so it opens on throughput. Because the ramp is scaled p
 prints its own spread beside the floor: a plane that varies by less than its noise has no shape,
 whatever the colours suggest.
 
-**Only `defaults` times the whole request.** A request has four phases — `search`,
-`retrieval`, then `decode` (unpacking each hit's annotations) and `serialise` (writing the JSON).
-Phases 3-4 are measured only where a sweep sets `response = true` in its `[[sweep]]` block, which is
-`defaults.toml` and nowhere else, because paying for them on every cell of every
+**Only `defaults` times the whole request.** A request has three phases — `search`,
+`retrieval`, then `response` (unpacking each hit's annotations and writing the JSON).
+Phase 3 is measured only where a sweep sets `response = true` in its `[[sweep]]` block, which is
+`defaults.toml` and nowhere else, because paying for it on every cell of every
 knob sweep would cost more than the knobs being measured. So the `time split` in the other suites
 has two segments rather than four, and every throughput number outside `defaults` describes
 search plus retrieval only. What fraction of a real request that is — 2% to 94%, depending almost
@@ -282,11 +282,15 @@ The measured run-to-run noise floor on the full database is **3.9%**. Deltas bel
 
 **Throughput here is search plus retrieval, and that is not a whole request.** Production then turns
 every hit into the `ProteinInfo` it returns — an fa-compression decode of the annotations plus a
-`String` for the accession — and serialises the result to JSON. `defaults` times both, in its "what
-a request actually costs" section, and reports the share. On the local index a non-tryptic large
-request spends **~12%** of its time in the part every suite measures and the rest in decode and
-serialisation. So a knob that buys 20% of the measured part buys far less than 20% to a caller, and
-that ratio is the first thing to read before any verdict in the rest of the report.
+`String` for the accession — and serialises the result to JSON. `defaults` times that, in its "what
+a request actually costs" section, and reports the share. A knob that buys 20% of the measured part
+buys less than 20% to a caller, and that ratio is the first thing to read before any verdict in the
+rest of the report.
+
+Schema v13 changed how the phase is measured: it now runs in production's shape, with the decode
+parallel across peptides. v12 timed the decode serially while timing search and retrieval in
+parallel, which overstated the response share by up to the core count — **any share quoted from a
+v12 session, including the "~12%" that used to sit here, is wrong and needs re-measuring.**
 
 ## Re-tuning the defaults
 

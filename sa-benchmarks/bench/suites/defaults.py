@@ -140,20 +140,25 @@ def _summary(report: Report, cells: dict, arms: list[str], loaded: list[Record])
 
 
 def _phase_cost_figure(report: Report, rows: list[tuple], arms: list[str]) -> None:
-    """The four phases in MILLISECONDS, open, above the share grid.
+    """The three phases in MILLISECONDS, open, above the share grid.
 
-    This section exists to say that decode and serialisation are most of a request, and until now
-    it never showed a decode or a serialise number on the page. The heatmap below is a share — a
-    percentage, with the milliseconds it was computed from left in a `<details>` fold eight
-    kilobytes down — and the only other place the two phases appear is the `time split` chart under
-    `by length regime`, which is `share=True` for good reasons of its own and so is also a
-    percentage, on a tab that is not the one that opens. A reader could work through the whole
-    report and never see that a mixed non-tryptic rep spends five seconds in decode.
+    This section exists to say that the response phase is most of a request, and until now it never
+    showed a response number on the page. The heatmap below is a share — a percentage, with the
+    milliseconds it was computed from left in a `<details>` fold eight kilobytes down — and the only
+    other place the phase appears is the `time split` chart under `by length regime`, which is
+    `share=True` for good reasons of its own and so is also a percentage, on a tab that is not the
+    one that opens. A reader could work through the whole report and never see that a mixed
+    non-tryptic rep spends seconds turning proteins into bytes.
 
     So: absolute, unnormalised, and open. `mixed` only, which `defaults.toml` calls the query mix a
     server actually sees and the one number to quote — and which conveniently keeps the columns
     within about 12x of each other, where the four regimes together span two orders of magnitude
     and would leave the tryptic stacks a few pixels tall.
+
+    The response bar is measured the way production runs it (decode parallel across peptides, one
+    serial JSON pass); schema v12 timed its two halves serially against parallel search and
+    retrieval numbers, so bars drawn from a v12 session overstate it. See the v13 note in
+    `sa-benchmarks/src/main.rs`.
 
     One arm, for the reason `shared.phase_switch` gives: composition is a property of the workload,
     the arms agree on it to well inside the noise, and drawing three would spend a second
@@ -162,7 +167,7 @@ def _phase_cost_figure(report: Report, rows: list[tuple], arms: list[str]) -> No
     from ..charts import Series, stacked_columns
 
     arm = DEPLOYED_ARM if DEPLOYED_ARM in arms else (arms[0] if arms else "")
-    phases = (("search_ms", "search"), ("retrieval_ms", "retrieval"), ("decode_ms", "decode"), ("serialise_ms", "serialise"))
+    phases = (("search_ms", "search"), ("retrieval_ms", "retrieval"), ("response_ms", "response"))
 
     picked = {
         key: cell
@@ -184,7 +189,7 @@ def _phase_cost_figure(report: Report, rows: list[tuple], arms: list[str]) -> No
     if not any(any(item.values) for item in series):
         return
 
-    caption = f"What one {QUOTED_SOURCE} rep costs, per phase — the two timed, and the two that are not"
+    caption = f"What one {QUOTED_SOURCE} rep costs, per phase — the two timed, and the one that is not"
     report.chart(
         stacked_columns(
             groups,
@@ -198,7 +203,7 @@ def _phase_cost_figure(report: Report, rows: list[tuple], arms: list[str]) -> No
         caption,
     )
     report.note(
-        f"Milliseconds, not shares — the grid below is the same four numbers as a percentage. Drawn "
+        f"Milliseconds, not shares — the grid below is the same three numbers as a percentage. Drawn "
         f"for the {arm} arm and the `{QUOTED_SOURCE}` file; composition barely differs between the "
         f"arms, and the other length regimes are two orders of magnitude apart on this axis. The "
         f"per-arm, per-regime numbers are in the table under `raw numbers`."
@@ -210,7 +215,7 @@ def _share_heatmap(report: Report, rows: list[tuple]) -> None:
 
     The 48-row table under this is exhaustive and unreadable at a glance, and the thing it holds is
     a SHAPE — the share collapses as the answer grows, so a non-tryptic short-peptide request is
-    almost entirely decode while a tryptic long one is almost entirely search. As a grid that is one
+    almost entirely response while a tryptic long one is almost entirely search. As a grid that is one
     look; as a column of percentages between 2% and 94% it is a lookup.
 
     Sequential, not diverging: this is a magnitude with no meaningful midpoint. Averaged over the
@@ -221,7 +226,7 @@ def _share_heatmap(report: Report, rows: list[tuple]) -> None:
 
     buckets: dict[tuple[str, str], list[float]] = {}
     for key, _arm, cell in rows:
-        phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "decode_ms", "serialise_ms")]
+        phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "response_ms")]
         if not sum(phases):
             continue
         # Two lines, drawn as two lines — `_text_lines` turns the newline into a real break. As one
@@ -246,7 +251,7 @@ def _share_heatmap(report: Report, rows: list[tuple]) -> None:
                 f"{source} · {options}\n"
                 f"measured share: {mean:.0f}%\n"
                 f"the other {100 - mean:.0f}% is annotation decode and JSON serialisation,\n"
-                f"which no suite in this report times",
+                f"which no other suite in this report times",
             )
     caption = "Percent of a request spent in search + retrieval (the phases this report times)"
     report.chart(
@@ -278,8 +283,8 @@ def _verdict_tiles(report: Report, cells: dict, arms: list[str]) -> None:
         for arm, cell in per_arm.items():
             if arm not in arms:
                 continue
-            phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "decode_ms", "serialise_ms")]
-            if cell.get("decode_ms") and sum(phases):
+            phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "response_ms")]
+            if cell.get("response_ms") and sum(phases):
                 shares.append((phases[0] + phases[1]) / sum(phases) * 100)
         ranked = sorted(
             ((arm, cell) for arm, cell in per_arm.items() if arm in arms and cell.get("p50")),
@@ -651,30 +656,34 @@ def _response_share(report: Report, cells: dict, arms: list[str]) -> None:
     """What fraction of a request the throughput in this report actually covers.
 
     `throughput_qps` is search plus retrieval, everywhere, deliberately — widening it would change
-    what every suite means. But production does two more things before a client has bytes: it turns
-    each `ProteinRef` into a `ProteinInfo`, decoding the functional annotations and allocating the
-    accession, and it serialises the result to JSON. This suite times both.
+    what every suite means. But production does more before a client has bytes: it turns each
+    `ProteinRef` into a `ProteinInfo`, decoding the functional annotations and allocating the
+    accession, and it serialises the result to JSON. This suite times that.
 
-    The number that matters is the last column. If decode and serialisation are most of a request,
-    then a knob that buys 20% of search buys far less than 20% to a user, and every verdict in the
-    rest of the report has to be read through that.
+    The number that matters is the last column. If the response phase is most of a request, then a
+    knob that buys 20% of search buys far less than 20% to a user, and every verdict in the rest of
+    the report has to be read through that.
+
+    Schema v13 changed how the phase is measured — production's shape, decode parallel across
+    peptides — so shares here are NOT comparable to a v12 session's, which timed the decode serially
+    against parallel search and retrieval numbers and overstated it by up to the core count.
     """
     rows = [
         (key, arm, cell)
         for key, per_arm in sorted(cells.items(), key=str)
         for arm, cell in per_arm.items()
-        if arm in arms and cell.get("decode_ms")
+        if arm in arms and cell.get("response_ms")
     ]
     if not rows:
         return
 
     report.heading("what a request actually costs", level=3)
     report.para(
-        "**A server request has four phases; this report times the first two.** `search` finds the "
-        "matching suffixes, `retrieval` turns them into protein references — and then `decode` "
-        "unpacks each hit's annotations and `serialise` writes the JSON that goes back to the "
-        "caller. Every throughput number in this report, in every suite, is phases 1-2 only. Only "
-        "`defaults` pays to measure phases 3-4 at all, and this is where they are reported."
+        "**A server request has three phases; this report times the first two.** `search` finds the "
+        "matching suffixes, `retrieval` turns them into protein references — and then `response` "
+        "unpacks each hit's annotations and writes the JSON that goes back to the caller. Every "
+        "throughput number in this report, in every suite, is phases 1-2 only. Only `defaults` pays "
+        "to measure phase 3 at all, and this is where it is reported."
     )
     report.para(
         "The grid below is one number per cell: **what percentage of a request the timed phases "
@@ -687,26 +696,27 @@ def _response_share(report: Report, cells: dict, arms: list[str]) -> None:
     _phase_cost_figure(report, rows, arms)
     _share_heatmap(report, rows)
     table = Table(
-        headers=["file", "equate_il", "tryptic", "arm", "search", "retrieval", "decode", "serialise", "response KB", "measured share"],
-        aligns=["<", "<", "<", "<", ">", ">", ">", ">", ">", ">"],
+        headers=["file", "equate_il", "tryptic", "arm", "search", "retrieval", "response", "response KB", "measured share"],
+        aligns=["<", "<", "<", "<", ">", ">", ">", ">", ">"],
         chips=["file", "equate_il", "tryptic", "arm"],
         tips={
             **tips_for(["arm"]),
-            "decode": (
-                "Turning each ProteinRef into the ProteinInfo the server returns: an fa-compression "
-                "decode of the functional annotations plus a String for the accession, per hit."
+            "response": (
+                "Everything between 'we have the proteins' and 'the client has bytes': an "
+                "fa-compression decode of each hit's annotations plus a String for its accession, "
+                "then the JSON. Measured in production's shape — decode parallel across peptides, "
+                "one serial JSON pass."
             ),
-            "serialise": "Serialising the result to JSON, the last thing the server does.",
             "response KB": "How much JSON the request would have returned.",
             "measured share": (
-                "Search plus retrieval over all four phases — the fraction of a request that every "
+                "Search plus retrieval over all three phases — the fraction of a request that every "
                 "throughput figure in this report is measuring. The rest is real work no suite times."
             ),
         },
     )
     shares = []
     for key, arm, cell in rows:
-        phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "decode_ms", "serialise_ms")]
+        phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "response_ms")]
         whole = sum(phases)
         if not whole:
             continue

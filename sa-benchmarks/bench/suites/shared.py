@@ -214,9 +214,8 @@ def by_cell(
             "search_ms": _millis(result.get("search_duration_ns")),
             "retrieval_ms": _millis(result.get("retrieval_duration_ns")),
             # Only present where a cell opted into the response phase; None everywhere else, which
-            # is what keeps them out of the stacked chart for suites that did not measure them.
-            "decode_ms": _millis(result.get("decode_duration_ns")),
-            "serialise_ms": _millis(result.get("serialise_duration_ns")),
+            # is what keeps it out of the stacked chart for suites that did not measure it.
+            "response_ms": _millis(result.get("response_duration_ns")),
             "response_bytes": result.get("response_bytes") or None,
             # What the process this cell came from could resolve at all, however tight this one
             # cell's own reps happened to be. `floor_of` folds it in.
@@ -503,8 +502,8 @@ def phase_switch(
     other than what it claims to.
 
     `default_reading` names the tab that opens. Throughput otherwise, which is the reading every
-    knob suite is about — `defaults` is the exception, because it is the only suite that measures
-    decode and serialisation at all and the `time split` tab is where they are drawn.
+    knob suite is about — `defaults` is the exception, because it is the only suite that measures the
+    response phase at all and the `time split` tab is where it is drawn.
     """
     from ..charts import Series, facets, grouped_columns, stacked_columns
 
@@ -557,22 +556,21 @@ def phase_switch(
         if grid:
             variants.append((label, grid))
 
-    # What a rep is made of. Search and retrieval are always there; decode and serialisation only
-    # where a cell opted in, and those two are the half of a real request nothing else measures —
-    # so where they ARE present the stack finally shows what share of a request the rest of the
-    # report describes.
+    # What a rep is made of. Search and retrieval are always there; the response phase (annotation
+    # decode plus JSON) only where a cell opted in, and that phase is the half of a real request
+    # nothing else measures — so where it IS present the stack finally shows what share of a request
+    # the rest of the report describes.
     #
     # Drawn for ONE arm. Composition is a property of the workload rather than of the storage
     # backend — the three arms' phase splits differ by less than the noise on any of them — so
-    # putting all three in would spend a second categorical channel, on top of the four phases, to
+    # putting all three in would spend a second categorical channel, on top of the three phases, to
     # redraw the same shape three times. Which backend is faster is what the other three readings
     # are for.
     split_arm = DEPLOYED_ARM if DEPLOYED_ARM in arms else (arms[0] if arms else "")
     phases = (
         ("search_ms", "search"),
         ("retrieval_ms", "retrieval"),
-        ("decode_ms", "decode"),
-        ("serialise_ms", "serialise"),
+        ("response_ms", "response"),
     )
 
     def split_panel(name, series, frame, top, legend):
