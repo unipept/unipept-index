@@ -32,8 +32,9 @@ large = "../peptides/large.txt"
 # Pre-built k-mer bound tables (sa-builder --output-kmer-table). Optional: a suite naming a table
 # this profile does not have fails at startup with the list of what it does have.
 #
-# k5 is the production default (127 MB). k6 is 3.06 GB and only earns it under a memory ceiling —
-# see the `ram` suite's notes.
+# k6 is the production default (3.06 GB), chosen for the capped regime — see the `ram` suite's
+# notes. k5 is 127 MB and is what a guaranteed-resident deployment would use; the `kmer` suite
+# sweeps both against no table, so both have to be here for a full run.
 [kmer_tables]
 k5 = "kmer-tables/5mer_table.bin"
 k6 = "kmer-tables/6mer_table.bin"

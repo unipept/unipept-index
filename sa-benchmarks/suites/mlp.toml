@@ -10,7 +10,7 @@ One question: how many independent peptide searches should be interleaved per ra
 `SearchTuning::validate_batch`, which batches candidate suffixes WITHIN one range scan; that one
 belongs to `validate`; the two crossed are `mlp_validate`.
 
-The k-mer table is held at the shipped 5-mer. Crossing the batch with the tables is a different
+The k-mer table is held at the shipped 6-mer. Crossing the batch with the tables is a different
 question — whether the three accelerators are separable — and `combos` asks it.
 
 The mechanism: a suffix-array probe is a random read whose address depends on the previous probe's
@@ -64,7 +64,7 @@ name = "mlp"
 # other SearchTuning field held at its default.
 strategy = "ofat"
 arms = ["preloaded", "mmap", "pprot"]
-kmer = [5]
+kmer = [6]
 equate_il = [true]
 tryptic = [true, false]
 # The reference cell is re-measured every 12 cells, so drift across the process becomes a measured

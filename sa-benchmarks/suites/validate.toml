@@ -33,7 +33,7 @@ files = ["mixed", "small", "medium", "large"]
 name = "curve"
 strategy = "ofat"
 arms = ["preloaded", "mmap", "pprot"]
-kmer = [5]
+kmer = [6]
 equate_il = [true]
 tryptic = [true, false]
 # The reference cell is re-measured every 12 cells, so drift across the process becomes a measured

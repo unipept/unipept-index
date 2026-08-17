@@ -65,6 +65,7 @@ def run_all(args, repo: Path) -> int:
             return 1
     session = args.out or (profile.scratch / f"{state.short}-{time.strftime('%Y%m%d-%H%M%S')}")
     session.mkdir(parents=True, exist_ok=True)
+    facts = _open_session(session, report_only=args.report_only, dry_run=args.dry_run)
 
     skip = {name.strip() for name in (args.skip or "").split(",") if name.strip()}
     names = [name for name in plan["order"] if name not in skip]
@@ -106,14 +107,16 @@ def run_all(args, repo: Path) -> int:
     if args.dry_run:
         return 0
 
-    report = _assemble(plan, profile, repo, state, session, outcomes)
+    report = _assemble(plan, profile, repo, state, session, outcomes, facts)
     # Three renderings of one report object: the page to read, the markdown to paste into a PR, and
     # the JSON a later run consumes as its baseline.
     (session / "report.html").write_text(
         render_page(
             f"Suffix-array index — {state.short}",
             report,
-            subtitle=f"{state.branch} · {profile.name} · {time.strftime('%Y-%m-%d %H:%M')}",
+            # The session's date, not the render's: a `--report-only` redraw a week later must not
+            # retitle the page with the day somebody happened to look at it.
+            subtitle=f"{state.branch} · {profile.name} · {facts['started_short']}",
             statuses={outcome.name: outcome.status for outcome in outcomes},
         )
     )
@@ -169,6 +172,48 @@ def _run_one(
     return outcome
 
 
+def _open_session(session: Path, *, report_only: bool, dry_run: bool) -> dict:
+    """The host facts and wall-clock start for this session, sampled ONCE and persisted.
+
+    These used to be read while the report was being assembled, which is the wrong end of the run:
+    assembly happens after the last suite, so `started` printed the FINISH, and the load average
+    was sampled seconds after `threads` had finished oversubscribing the box to 96 rayon threads.
+    On the 2dfa6517b7 session that read 61.33 on twelve cores and tripped the co-tenant warning
+    across a run that was clean — the harness accusing a neighbour of its own last cell.
+
+    So the sample point is session start, and the answer is written to `session.json` next to
+    `timings.json`. A `--report-only` redraw reads that file rather than the machine doing the
+    redraw, which is usually a laptop and never the box the numbers came from.
+
+    A resumed session keeps the facts from the invocation that created it: `started` is when the
+    session began, not when its last suite was picked up, and the load average belongs to the same
+    moment. `sampled` records which of the two happened, because a session predating this file has
+    nothing to read back and its provenance has to say so rather than quietly report the redraw.
+    """
+    path = session / "session.json"
+    if path.exists():
+        try:
+            facts = json.loads(path.read_text())
+            facts.setdefault("sampled", "session start")
+            return facts
+        except (OSError, json.JSONDecodeError):
+            pass  # Unreadable is the same as absent: sample now and say where it came from.
+
+    now = time.localtime()
+    facts = {
+        "started": time.strftime("%Y-%m-%d %H:%M:%S %Z", now),
+        "started_short": time.strftime("%Y-%m-%d %H:%M", now),
+        "load": list(rig.load_average()),
+        "host": rig.host_facts(),
+        "sampled": "this re-render — the session predates session.json" if report_only else "session start",
+    }
+    # A dry run plans a session it does not start; stamping a start time on the directory would
+    # date the real run that follows to whenever somebody last planned it.
+    if not (report_only or dry_run):
+        path.write_text(json.dumps(facts, indent=2) + "\n")
+    return facts
+
+
 def _write_timings(session: Path, outcomes: list[SuiteOutcome]) -> None:
     """Per-suite wall clock, rewritten after every suite finishes.
 
@@ -192,11 +237,17 @@ def _write_timings(session: Path, outcomes: list[SuiteOutcome]) -> None:
 
 
 def _assemble(
-    plan: dict, profile: Profile, repo: Path, state: rig.GitState, session: Path, outcomes: list[SuiteOutcome]
+    plan: dict,
+    profile: Profile,
+    repo: Path,
+    state: rig.GitState,
+    session: Path,
+    outcomes: list[SuiteOutcome],
+    facts: dict,
 ) -> Report:
     report = Report().heading(f"Suffix-array index — {state.short}", level=1)
 
-    _provenance(report, profile, state, session, outcomes)
+    _provenance(report, profile, state, session, outcomes, facts)
 
     report.heading("Suites")
     table = Table(
@@ -237,15 +288,23 @@ def _assemble(
 
 
 def _provenance(
-    report: Report, profile: Profile, state: rig.GitState, session: Path, outcomes: list[SuiteOutcome]
+    report: Report,
+    profile: Profile,
+    state: rig.GitState,
+    session: Path,
+    outcomes: list[SuiteOutcome],
+    session_facts: dict,
 ) -> None:
     """Everything needed to reproduce this run, or to decide it cannot be compared with another.
 
     Four groups, in the order a sceptical reader wants them: what code, on what data, on what
     machine, with what settings.
+
+    Every machine fact here was sampled by `_open_session` when the session began, and is read back
+    from `session.json` rather than measured now — see that function for why the difference matters.
     """
     report.heading("Provenance")
-    facts = rig.host_facts()
+    facts = session_facts["host"]
     table = Table(headers=["what", "value"], aligns=["<", "<"])
 
     table.row("commit", f"{state.commit}  ({state.branch})")
@@ -263,12 +322,13 @@ def _provenance(
     table.row("memory", f"{facts['ram_gb']} GB RAM, swap {swap if not swap.isdigit() else swap + ' GB'}")
     table.row("kernel", facts["kernel"])
     table.row("cgroups", f"{facts['cgroup']} · systemd-run {facts['systemd_run']}")
-    # Spelled out because "13.64" beside a core count is meaningless without knowing which it is.
-    table.row("load average", f"{facts['load']} (1 / 5 / 15 min) at the start of the session")
+    # Spelled out because "13.64" beside a core count is meaningless without knowing which it is,
+    # and `sampled` because the whole point of the number is WHEN it was taken.
+    table.row("load average", f"{facts['load']} (1 / 5 / 15 min), sampled at {session_facts['sampled']}")
     table.row("", "")
 
     table.row("session", str(session))
-    table.row("started", time.strftime("%Y-%m-%d %H:%M:%S %Z"))
+    table.row("started", session_facts["started"])
     for outcome in outcomes:
         if outcome.settings:
             table.row(f"  {outcome.name}", outcome.settings)
@@ -277,7 +337,9 @@ def _provenance(
     if state.dirty:
         report.warn("working tree was dirty — these numbers are not attributable to that commit")
     cores = int(facts["cores"] or 1)
-    if rig.load_average()[0] > cores * 0.25:
+    # The session-start load, never a fresh reading: at assembly time the box is still carrying
+    # whatever the last suite left behind, and `threads` deliberately ends by oversubscribing it.
+    if session_facts["load"][0] > cores * 0.25:
         report.warn(
             "the box was busy when this started — a co-tenant job invalidates every comparison in "
             "this report"

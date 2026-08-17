@@ -26,7 +26,7 @@ use text_compression::{InMemoryProteinText, LoadIndex, WriteBinary};
 use crate::{
     KmerTable,
     array::{InMemorySA, OriginalSA, SuffixArrayBackend},
-    sa_searcher::Searcher,
+    sa_searcher::{SearchTuning, Searcher},
     suffix_to_protein_index::{
         BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein,
         SuffixToProteinMappingBackend
@@ -199,12 +199,23 @@ pub(crate) fn example_searcher() -> TestSearcher {
 /// A single protein of `n` copies of one residue, terminated — the fixture for anything that
 /// needs an SA range larger than a hand-written array can conveniently give.
 ///
-/// `n = 70` clears both defaults that gate the two-pass paths: `prefetch_threshold` (32) and
-/// `retrieval_prefetch_distance` (32). Use `'A'` for a residue the I/L rules do not touch, and
-/// `'L'` to make `equate_il` matter: `compare` normalises L to I, so searching `"I"` over an
-/// all-`L` text matches every position during the bound search and every one of them must then
-/// be rejected by validation.
+/// `n` must clear both defaults that gate the two-pass paths: `prefetch_threshold` and
+/// `retrieval_prefetch_distance`, both 32. Callers pass 70. The requirement is asserted rather than
+/// left to a comment because a fixture that no longer reaches the two-pass path does not fail — it
+/// quietly tests the scalar loop instead and goes on passing, which is the failure mode worth
+/// catching. A default raised past 70 is exactly what would trigger it.
+///
+/// Use `'A'` for a residue the I/L rules do not touch, and `'L'` to make `equate_il` matter:
+/// `compare` normalises L to I, so searching `"I"` over an all-`L` text matches every position
+/// during the bound search and every one of them must then be rejected by validation.
 pub(crate) fn repeated_residue_searcher(residue: char, n: usize) -> TestSearcher {
+    let tuning = SearchTuning::default();
+    let gate = tuning.prefetch_threshold.max(tuning.retrieval_prefetch_distance);
+    assert!(
+        n > gate,
+        "repeated_residue_searcher: n={n} does not clear the two-pass gate ({gate}); \
+         this fixture would silently exercise the scalar path instead"
+    );
     searcher_over_text(&format!("{}$", residue.to_string().repeat(n)), 1)
 }
 

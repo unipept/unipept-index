@@ -26,7 +26,7 @@ warmup automatically; its `warmup` column is therefore not comparable with the m
 runs = 1
 amount = 100
 peptides = "mixed"
-kmer_table = "k5"
+kmer_table = "k6"
 warmup = "all"
 
 # The three configurations every other suite measures: both extremes and the one mixture that

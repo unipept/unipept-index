@@ -22,11 +22,16 @@ costs almost nothing extra and is the only way to find out.
 
 **This suite is expected to conclude that neither knob pays.** Both read flat in every context
 measured so far, and `docs/design/README.md` records that scalar k-mer prefetch was already killed
-for the same reason: median +0.3%, inside the noise floor, removed rather than left as a knob. A
-run that confirms flatness across both length regimes and both backends is grounds for deleting
-these two fields from `SearchTuning` — which is the point of running it. Read the resolution table
-first: a process whose residual is wider than the effects below it has not shown flatness, it has
-shown nothing.
+for the same reason: median +0.3%, inside the noise floor, removed rather than left as a knob. The
+last full-database run put that beyond doubt: 0 of 48 pairs cleared their own floor, on any backend.
+Read the resolution table first — a process whose residual is wider than the effects below it has
+not shown flatness, it has shown nothing.
+
+What that flatness does NOT license is reading the argmax as an answer. The best pair differs by
+backend and every one of them sits inside its own floor, so the shipped 32/32 stays until something
+beats it past the floor rather than merely topping a column. Both fields are also being kept despite
+the null result; `docs/design/README.md` carries the evidence and that decision separately, which is
+the distinction to preserve when reading this section.
 
 `equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
 contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
@@ -51,11 +56,14 @@ files = ["mixed"]
 name = "plane"
 strategy = "full"
 arms = ["preloaded", "mmap", "pprot"]
-kmer = [5]
+kmer = [6]
 equate_il = [true]
 tryptic = [true, false]
 base_every = 8
 
+# Brackets the shipped 32/32 on both sides, which is what makes a flat reading mean something: an
+# edge value could only ever be shown to be no worse than its neighbours, never to be a peak. Widen
+# this if the shipped pair moves outward.
 [sweep.tune]
 prefetch_threshold          = [8, 16, 32, 64]
 retrieval_prefetch_distance = [8, 16, 32, 64]

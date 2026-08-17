@@ -132,6 +132,34 @@
 //! this is a deployment knob, not a default. It is also the largest single effect anywhere in
 //! this investigation — larger than any storage-backend choice.
 //!
+//! Reproduced at 2dfa6517b7 (session `2dfa6517b7-20260816-140720`) on the same box, per arm:
+//! +62.6% (mmap) and +98.0% (`preloaded-proteins`) at a 167 GB ceiling, +92.2% and +106.4% at
+//! 112 GB, -7.8% and -9.3% unconstrained, with major faults flat to within 0.24% across thread
+//! counts. Every sign and rough magnitude held across three months and a rewritten harness.
+//!
+//! **`preloaded-proteins` is a bet on full residency, not a free 17%.** Resident, it is the
+//! fastest thing to build: +17.0% over plain `mmap` (36,687 → 42,928 qps, floor ±7.2%, resolved).
+//! That is the only ceiling where it leads. Preloaded metadata is non-evictable anonymous memory,
+//! so under pressure it cannot be reclaimed and instead displaces file-backed page cache for the
+//! suffix array and the mapping — both bigger and hotter per query. Sweeping the ceiling down
+//! (100 reps x 10,000 peptides per cell, 6-mer attached):
+//!
+//! | ceiling | mmap qps | pprot qps | delta | major faults/rep, pprot |
+//! |---|---|---|---|---|
+//! | none | 36,687 | 42,928 | **+17.0%** | 0 |
+//! | 223 GB | 30,724 | 26,971 | -12.2% (inside the floor) | 8,080 |
+//! | 167 GB | 15,068 | 14,203 | -5.7% (inside the floor) | 31,107 |
+//! | 140 GB | 12,375 | 11,554 | **-6.6%** | 42,195 |
+//! | 112 GB | 10,665 | 9,235 | -13.4% (inside the floor) | 55,208 |
+//! | 78 GB | 7,184 | **290** | **-96.0%** | 2,306,658 |
+//!
+//! There is no crossover to find in this range — `mmap` is ahead from the first ceiling that
+//! binds, and at 78 GB the preloaded arm does not degrade, it collapses: 25x the fault rate of
+//! `mmap` and a 96% loss. So this feature is worth having exactly when the whole index is
+//! guaranteed resident, and is the wrong default anywhere the ceiling might move. Note the run's
+//! own caveat: the `mmap` cells at 223, 112 and 78 GB had not reached steady state (drift +23.7%,
+//! +10.9%, -59.6% first quarter to last), so the endpoints are softer than the 140 GB row.
+//!
 //! **A 6-mer k-mer table is worth its 3.06 GB here**, against the note in `sa-benchmarks` that
 //! measured it inside the noise floor when resident. At a 167 GB ceiling it is +18.4% and -27.9%
 //! faults versus no table; a 5-mer table is +3.2% and -6.2%, i.e. barely distinguishable from

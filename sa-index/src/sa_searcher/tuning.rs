@@ -86,12 +86,21 @@ pub struct SearchTuning {
     /// two-pass path on for ranges above 64 and off for ranges below 8, so it priced the
     /// crossover, never the mechanism. Left tunable for re-measurement on other hardware, not
     /// because 32 is known to be special.
+    ///
+    /// The full-database 4x4 cross with `retrieval_prefetch_distance` (2dfa6517b7, three storage
+    /// backends, 20 reps x 10,000 peptides) found **0 of 48 pairs** clearing their own noise floor
+    /// against this default. Nothing in that run argues for moving it, and the argmaxes it produced
+    /// disagree between backends — the sweep cannot tell 8 from 64 here. Both fields are kept for
+    /// re-measurement rather than deleted; `docs/design/README.md` records the evidence separately
+    /// from that decision.
     pub prefetch_threshold: usize,
     /// Prefetch look-ahead distance (in suffixes) inside protein retrieval.
     ///
     /// Swept over {8, 16, 32, 64}: median full-range swing +1.2%, inside the noise floor
-    /// everywhere. Same caveat as `prefetch_threshold`, and one of its own: a query matching
-    /// fewer suffixes than the distance issues no prefetches at all, at any value in that sweep.
+    /// everywhere. Same caveat as `prefetch_threshold`, including the 0-of-48 full-database cross,
+    /// and one of its own: a query matching fewer suffixes than the distance issues no prefetches
+    /// at all, at any value in that sweep. Raising it widens that exclusion — tryptic queries match
+    /// almost nothing and are mostly already in it.
     pub retrieval_prefetch_distance: usize
 }
 

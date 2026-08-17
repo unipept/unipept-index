@@ -35,8 +35,17 @@ pub struct Arguments {
     /// When set, a k-mer lookup table is built and written to this path.
     #[arg(long)]
     pub output_kmer_table: Option<String>,
-    /// The k-mer size used when building the k-mer bounds table (default 5).
-    #[arg(long, default_value_t = 5)]
+    /// The k-mer size used when building the k-mer bounds table (default 6).
+    ///
+    /// The table is dense at 24^k entries of 16 bytes, so k is the whole memory story: a 5-mer is
+    /// 0.12 GB and a 6-mer 2.85 GB, a 24x step for one more level of the probe chain. With the
+    /// index fully resident that step buys little — the 6-mer's edge over the 5-mer sits inside
+    /// the noise floor on most length regimes. It pays under a memory ceiling, where the table's
+    /// value is working-set size rather than probe count: a 5-mer narrows the search to ~7 SA
+    /// pages per query, a 6-mer to ~1, which is +18.4% against no table where a 5-mer manages
+    /// +3.2%. The default assumes the mapped, memory-constrained deployment; drop to 5 if the
+    /// index is guaranteed resident and the 2.7 GB is worth more than the faults it saves.
+    #[arg(long, default_value_t = 6)]
     pub kmer_size: usize
 }
 

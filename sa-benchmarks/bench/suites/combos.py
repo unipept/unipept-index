@@ -18,6 +18,7 @@ from ..config import Suite
 from ..records import Record, delta_pct
 from ..report import Report, Table, band, pct, qps
 from .shared import (
+    SHIPPED_KMER_K,
     by_cell,
     fmt_tune,
     floor_of,
@@ -106,8 +107,11 @@ def _winners(report: Report, loaded: list[Record], suite: Suite) -> tuple[list[t
     arms = [arm.name for arm in suite.arms]
 
     # The shipped tuple, with the k-mer table the other suites treat as production. Read off the
-    # binary for the two knobs; the table is not a `SearchTuning` field, so it is named here.
-    shipped_kmer = 5 if any(key[keys.index("kmer_k")] == 5 for key in cells) else None
+    # binary for the two knobs; the table is not a `SearchTuning` field, so it comes from
+    # `SHIPPED_KMER_K`, which mirrors `sa-builder`'s default.
+    shipped_kmer = (
+        SHIPPED_KMER_K if any(key[keys.index("kmer_k")] == SHIPPED_KMER_K for key in cells) else None
+    )
     shipped = (shipped_kmer, defaults.get("mlp_batch"), defaults.get("validate_batch"))
 
     # One column per swept coordinate, so each is its own filter — a joined `context` string is a

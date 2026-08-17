@@ -50,7 +50,7 @@ max_matches = 10000
 # moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
 files = ["mixed", "small", "medium", "large"]
 
-# Production defaults: 5-mer table, MLP batch 16, every SearchTuning field at its shipped value.
+# Production defaults: 6-mer table, MLP batch 16, every SearchTuning field at its shipped value.
 # `strategy = "base"` means exactly that — one tuning point, taken from the binary itself rather
 # than restated here, so this suite cannot drift from `SearchTuning::default()`.
 [[sweep]]
@@ -62,7 +62,7 @@ strategy = "base"
 # fraction of a real request every other suite's throughput actually describes.
 response = true
 arms = ["preloaded", "mmap", "pprot", "pprot+m"]
-kmer = [5]
+kmer = [6]
 equate_il = [true, false]
 tryptic = [true, false]
 

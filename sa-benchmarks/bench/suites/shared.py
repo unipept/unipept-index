@@ -464,6 +464,15 @@ def batch_label(batch) -> str:
 #: the split shown is the split production actually pays.
 DEPLOYED_ARM = "pprot"
 
+#: The k-mer size that ships, mirrored from `sa-builder`'s `--kmer-size` default.
+#:
+#: Every `SearchTuning` field is read out of the binary, so the driver cannot drift from what ships.
+#: The table is the exception: it is a build-time artefact chosen by `sa-builder`, not a searcher
+#: knob, so nothing in a record says which k is production. It is written here instead of at each
+#: use, so changing the shipped table is one edit rather than a hunt — and the `kmer = [...]` lines
+#: in `suites/*.toml` have to be moved with it, since those are what actually pin the background.
+SHIPPED_KMER_K = 6
+
 
 def phase_switch(
     report,
@@ -473,6 +482,7 @@ def phase_switch(
     *,
     title: str = "by length regime",
     throughput: bool = True,
+    default_reading: str | None = None,
 ) -> None:
     """The four readings of a suite, each as one small-multiple grid over the length regimes.
 
@@ -491,6 +501,10 @@ def phase_switch(
     search's probe chain and should move the SEARCH bar alone; `tryptic` changes how many candidates
     survive and should move RETRIEVAL. A change that lands in the wrong phase is measuring something
     other than what it claims to.
+
+    `default_reading` names the tab that opens. Throughput otherwise, which is the reading every
+    knob suite is about — `defaults` is the exception, because it is the only suite that measures
+    decode and serialisation at all and the `time split` tab is where they are drawn.
     """
     from ..charts import Series, facets, grouped_columns, stacked_columns
 
@@ -592,7 +606,14 @@ def phase_switch(
             variants.append(("time split", grid))
 
     if variants:
-        report.switch(title, variants, default=variants[0][0])
+        offered = {label for label, _ in variants}
+        # A named tab that this suite did not build is a caller error worth failing on, not a silent
+        # fallback: it would open on throughput and read as if nothing had been asked for.
+        if default_reading is not None and default_reading not in offered:
+            raise ValueError(
+                f"phase_switch: default_reading={default_reading!r} is not one of {sorted(offered)}"
+            )
+        report.switch(title, variants, default=default_reading or variants[0][0])
 
 
 #: What each recurring column means, shown on hovering its header.

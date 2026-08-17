@@ -20,6 +20,7 @@ from ..config import Suite
 from ..records import Record, delta_pct, load_dir, median
 from ..report import Report, Table, band, count, pct, qps
 from .shared import (
+    DEPLOYED_ARM,
     GRID_KEYS,
     fmt_tune,
     by_cell,
@@ -38,6 +39,11 @@ from .shared import (
 #: `summary` is the cross-file overview, `mixed` the unbucketed 5..50 file, then the three buckets
 #: short to long. A file not named here follows, alphabetically.
 BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
+
+#: The file `defaults.toml` calls "the query mix a server actually sees, and the one number to
+#: quote" — the unbucketed 5..50 peptides. Where a figure has room for one regime rather than four,
+#: this is the one it draws.
+QUOTED_SOURCE = "mixed"
 
 #: How a coordinate is printed in a table cell.
 FORMATTERS = {"kmer_k": kmer_label, "amount_of_peptides": lambda n: f"{n:,}q"}
@@ -130,6 +136,72 @@ def _summary(report: Report, cells: dict, arms: list[str], loaded: list[Record])
         "Production defaults: equate_il on, tryptic off, at the tuning stated above. The rows below "
         "vary only the two search options; what the k-mer table and the MLP batch cost is measured "
         "by `kmer` and `mlp`."
+    )
+
+
+def _phase_cost_figure(report: Report, rows: list[tuple], arms: list[str]) -> None:
+    """The four phases in MILLISECONDS, open, above the share grid.
+
+    This section exists to say that decode and serialisation are most of a request, and until now
+    it never showed a decode or a serialise number on the page. The heatmap below is a share — a
+    percentage, with the milliseconds it was computed from left in a `<details>` fold eight
+    kilobytes down — and the only other place the two phases appear is the `time split` chart under
+    `by length regime`, which is `share=True` for good reasons of its own and so is also a
+    percentage, on a tab that is not the one that opens. A reader could work through the whole
+    report and never see that a mixed non-tryptic rep spends five seconds in decode.
+
+    So: absolute, unnormalised, and open. `mixed` only, which `defaults.toml` calls the query mix a
+    server actually sees and the one number to quote — and which conveniently keeps the columns
+    within about 12x of each other, where the four regimes together span two orders of magnitude
+    and would leave the tryptic stacks a few pixels tall.
+
+    One arm, for the reason `shared.phase_switch` gives: composition is a property of the workload,
+    the arms agree on it to well inside the noise, and drawing three would spend a second
+    categorical channel redrawing one shape.
+    """
+    from ..charts import Series, stacked_columns
+
+    arm = DEPLOYED_ARM if DEPLOYED_ARM in arms else (arms[0] if arms else "")
+    phases = (("search_ms", "search"), ("retrieval_ms", "retrieval"), ("decode_ms", "decode"), ("serialise_ms", "serialise"))
+
+    picked = {
+        key: cell
+        for key, row_arm, cell in rows
+        if row_arm == arm and key[0] == QUOTED_SOURCE
+    }
+    if not picked:
+        return
+    keys = sorted(picked)
+    # `a · b` under an axis titled `equate_il · tryptic`, the way `_phase_split_chart` labels the
+    # same four cells. The heatmap below spells both names out on two lines because its columns are
+    # wide enough; a column chart's slot is not, and `stacked_columns` puts an x label in one
+    # `<text>`, where a newline collapses to a space and the label overruns its neighbours.
+    groups = [" · ".join((_label("equate_il", key[1]), _label("tryptic", key[2]))) for key in keys]
+    series = [
+        Series(label, [picked[key].get(field) or 0.0 for key in keys], slot)
+        for slot, (field, label) in enumerate(phases)
+    ]
+    if not any(any(item.values) for item in series):
+        return
+
+    caption = f"What one {QUOTED_SOURCE} rep costs, per phase — the two timed, and the two that are not"
+    report.chart(
+        stacked_columns(
+            groups,
+            [arm],
+            series,
+            caption,
+            unit=" ms",
+            x_title="equate_il · tryptic",
+            y_title="time per rep (ms)",
+        ),
+        caption,
+    )
+    report.note(
+        f"Milliseconds, not shares — the grid below is the same four numbers as a percentage. Drawn "
+        f"for the {arm} arm and the `{QUOTED_SOURCE}` file; composition barely differs between the "
+        f"arms, and the other length regimes are two orders of magnitude apart on this axis. The "
+        f"per-arm, per-regime numbers are in the table under `raw numbers`."
     )
 
 
@@ -336,6 +408,11 @@ def _regime_figure(
         panels,
         arms,
         " · ".join(columns) if columns else "configuration",
+        # `defaults` is the only suite that times decode and serialisation, and this is the only
+        # chart that draws all four phases. Opening on it is a deliberate trade: the gate's lead
+        # reading is throughput, which is now one click away rather than in view — worth it while
+        # the half of a request no suite measures is the thing readers keep missing.
+        default_reading="time split",
     )
 
 
@@ -607,6 +684,7 @@ def _response_share(report: Report, cells: dict, arms: list[str]) -> None:
         "non-tryptic peptide matches half the database and spends its time serialising the result, "
         "while a long tryptic one matches almost nothing and spends it all in search."
     )
+    _phase_cost_figure(report, rows, arms)
     _share_heatmap(report, rows)
     table = Table(
         headers=["file", "equate_il", "tryptic", "arm", "search", "retrieval", "decode", "serialise", "response KB", "measured share"],

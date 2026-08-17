@@ -42,6 +42,14 @@ while the metadata table is the largest thing in the index and read once per rep
 `--features mmap,preloaded-text` keeps the index mapped but the hottest structure resident — worth
 measuring on your own data before choosing a default.
 
+**`preloaded-proteins` is a bet on the index fitting.** It is +17% over plain `mmap` with
+everything resident, and that is the only regime where it leads: preloaded metadata is
+non-evictable, so under memory pressure it displaces page cache for the suffix array instead of
+being reclaimed. Measured on the full UniProt index, `mmap` is ahead at every ceiling that binds,
+and at 78 GB the preloaded arm loses 96% of its throughput to a 25x fault rate. Use it when
+residency is guaranteed; do not use it where the ceiling might move. The numbers are in the
+"When the index does not fit in RAM" section of `sa-index/src/lib.rs`.
+
 These nine feature combinations are the ones the server exposes; the types themselves compose into
 sixteen, and `sa-index`'s `backend_agreement` test builds every one of them and asserts they return
 identical results.
@@ -132,16 +140,19 @@ Two options worth understanding:
 ### Optional: a k-mer bounds table
 
 ```bash
-  --output-kmer-table kmer_table.bin --kmer-size 5
+  --output-kmer-table kmer_table.bin        # --kmer-size defaults to 6
 ```
 
 This precomputes the suffix-array range for every k-mer, so a search starts from those bounds
 instead of binary-searching the whole array. It is an accelerator only — results are identical
 with and without it — and it helps most on short peptides.
 
-Note it is a *dense* table: at `--kmer-size 5` it is roughly 127 MB regardless of database size,
-because it has one entry per possible k-mer. It can only be built during a full index build,
-since it is derived from the suffix array before that is written out.
+Note it is a *dense* table: it has one entry per possible k-mer, so its size depends only on `k`
+and not on the database. That makes `k` the whole memory decision — roughly 127 MB at
+`--kmer-size 5` against 2.85 GB at the default `6`. The default assumes the mapped deployment,
+where the larger table pays for itself in avoided page faults; see "Choosing a storage backend"
+above. Pass `--kmer-size 5` if the index is guaranteed resident. The table can only be built during
+a full index build, since it is derived from the suffix array before that is written out.
 
 ## Running the server
 
