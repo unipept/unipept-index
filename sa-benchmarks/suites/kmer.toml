@@ -68,6 +68,27 @@ re-argued.
 
 [defaults]
 runs = 100
+# Stop a cell early once its band is as tight as the floor can use. `floor_of` is
+# max(band, slot spread, drift residual, NOISE_FLOOR_PCT) and NOISE_FLOOR_PCT is 3.9, so once a
+# cell's band reaches 3.9% the floor is pinned there and further reps cannot narrow anything —
+# they are provably wasted. Cells noisier than that never converge and run the full `runs`, which
+# is the half of the sweep where the reps are doing something.
+#
+# `min_runs` is the guard, and 40 is not arbitrary. `band` is a percentile spread of the reps
+# ((p90-p10)/2/p50), not a standard error: adding reps makes it converge UPWARD to the true spread
+# rather than shrinking it, and small samples read narrow. Simulated against a distribution whose
+# true band is 8.3%, twenty reps average 7.5% and forty average 7.9%. Below forty the risk is not
+# a slow run, it is a cell that stops on a lucky-narrow band and reports a floor tighter than it
+# earned: for a cell whose true band is 5.1% — just above the target, the only place it can happen —
+# that risk is 34% at min_runs=20, 11% at 40 and 4% at 60. Forty buys most of the protection while
+# still stopping the quiet cells.
+#
+# Deliberately NOT set in `defaults` (the gate wants a fixed rep count so two sessions are
+# comparable), nor in `ram`/`threads` (single mode, and the runner only forwards this for matrix
+# suites), nor in `stream` (its short-call cells are the noisy ones by construction and would run
+# the full count anyway).
+runs_target_band = 3.9
+min_runs = 40
 # Page sweep, then 200k real queries. The sweep only warms what is MAPPED, so on an arm that
 # preloads a structure the one thing that arm exists to buy goes into the first timed cell cold.
 # `ram`/`threads` warm the pipeline and put `pprot` +14-16% over `mmap` on the mixed file; the matrix
