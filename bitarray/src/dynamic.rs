@@ -30,18 +30,28 @@ impl DynBitArray {
     /// Allocates room for `capacity` values of `bits_per_value` bits each, all zero.
     ///
     /// `bits_per_value` is expected to be in `1..=64`.
+    ///
+    /// The huge-page advice is issued here, on the still-untouched allocation, and not by the
+    /// caller once it has filled it: see [`crate::hugepages`] for why that ordering is the whole
+    /// point.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
         let extra = if (capacity * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
-        Self {
+        let array = Self {
             data: vec![0; capacity * bits_per_value / 64 + extra],
             mask: if bits_per_value == 64 { u64::MAX } else { (1 << bits_per_value) - 1 },
             len: capacity,
             bits_per_value
-        }
+        };
+        array.advise_hugepages();
+        array
     }
 
     /// Requests transparent huge pages over the backing data (no-op off Linux).
-    /// See [`crate::hugepages`].
+    ///
+    /// [`Self::with_capacity`] already does this, which covers every buffer this crate allocates.
+    /// It stays public for a caller that builds the backing store some other way, and is
+    /// idempotent. Calling it on a buffer that is already populated is close to useless — again,
+    /// see [`crate::hugepages`].
     #[inline]
     pub fn advise_hugepages(&self) {
         crate::hugepages::advise(&self.data);

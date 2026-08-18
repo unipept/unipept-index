@@ -19,8 +19,10 @@ const ASSUMED_PAGE_SIZE: usize = 4096;
 
 /// Reads every page of `mmap[range]` into the page cache.
 ///
-/// Warmup only — never called per query. Serving from a cold mapping means the first requests
-/// pay the page faults, so the server does this once at startup.
+/// Warmup only — never called per query. Serving from a cold mapping means the first requests pay
+/// the page faults; `sa-benchmarks` sweeps every structure before it times anything, which is what
+/// makes a throughput figure a steady-state one. `sa-server` does **not** call this today, so a
+/// freshly started server warms itself on live traffic.
 ///
 /// All three steps matter:
 ///
@@ -36,18 +38,26 @@ const ASSUMED_PAGE_SIZE: usize = 4096;
 /// `range` is a byte range into `mmap`; callers pass only their own section, so a structure
 /// sharing a file with others does not warm its neighbours.
 ///
+/// Returns the number of bytes swept. Every caller passes it back up so the benchmark harness can
+/// divide it by the elapsed time: a sweep running at disk bandwidth and one running at memcpy
+/// bandwidth do the same work and take an order of magnitude apart, and without the byte count the
+/// two are indistinguishable in a report.
+///
 /// This lives here because `sa-index` and `sa-mappings` both need it and both already depend on
 /// this crate; it previously existed as five near-identical copies.
-pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) {
+pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) -> u64 {
     #[cfg(unix)]
     let _ = mmap.advise(memmap2::Advice::Sequential);
 
+    let swept = mmap[range.clone()].len() as u64;
     for chunk in mmap[range].chunks(ASSUMED_PAGE_SIZE) {
         std::hint::black_box(chunk[0]);
     }
 
     #[cfg(unix)]
     let _ = mmap.advise(memmap2::Advice::Random);
+
+    swept
 }
 
 // ── MmapBackedProteinText ─────────────────────────────────────────────────────
@@ -114,6 +124,13 @@ impl ProteinTextBackend for MmapBackedProteinText {
 
     fn len(&self) -> usize {
         self.len
+    }
+
+    fn touch_all_pages(&self) -> u64 {
+        // Only this text's own section of the mapping: `proteins.bin` holds the metadata after it,
+        // and whoever owns that warms it — or deliberately does not.
+        let end = self.data_offset + bit_array_byte_size(self.len);
+        touch_all_pages(&self.mmap, self.data_offset..end)
     }
 
     #[inline]

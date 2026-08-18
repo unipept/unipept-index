@@ -73,10 +73,13 @@ pub trait ProteinsBackend: Send + Sync {
     /// If `index` is out of range.
     fn get(&self, index: usize) -> ProteinRef<'_>;
 
-    /// Reads every OS page in the backing store into the page cache.
-    /// Default is a no-op; mmap-backed implementations override this.
+    /// Reads every OS page in the backing store into the page cache, and returns the number of
+    /// bytes swept so a caller can report a bandwidth.
+    /// Default returns 0; implementations with pages to fault override this.
     #[inline]
-    fn touch_all_pages(&self) {}
+    fn touch_all_pages(&self) -> u64 {
+        0
+    }
 
     /// Non-blocking hardware prefetch for the metadata record at `index`.
     /// What that record is differs per backend; each impl says which bytes it hints.

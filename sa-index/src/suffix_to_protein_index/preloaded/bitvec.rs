@@ -4,27 +4,92 @@ use std::{
 };
 
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
 use text_compression::ProteinTextBackend;
 
 use super::super::SuffixToProteinMappingBackend;
 use crate::{Nullable, WriteBinary};
 
+/// One 16-byte rank cell, covering 512 bits (8 words). Laid out exactly as the file stores it, so
+/// reading and writing are copies rather than conversions.
+///
+/// * `level1` — the cumulative count of set bits before this superblock.
+/// * `packed_level2` — seven 9-bit sub-counts, one per word after the first, each the cumulative
+///   count *within* the superblock before that word.
+///
+/// See the format documentation on [`WriteBinary`] below for why nine bits are enough.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Superblock {
+    level1: u64,
+    packed_level2: u64
+}
+
 /// Mapping that uses O(n) memory (1-2 bits per suffix) with n the size of the input text, with retrieval
 /// of the protein in O(1)
+///
+/// Owns its rank structure — the raw bits and the two-level counts — rather than delegating to a
+/// general-purpose succinct library. Two things follow from that, and both are the reason it does:
+/// the counts the file already carries are read instead of recomputed at load, and
+/// [`Self::prefetch_for_suffix`] can name the two addresses a lookup will touch. A library type
+/// that hides its storage can do neither. The rank algorithm is deliberately the same one
+/// [`crate::suffix_to_protein_index::mmap::bitvec`] runs against a mapping, so the two backends
+/// agree by construction rather than by test.
 #[derive(Debug)]
 pub struct BitVecSuffixToProtein {
-    rank: Rank9<BitVector<u64>>
+    /// Number of text positions; `blocks` may hold up to 63 bits more, which are always zero.
+    bit_len: u64,
+    /// One bit per text position, bit 0 = LSB of block 0.
+    blocks: Vec<u64>,
+    /// One cell per 512 bits, plus a trailing cell. See [`Superblock`].
+    counts: Vec<Superblock>
+}
+
+impl BitVecSuffixToProtein {
+    #[inline]
+    fn get_bit(&self, position: u64) -> bool {
+        let block = self.blocks[(position / 64) as usize];
+        (block >> (position % 64)) & 1 == 1
+    }
+
+    #[inline]
+    fn rank1(&self, position: u64) -> u64 {
+        let word_index = (position / 64) as usize;
+        let word_offset = word_index % 8;
+        let bit_offset = position % 64;
+
+        let cell = self.counts[(position / 512) as usize];
+        let level2 = if word_offset == 0 { 0u64 } else { (cell.packed_level2 >> ((word_offset - 1) * 9)) & 0x1FF };
+
+        let block = self.blocks[word_index];
+        let bit_count = (block << (63 - bit_offset)).count_ones() as u64;
+
+        cell.level1 + level2 + bit_count
+    }
 }
 
 impl SuffixToProteinMappingBackend for BitVecSuffixToProtein {
     #[inline]
     fn suffix_to_protein(&self, suffix: i64) -> u32 {
-        let suffix: u64 = suffix.try_into().unwrap();
-        if self.rank.get_bit(suffix) {
+        let position = suffix as u64;
+        if position >= self.bit_len {
             return u32::NULL;
         }
-        self.rank.rank1(suffix).try_into().unwrap()
+        if self.get_bit(position) {
+            return u32::NULL;
+        }
+        self.rank1(position).try_into().unwrap()
+    }
+
+    #[inline]
+    fn prefetch_for_suffix(&self, suffix: i64) {
+        let position = suffix as usize;
+        let word_index = position / 64;
+        if word_index < self.blocks.len() {
+            prefetch::prefetch_read(&self.blocks[word_index] as *const u64);
+        }
+        let cell_index = position / 512;
+        if cell_index < self.counts.len() {
+            prefetch::prefetch_read(&self.counts[cell_index] as *const Superblock);
+        }
     }
 }
 
@@ -36,15 +101,49 @@ impl BitVecSuffixToProtein {
 
     /// Closure-based constructor — works with any text type that exposes `len()` + `get()`.
     ///
-    /// Sets one bit per separator and terminator; `Rank9` then builds its counts over those bits.
+    /// Sets one bit per separator and terminator, then builds the counts over those bits.
     pub fn from_text_parts(text_len: usize, get_char: impl Fn(usize) -> u8) -> Self {
-        let mut bits = BitVector::with_capacity(text_len as u64);
+        let mut blocks = vec![0u64; text_len.div_ceil(64)];
         for i in 0..text_len {
             let c = get_char(i);
-            bits.push_bit(c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER);
+            if c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER {
+                blocks[i / 64] |= 1u64 << (i % 64);
+            }
         }
-        BitVecSuffixToProtein { rank: Rank9::new(bits) }
+        let counts = build_counts(&blocks);
+        Self { bit_len: text_len as u64, blocks, counts }
     }
+}
+
+/// Builds the two-level counts over `blocks`, in the layout the file stores and
+/// [`BitVecSuffixToProtein::rank1`] reads.
+///
+/// The trailing cell (hence `+ 1`) is not redundant: a position in the last, partially-filled
+/// superblock still indexes a cell, and `block_count / 8` rounds that superblock away.
+fn build_counts(blocks: &[u64]) -> Vec<Superblock> {
+    let block_count = blocks.len();
+    let mut counts = Vec::with_capacity(block_count / 8 + 1);
+    let mut level1: u64 = 0;
+
+    for superblock in 0..block_count / 8 + 1 {
+        let word_start = superblock * 8;
+        let mut packed_level2: u64 = 0;
+        let mut running: u64 = 0;
+
+        for word in 0..8usize {
+            if word > 0 {
+                packed_level2 |= (running & 0x1FF) << ((word - 1) * 9);
+            }
+            if let Some(block) = blocks.get(word_start + word) {
+                running += block.count_ones() as u64;
+            }
+        }
+
+        counts.push(Superblock { level1, packed_level2 });
+        level1 += running;
+    }
+
+    counts
 }
 
 /// On-disk format for the BitVec mapping (type byte `0x02`).
@@ -72,47 +171,26 @@ impl BitVecSuffixToProtein {
 ///   within a 512-bit superblock cannot exceed 512, and seven of them occupy 63 of a `u64`'s
 ///   bits, so the whole cell is exactly 16 bytes and one cache line holds four of them.
 ///
-/// Hence the constants below: `& 0x1FF` masks a 9-bit sub-count, `(w - 1) * 9` places it, and
-/// the loop covers `w = 1..8` because word 0's sub-count is always zero and is not stored.
+/// Hence the constants in [`build_counts`]: `& 0x1FF` masks a 9-bit sub-count, `(w - 1) * 9`
+/// places it, and the loop covers `w = 1..8` because word 0's sub-count is always zero and is not
+/// stored.
 ///
-/// Only the mmap reader consumes this — the preloaded reader rebuilds `Rank9` from the raw bits
-/// and skips the superblocks entirely — so the layout must be kept in step by hand with
+/// Both backends consume this layout — this one and
 /// `suffix_to_protein_index::mmap::bitvec`, which documents the same structure from the reading
-/// side.
+/// side — so the two must be kept in step by hand.
 impl WriteBinary for BitVecSuffixToProtein {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         writer.write_all(&[2u8])?;
-        let bit_len = self.rank.bit_len();
-        let block_count = self.rank.block_len();
-        writer.write_all(&bit_len.to_le_bytes())?;
-        writer.write_all(&(block_count as u64).to_le_bytes())?;
+        writer.write_all(&self.bit_len.to_le_bytes())?;
+        writer.write_all(&(self.blocks.len() as u64).to_le_bytes())?;
 
-        for i in 0..block_count {
-            let block: u64 = self.rank.get_block(i);
+        for block in &self.blocks {
             writer.write_all(&block.to_le_bytes())?;
         }
 
-        let sb_count = block_count / 8 + 1;
-        let mut level1: u64 = 0;
-
-        for sb in 0..sb_count {
-            let word_start = sb * 8;
-            let mut packed_level2: u64 = 0;
-            let mut running: u64 = 0;
-
-            for w in 0..8usize {
-                if w > 0 {
-                    packed_level2 |= (running & 0x1FF) << ((w - 1) * 9);
-                }
-                let word_idx = word_start + w;
-                if word_idx < block_count {
-                    running += self.rank.get_block(word_idx).count_ones() as u64;
-                }
-            }
-
-            writer.write_all(&level1.to_le_bytes())?;
-            writer.write_all(&packed_level2.to_le_bytes())?;
-            level1 += running;
+        for cell in &self.counts {
+            writer.write_all(&cell.level1.to_le_bytes())?;
+            writer.write_all(&cell.packed_level2.to_le_bytes())?;
         }
 
         Ok(())
@@ -126,13 +204,12 @@ impl WriteBinary for BitVecSuffixToProtein {
 const READ_CHUNK_BYTES: usize = 4 << 20;
 
 /// Reads the body of a bitvec mapping, after the type byte
-/// [`InMemorySuffixToProteinMapping::read_binary`](super::InMemorySuffixToProteinMapping) consumed,
-/// and rebuilds `Rank9` from the raw bits.
+/// [`InMemorySuffixToProteinMapping::read_binary`](super::InMemorySuffixToProteinMapping) consumed.
 ///
-/// Reads whole words, and pushes whole words. It used to read one `u64` per `read_exact` and then
-/// `push_bit` once **per bit** — a call per position in the protein text, which at UniProt scale is
-/// the most expensive thing in a preloaded startup. `push_block` appends the same word in one
-/// operation, so the file's own layout (LSB of block 0 first) is the layout that goes in.
+/// Reads whole words and whole cells, in large chunks. It used to read one `u64` per `read_exact`
+/// and then `push_bit` once **per bit** — a call per position in the protein text, which at UniProt
+/// scale is the most expensive thing in a preloaded startup — and then throw the file's superblocks
+/// away and recompute them. Both halves of the body now land as they are stored.
 pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffixToProtein, Box<dyn Error>> {
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
@@ -140,39 +217,60 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     reader.read_exact(&mut buf8)?;
     let block_count = u64::from_le_bytes(buf8) as usize;
 
-    let mut bits = BitVector::with_capacity(bit_len);
+    let needed = (bit_len as usize).div_ceil(64);
+    if block_count < needed {
+        return Err(format!(
+            "Bitvec mapping declares {} bits but only {} of the {} blocks that needs",
+            bit_len, block_count, needed
+        )
+        .into());
+    }
+
     let mut buffer = vec![0u8; READ_CHUNK_BYTES];
 
+    let mut blocks = Vec::with_capacity(block_count);
     let mut words_left = block_count;
     while words_left > 0 {
         let words = words_left.min(buffer.len() / 8);
         let chunk = &mut buffer[..words * 8];
         reader.read_exact(chunk)?;
         for word in chunk.chunks_exact(8) {
-            bits.push_block(u64::from_le_bytes(word.try_into().unwrap()));
+            blocks.push(u64::from_le_bytes(word.try_into().unwrap()));
         }
         words_left -= words;
     }
 
-    // `push_block` appends 64 bits at a time, so the vector now holds `block_count * 64` bits while
-    // the file declared `bit_len` — up to 63 more than there are text positions. `truncate` drops
-    // them *and* zeroes the tail of the final word (`clear_extra_bits`), which is what makes this
-    // byte-for-byte the vector the old per-bit loop produced. `Rank9`'s counts and
-    // `suffix_to_protein`'s `rank1` both read `bit_len`, so an over-long vector is not cosmetic.
-    bits.truncate(bit_len);
-
-    // Read and discard the superblock array the `WriteBinary` impl above emitted: `Rank9::new`
-    // recomputes those counts from the raw bits. Only the mmap reader consumes them. Skipped in the
-    // same large chunks rather than 16 bytes at a time: at two bytes per word it is a quarter of the
-    // body's size, so a per-cell loop here would undo most of what the loop above just bought.
-    let mut skip_left = (block_count / 8 + 1) * 16;
-    while skip_left > 0 {
-        let bytes = skip_left.min(buffer.len());
-        reader.read_exact(&mut buffer[..bytes])?;
-        skip_left -= bytes;
+    let sb_count = block_count / 8 + 1;
+    let mut counts = Vec::with_capacity(sb_count);
+    let mut cells_left = sb_count;
+    while cells_left > 0 {
+        let cells = cells_left.min(buffer.len() / 16);
+        let chunk = &mut buffer[..cells * 16];
+        reader.read_exact(chunk)?;
+        for cell in chunk.chunks_exact(16) {
+            counts.push(Superblock {
+                level1: u64::from_le_bytes(cell[0..8].try_into().unwrap()),
+                packed_level2: u64::from_le_bytes(cell[8..16].try_into().unwrap())
+            });
+        }
+        cells_left -= cells;
     }
 
-    Ok(BitVecSuffixToProtein { rank: Rank9::new(bits) })
+    // The file may carry whole words past `bit_len`, and bits past it inside the last word. Neither
+    // can change an in-range answer — `rank1` masks off everything at or above the position it is
+    // asked about — but dropping them is what makes a re-serialised mapping byte-identical to the
+    // one that was written, which is the invariant the roundtrip test checks. `truncate` is a no-op
+    // on a well-formed file.
+    blocks.truncate(needed);
+    let tail = bit_len % 64;
+    if tail != 0 {
+        if let Some(last) = blocks.last_mut() {
+            *last &= (1u64 << tail) - 1;
+        }
+    }
+    counts.truncate(blocks.len() / 8 + 1);
+
+    Ok(BitVecSuffixToProtein { bit_len, blocks, counts })
 }
 
 #[cfg(test)]
@@ -183,12 +281,17 @@ mod tests {
 
     use super::{BitVecSuffixToProtein, read_bitvec_mapping};
     use crate::suffix_to_protein_index::test_utils::{
-        assert_agree, assert_sample_lookups, many_proteins_text, sample_text, to_binary
+        assert_agree, assert_prefetch_is_harmless, assert_sample_lookups, many_proteins_text, sample_text, to_binary
     };
 
     #[test]
     fn test_search_bitvec() {
         assert_sample_lookups(&BitVecSuffixToProtein::new(&sample_text()));
+    }
+
+    #[test]
+    fn test_bitvec_prefetch_is_harmless() {
+        assert_prefetch_is_harmless(&BitVecSuffixToProtein::new(&sample_text()));
     }
 
     /// The reader rebuilds `Rank9` from the raw bits and skips the superblocks the writer emitted,

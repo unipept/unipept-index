@@ -81,10 +81,10 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
         }
     }
 
-    fn touch_all_pages(&self) {
+    fn touch_all_pages(&self) -> u64 {
         // The bits and counts regions are contiguous from `bits_offset` to the end of the file.
         let end = self.mmap.len();
-        text_compression::mmap::touch_all_pages(&self.mmap, self.bits_offset..end);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.bits_offset..end)
     }
 }
 

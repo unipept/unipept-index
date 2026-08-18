@@ -29,7 +29,7 @@ mod test_suite;
 mod binary;
 mod constant;
 mod dynamic;
-mod hugepages;
+pub mod hugepages;
 
 use std::{
     cmp::max,

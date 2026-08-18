@@ -1,7 +1,20 @@
 description = "How throughput depends on how many peptides are in one call"
 
 mode = "matrix"
-ordering = "sequential"
+# Palindrome, not sequential: every arm runs the whole grid twice, forward then reversed. A matrix
+# invocation emits EVERY cell of an arm, so its reps are one sample repeated rather than n samples —
+# whatever shifts the process shifts all of its cells together, and a per-cell band cannot see it.
+# The gap between an arm's two invocations is the only estimate of that the mode can produce, and
+# `floor_of` treats it as a floor. It costs this suite twice its wall clock, and it is what stopped
+# a per-invocation offset being read as an arm difference (`pprot` vs `preloaded` flipped sign
+# between suites while each suite was internally one-sided — the signature of exactly that).
+#
+# Note the asymmetry the ordering has: with three arms the slots run a b c c b a, so the FIRST arm's
+# two invocations straddle the suite while the last arm's are adjacent. The first arm therefore
+# carries the widest spread, and since `floor_of` takes the widest across both cells of a
+# comparison, that is the one that governs. Declare the arm whose stability is most in question
+# first.
+ordering = "palindrome"
 
 notes = """
 The one suite that varies the query count, because everywhere else it has to be fixed: two cells

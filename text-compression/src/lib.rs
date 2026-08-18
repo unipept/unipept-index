@@ -75,6 +75,21 @@ pub trait ProteinTextBackend {
         self.len() == 0
     }
 
+    /// Reads at least one byte from every OS page backing this text, faulting it into the page
+    /// cache.
+    ///
+    /// Returns the number of bytes swept, so a caller can report a bandwidth; see
+    /// [`crate::mmap::touch_all_pages`].
+    ///
+    /// Default returns 0: an owned text is already resident, so there is nothing to fault.
+    /// [`crate::MmapBackedProteinText`] overrides it. This lives on the *text* rather than only on
+    /// the protein store because the two are independent axes — a build may own the metadata while
+    /// the text stays mapped, and in that build nothing else can reach these pages.
+    #[inline]
+    fn touch_all_pages(&self) -> u64 {
+        0
+    }
+
     /// Issues a prefetch hint for the storage holding `index`, without reading it.
     ///
     /// Out-of-range indices are ignored rather than panicking: callers prefetch a lookahead

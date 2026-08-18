@@ -15,6 +15,7 @@ is the primitives underneath, not a table builder with three modes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from statistics import median
 
 from ..charts import FACET_PLANE, Series, by_residency, heatmap, lines, sequential_heatmap
 from ..records import NOISE_FLOOR_PCT, Record, delta_pct
@@ -189,6 +190,13 @@ def by_cell(
     than the pooled median — close enough to read the split from, and the only phase numbers an
     uninstrumented build produces at all.
 
+    Under palindrome ordering an arm runs the whole grid twice, so a `(key, arm)` pair has one
+    record per slot. Both are kept and folded: the cell's value is their midpoint and its
+    `slot_spread` is the gap between them, which `floor_of` then treats as a floor. That gap is the
+    only estimate of BETWEEN-invocation variance the matrix mode can produce, and it is the one that
+    matters — a matrix invocation emits every cell of an arm, so anything that shifts the process
+    shifts all of them together, and no amount of reps inside one invocation can see it.
+
     With `correct_drift`, throughput is rescaled against the reference cell the grid interleaved —
     see `drift_of`. Suites whose blocks set `base_every` want this; a suite without a cadence gets
     the numbers as measured either way, so passing it is harmless.
@@ -207,7 +215,7 @@ def by_cell(
         result = record.result
         series = drift.get(_process_key(record))
         scale = series.scale_at(index) if series else 1.0
-        cells.setdefault(key, {})[record.dims.get("arm", "?")] = {
+        cells.setdefault(key, {}).setdefault(record.dims.get("arm", "?"), []).append({
             "p10": p10 * scale,
             "p50": p50 * scale,
             "p90": p90 * scale,
@@ -226,8 +234,30 @@ def by_cell(
             "off_default": tuple(
                 sorted(name for name, value in tuning.items() if (config.get("tuning_defaults") or {}).get(name) != value)
             ),
-        }
-    return cells
+        })
+    return {key: {arm: _fold_slots(slots) for arm, slots in arms.items()} for key, arms in cells.items()}
+
+
+def _fold_slots(slots: list[dict]) -> dict:
+    """One cell from an arm's invocations of it, carrying the gap between them.
+
+    Sequential ordering gives one slot and this is the identity. Palindrome ordering gives two, and
+    which of them to believe is not a question with an answer: the midpoint is the estimate and the
+    gap is the error bar. Everything except the three quantiles is taken from the first slot, since
+    a phase split or a drift residual is a property of the configuration rather than of the slot.
+    """
+    folded = dict(slots[0])
+    folded["slot_spread"] = float("nan")
+    if len(slots) < 2:
+        return folded
+
+    for quantile in ("p10", "p50", "p90"):
+        folded[quantile] = median(slot[quantile] for slot in slots)
+    centre = folded["p50"]
+    if centre:
+        low, high = min(slot["p50"] for slot in slots), max(slot["p50"] for slot in slots)
+        folded["slot_spread"] = (high - low) / centre * 100
+    return folded
 
 
 # ---------------------------------------------------------------------------
@@ -427,18 +457,26 @@ def cell_band(value: dict | None) -> float:
 def floor_of(*values: dict | None) -> float:
     """What a delta between these cells has to clear before it is an answer.
 
-    The widest of: each cell's own band, the drift residual of the process each came from, and the
-    measured full-database floor. Taking the widest is the same rule `records.noise_floor` applies,
-    for the same reason — the point is to refuse to call something an effect, not to find the
-    reading under which it qualifies. The residual belongs here and not only in the resolution
-    table, because a process that could not hold still is one whose effects are unreadable however
-    tight an individual cell's reps happened to be.
+    The widest of: each cell's own band, the gap between the invocations that produced it, the drift
+    residual of the process each came from, and the measured full-database floor. Taking the widest
+    is the same rule `records.noise_floor` applies, for the same reason — the point is to refuse to
+    call something an effect, not to find the reading under which it qualifies. The residual belongs
+    here and not only in the resolution table, because a process that could not hold still is one
+    whose effects are unreadable however tight an individual cell's reps happened to be.
+
+    The slot spread is the one that separates an arm difference from an invocation difference. A
+    matrix invocation produces every cell of an arm at once, so the reps inside it are not
+    independent samples of that arm — they are one sample, repeated. Whatever shifted the process
+    shifts every cell it emitted, in the same direction, by about the same amount, and a table of
+    per-cell bands will happily report that as a resolved effect in a dozen cells at once. Two
+    invocations per arm is what makes it visible; NaN here means the suite ran only one and the
+    floor below is silent about a whole term.
     """
     spreads = [
         value
         for cell in values
         if cell
-        for value in (cell_band(cell), cell.get("floor", float("nan")))
+        for value in (cell_band(cell), cell.get("floor", float("nan")), cell.get("slot_spread", float("nan")))
     ]
     return max([NOISE_FLOOR_PCT, *(value for value in spreads if value == value)])
 

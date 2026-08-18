@@ -381,7 +381,39 @@ struct StartupTiming {
     /// The `--warmup` pass: touching pages and/or pushing peptides through. 0 without `--warmup`.
     warmup_ms: u64,
     /// The three index loads plus the k-mer table. Excludes warmup, which is opt-in.
-    load_total_ms: u64
+    load_total_ms: u64,
+
+    // ── What the page sweep actually did ─────────────────────────────────────
+    //
+    // Elapsed milliseconds alone cannot tell a sweep that read from disk apart from one that hit
+    // the page cache, and the two differ by an order of magnitude on the same bytes. Since the
+    // suites share a page cache and run their arms in a fixed order, a later arm can sweep the
+    // same structure the earlier one left resident and look eight times faster for it. Bytes and
+    // faults are what make that visible instead of being read as an arm difference.
+    /// Bytes swept per structure by `--warmup all`. 0 for a structure with nothing mapped, which
+    /// is itself the answer to "why was this arm's warmup cheap".
+    warmup_sa_bytes: u64,
+    warmup_proteins_bytes: u64,
+    warmup_mapping_bytes: u64,
+    /// Wall time of each structure's sweep. They run concurrently, so these do not sum to
+    /// `warmup_ms` — the slowest one sets it.
+    warmup_sa_ms: u64,
+    warmup_proteins_ms: u64,
+    warmup_mapping_ms: u64,
+    /// Faults taken across the load phase and across the warmup phase. The timed region has its
+    /// own counters and deliberately excludes both; these exist so a cold sweep is legible as a
+    /// cold sweep. A major fault here is a read from the device.
+    load_major_faults: u64,
+    load_minor_faults: u64,
+    warmup_major_faults: u64,
+    warmup_minor_faults: u64
+}
+
+impl StartupTiming {
+    /// Bytes the page sweep touched, across every structure.
+    fn warmup_bytes(&self) -> u64 {
+        self.warmup_sa_bytes + self.warmup_proteins_bytes + self.warmup_mapping_bytes
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -1278,14 +1310,85 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
 /// while still giving rayon a big enough chunk to parallelise over.
 const WARMUP_BATCH_SIZE: usize = 100_000;
 
+/// What one structure's page sweep did: bytes touched and how long it took.
+///
+/// A structure that is preloaded reports `(0, ~0)` because its sweep is the trait default, and
+/// that zero is the useful part — it says the arm skipped the section rather than warming it
+/// quickly.
+#[derive(Clone, Copy, Default)]
+struct SweepStat {
+    bytes: u64,
+    ms: u64
+}
+
 /// Touches every page of every mmap-backed region, populating the page cache. Leaves CPU
 /// caches and the TLB cold — pair with `warmup_pipeline` for those.
-fn warmup_touch_pages(searcher: &ActiveSearcher) {
+///
+/// The three sweeps run concurrently, so the wall time of the whole pass is the slowest of them,
+/// not their sum. Each is timed and measured separately anyway: they cover very different amounts
+/// of the index depending on the build, and a sweep's bytes-per-second is the only thing that
+/// separates "faulted this in from the device" from "the previous arm left it in the page cache".
+fn warmup_touch_pages(searcher: &ActiveSearcher) -> (SweepStat, SweepStat, SweepStat) {
+    let mut sa = SweepStat::default();
+    let mut proteins = SweepStat::default();
+    let mut mapping = SweepStat::default();
+
     rayon::scope(|s| {
-        s.spawn(|_| searcher.sa.touch_all_pages());
-        s.spawn(|_| searcher.proteins.touch_all_pages());
-        s.spawn(|_| searcher.suffix_index_to_protein.touch_all_pages());
+        s.spawn(|_| {
+            let start = Instant::now();
+            sa = SweepStat {
+                bytes: searcher.sa.touch_all_pages(),
+                ms: start.elapsed().as_millis() as u64
+            };
+        });
+        s.spawn(|_| {
+            let start = Instant::now();
+            proteins = SweepStat {
+                bytes: searcher.proteins.touch_all_pages(),
+                ms: start.elapsed().as_millis() as u64
+            };
+        });
+        s.spawn(|_| {
+            let start = Instant::now();
+            mapping = SweepStat {
+                bytes: searcher.suffix_index_to_protein.touch_all_pages(),
+                ms: start.elapsed().as_millis() as u64
+            };
+        });
     });
+
+    (sa, proteins, mapping)
+}
+
+/// Folds a page sweep's per-structure results into the record, and says what it found.
+fn record_sweep(startup: &mut StartupTiming, sweeps: (SweepStat, SweepStat, SweepStat)) {
+    let (sa, proteins, mapping) = sweeps;
+    startup.warmup_sa_bytes = sa.bytes;
+    startup.warmup_proteins_bytes = proteins.bytes;
+    startup.warmup_mapping_bytes = mapping.bytes;
+    startup.warmup_sa_ms = sa.ms;
+    startup.warmup_proteins_ms = proteins.ms;
+    startup.warmup_mapping_ms = mapping.ms;
+    for (what, sweep) in [("sa", sa), ("proteins", proteins), ("mapping", mapping)] {
+        eprintln!(
+            "  swept {}: {:.2} GB in {} ms ({})",
+            what,
+            sweep.bytes as f64 / 2f64.powi(30),
+            sweep.ms,
+            rate(sweep.bytes, sweep.ms)
+        );
+    }
+}
+
+/// Bytes per second as a human-readable rate, or `-` when there was nothing to sweep.
+fn rate(bytes: u64, ms: u64) -> String {
+    if bytes == 0 {
+        return "nothing mapped".to_string();
+    }
+    if ms == 0 {
+        return "instant".to_string();
+    }
+    format!("{:.2} GB/s", bytes as f64 / 2f64.powi(30) / (ms as f64 / 1000.0))
 }
 
 /// Pushes `count` peptides from `<index-dir>/warmup.txt` through the full search + retrieval
@@ -1373,14 +1476,25 @@ fn run_matrix(
 
     // Warm the page cache once (matters for mmap); CPU caches warm over the repeated runs.
     eprintln!("Warming up (touching all pages)...");
+    let (minflt_before_warmup, majflt_before_warmup) = page_faults();
     let warmup_start = Instant::now();
-    warmup_touch_pages(&searcher);
+    let sweeps = warmup_touch_pages(&searcher);
     startup.warmup_ms = warmup_start.elapsed().as_millis() as u64;
+    record_sweep(&mut startup, sweeps);
+    let (minflt_after_warmup, majflt_after_warmup) = page_faults();
+    startup.warmup_minor_faults = minflt_after_warmup.saturating_sub(minflt_before_warmup);
+    startup.warmup_major_faults = majflt_after_warmup.saturating_sub(majflt_before_warmup);
     startup.load_total_ms =
         startup.load_sa_ms + startup.load_proteins_ms + startup.load_mapping_ms + startup.kmer_table_ms;
     eprintln!(
         "Startup: load {} ms (sa {} / proteins {} / mapping {}), warmup {} ms",
         startup.load_total_ms, startup.load_sa_ms, startup.load_proteins_ms, startup.load_mapping_ms, startup.warmup_ms
+    );
+    eprintln!(
+        "         warmup swept {:.2} GB overall ({}), {} major faults",
+        startup.warmup_bytes() as f64 / 2f64.powi(30),
+        rate(startup.warmup_bytes(), startup.warmup_ms),
+        startup.warmup_major_faults
     );
 
     // Theoretical memory footprint per k-mer table size — index-wide, independent of the
@@ -1515,8 +1629,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         load_mapping_ms: 0,
         kmer_table_ms: 0,
         warmup_ms: 0,
-        load_total_ms: 0
+        load_total_ms: 0,
+        warmup_sa_bytes: 0,
+        warmup_proteins_bytes: 0,
+        warmup_mapping_bytes: 0,
+        warmup_sa_ms: 0,
+        warmup_proteins_ms: 0,
+        warmup_mapping_ms: 0,
+        load_major_faults: 0,
+        load_minor_faults: 0,
+        warmup_major_faults: 0,
+        warmup_minor_faults: 0
     };
+    let (minflt_at_start, majflt_at_start) = page_faults();
 
     eprintln!("Loading suffix array from {}...", sa_path.display());
     let t0 = Instant::now();
@@ -1548,6 +1673,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut searcher = Searcher::new(suffix_array, proteins, mapping);
 
+    // The three index loads, charged before the paths diverge: matrix mode loads its k-mer tables
+    // inside `run_matrix` and would otherwise report no load faults at all. Single mode widens this
+    // to include the k-mer table below.
+    let (minflt_after_index, majflt_after_index) = page_faults();
+    startup.load_minor_faults = minflt_after_index.saturating_sub(minflt_at_start);
+    startup.load_major_faults = majflt_after_index.saturating_sub(majflt_at_start);
+
     if args.matrix {
         return run_matrix(
             searcher,
@@ -1575,6 +1707,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     startup.kmer_table_ms = t0.elapsed().as_millis() as u64;
     startup.load_total_ms =
         startup.load_sa_ms + startup.load_proteins_ms + startup.load_mapping_ms + startup.kmer_table_ms;
+    let (minflt_after_load, majflt_after_load) = page_faults();
+    startup.load_minor_faults = minflt_after_load.saturating_sub(minflt_at_start);
+    startup.load_major_faults = majflt_after_load.saturating_sub(majflt_at_start);
 
     // Apply the SearchTuning knobs from the CLI (defaults match SearchTuning::default(), so
     // this is a no-op unless the caller overrides one of --validate-batch/etc).
@@ -1627,7 +1762,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => {}
         Some(WarmupMode::All) => {
             eprintln!("Warming up: touching all mmap pages...");
-            warmup_touch_pages(&searcher);
+            let sweeps = warmup_touch_pages(&searcher);
+            record_sweep(&mut startup, sweeps);
             eprintln!("Warmup complete.");
         }
         Some(WarmupMode::Count(warmup_count)) => {
@@ -1635,13 +1771,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(WarmupMode::AllThenCount(warmup_count)) => {
             eprintln!("Warming up: touching all mmap pages...");
-            warmup_touch_pages(&searcher);
+            let sweeps = warmup_touch_pages(&searcher);
+            record_sweep(&mut startup, sweeps);
             eprintln!("Page warmup complete.");
             warmup_pipeline(&searcher, &args, *warmup_count)?;
         }
     }
     if args.warmup.is_some() {
         startup.warmup_ms = warmup_start.elapsed().as_millis() as u64;
+        let (minflt_after_warmup, majflt_after_warmup) = page_faults();
+        startup.warmup_minor_faults = minflt_after_warmup.saturating_sub(minflt_after_load);
+        startup.warmup_major_faults = majflt_after_warmup.saturating_sub(majflt_after_load);
         eprintln!("Warmup took {} ms.", startup.warmup_ms);
     }
     eprintln!(
@@ -1652,6 +1792,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         startup.load_mapping_ms,
         startup.kmer_table_ms,
         startup.warmup_ms
+    );
+    eprintln!(
+        "         warmup swept {:.2} GB overall ({}), {} major / {} minor faults; load took {} major faults",
+        startup.warmup_bytes() as f64 / 2f64.powi(30),
+        rate(startup.warmup_bytes(), startup.warmup_ms),
+        startup.warmup_major_faults,
+        startup.warmup_minor_faults,
+        startup.load_major_faults
     );
 
     // Prepare output file

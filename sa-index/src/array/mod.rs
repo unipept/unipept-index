@@ -114,11 +114,14 @@ pub trait SuffixArrayBackend: Send + Sync {
     /// comparison. Out-of-range indices are ignored rather than panicking.
     fn prefetch_sa_index(&self, index: usize);
 
-    /// Reads every mapped page into the page cache.
+    /// Reads every mapped page into the page cache, returning the number of bytes swept so a
+    /// caller can report a bandwidth.
     ///
-    /// Default: no-op. Only the mmap backend implements it, as a warmup so the first requests do
-    /// not pay the page faults.
-    fn touch_all_pages(&self) {}
+    /// Default: 0, nothing to fault. Only the mmap backend implements it, as a warmup so the first
+    /// requests do not pay the page faults.
+    fn touch_all_pages(&self) -> u64 {
+        0
+    }
 
     /// Whether the array is empty.
     fn is_empty(&self) -> bool {

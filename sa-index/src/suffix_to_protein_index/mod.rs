@@ -67,16 +67,18 @@ pub trait SuffixToProteinMappingBackend: Send + Sync {
 
     /// Non-blocking hardware prefetch hint for the data that `suffix_to_protein(suffix)` will access.
     ///
-    /// Default is a no-op, kept by the three implementations that cannot name the address the
-    /// lookup will touch: both sparse mappings, which binary-search, and the preloaded bitvec,
-    /// whose counts live inside `Rank9`. It accepts any `suffix`, in range or not, since a hint
-    /// that misses is only a wasted load.
+    /// Default is a no-op, kept by the two implementations that cannot name the address the
+    /// lookup will touch: both sparse mappings, which binary-search. It accepts any `suffix`, in
+    /// range or not, since a hint that misses is only a wasted load.
     #[inline]
     fn prefetch_for_suffix(&self, _suffix: i64) {}
 
-    /// Reads at least one byte from every OS page in the mmap backing this mapping,
-    /// ensuring all pages are resident in the page cache.
-    /// Default is a no-op; mmap-backed implementations override this.
+    /// Reads at least one byte from every OS page in the mmap backing this mapping, ensuring all
+    /// pages are resident in the page cache. Returns the number of bytes swept, so a caller can
+    /// report a bandwidth.
+    /// Default is 0; mmap-backed implementations override this.
     #[inline]
-    fn touch_all_pages(&self) {}
+    fn touch_all_pages(&self) -> u64 {
+        0
+    }
 }

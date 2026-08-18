@@ -2,6 +2,13 @@ description = "What each storage configuration costs before it can answer the fi
 
 mode = "single"
 ordering = "sequential"
+# Both on, and not optional. The arms share a page cache and run in a fixed order, so without a drop
+# between them the first arm's own RSS evicts the cache it filled, the second faults the index in
+# from the device, and the third sweeps what the second left resident — which is how a 296 s warmup
+# and a 36 s warmup came out of two arms doing the same 160 GB of work. Dropping per cell is what
+# makes the column compare arms instead of positions in the sweep.
+needs_root = true
+drop_caches = true
 
 notes = """
 Load time is a property of one invocation, not of a rep, so every configuration is loaded once with
@@ -12,14 +19,20 @@ Preloading a structure does not make its cost go away — it moves it from page 
 the steady state into one bulk copy at startup. Compare the `total` column, never the `load` column
 alone, and read this suite together with the throughput the same configuration reaches in `ram`.
 
-PAGE CACHE, read before interpreting: after the first configuration has run, the index files are in
-the page cache, so every later load is doing memcpy rather than disk I/O. That is the right number
-for "how long does a restart take on a warm box" and the WRONG one for "how long does the first boot
-after a deploy take". Pass --cold (needs root) for the latter, and expect the sweep to take much
-longer.
+PAGE CACHE: the cache is dropped before every configuration, so these are cold-boot numbers — "how
+long does the first start after a deploy take". A restart on a warm box is much faster and is NOT
+what this measures. That costs the suite most of its wall clock and it is not optional: the arms are
+otherwise ordered in time, and an arm that runs after another has already faulted the index in
+measures the page cache rather than itself.
+
+Read `GB/s`, not `warmup` alone. Two arms sweeping the same structure do the same work; if one of
+them is an order of magnitude faster per byte, it was reading from the page cache and the comparison
+is void. `majflt` says the same thing from the other side — a cold sweep takes one major fault per
+page, a warm one takes none.
 
 The preloaded arm has nothing mapped to touch, so its page-touch warmup degrades to a small pipeline
-warmup automatically; its `warmup` column is therefore not comparable with the mapped arms'.
+warmup automatically; its `warmup` column is therefore not comparable with the mapped arms'. Its
+`GB swept` is 0, which is the honest form of that caveat.
 """
 
 [defaults]

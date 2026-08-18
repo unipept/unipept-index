@@ -71,11 +71,11 @@ impl super::SuffixArrayBackend for MmapBackedSA {
 
     /// Warms the page cache over the SA data. See `text_compression::mmap::touch_all_pages` for
     /// why the sweep is shaped the way it is.
-    fn touch_all_pages(&self) {
+    fn touch_all_pages(&self) -> u64 {
         // Only the SA data, not the whole mapping: the 10-byte header would otherwise skew the
         // range for no benefit.
         let byte_len = (self.len * self.bits_per_value).div_ceil(8);
-        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len)
     }
 
     // Do not add a `MADV_WILLNEED` over the SA range before scanning it. Tried twice, removed

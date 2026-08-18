@@ -20,7 +20,7 @@ sudo ./sa-benchmarks/run.sh all          # every suite, into one report.md
 | `kmer` | What each k-mer table buys against attaching none, per length regime, with the table's resident cost beside the win. | no |
 | `mlp` | The cross-query MLP batch curve, per length regime — whether batching still finds anything to overlap. | no |
 | `combos` | The three accelerators crossed — k-mer table x `mlp_batch` x `validate_batch` — to test whether their individual optima are simultaneously reachable. | no |
-| `startup` | What each of the three storage configurations costs before it can answer the first query. | only for `--cold` |
+| `startup` | What each of the three storage configurations costs before it can answer the first query, from cold. | yes |
 | `ram` | How the storage arms scale as the RAM ceiling falls, and where they cross over. | yes |
 | `threads` | Whether thread oversubscription pays, by how much, and what it costs when RAM is ample. | yes |
 | `validate` | What `validate_batch` should be, one knob against a fixed background. | no |
@@ -56,8 +56,8 @@ gate that lost — a 34-row matrix re-measuring the k-mer and batch questions on
 
 `run.sh all` runs each suite in order into one session directory, sharing one built binary per arm.
 Suites it cannot run on this machine are **skipped and reported as skipped**, never silently
-omitted — so a report from a laptop shows filled `defaults`/`kmer`/`startup` sections and an
-explicit `not run — needs root` for `ram` and `threads`.
+omitted — so a report from a laptop shows filled `defaults`/`kmer` sections and an
+explicit `not run — needs root` for `startup`, `ram` and `threads`.
 
 ## The report
 
@@ -280,6 +280,22 @@ prose that says how to read them. Four statistics recur, and none is decoration:
 
 The measured run-to-run noise floor on the full database is **3.9%**. Deltas below it are noise.
 
+`slots` is the one worth insisting on, because the alternative to it is a systematic error that
+reads exactly like a result. Every suite runs one process per arm — in matrix mode a single
+invocation emits *every cell* of that arm — so the reps inside it are not independent samples of
+the arm. They are one sample, repeated. Whatever state that process happened to start in shifts all
+of its cells together, in the same direction, and a table of per-cell bands will report that as a
+resolved effect in a dozen cells at once. The palindrome ordering exists to bound it: run each arm
+twice and let the gap between its two invocations set the floor. A suite that ran only one
+invocation per arm reports `slots` as `-`, and its arm-vs-arm deltas are worth less than they look.
+
+The same failure has a page-cache form, which is why `startup` drops the cache before every
+configuration and needs root to do it. Suites run their arms in a fixed order over one shared page
+cache, so an arm that runs after another has already faulted the index in is measuring the cache
+rather than itself. Reading `GB/s` beside `warmup` is what catches it: two arms sweeping the same
+structure do the same work, and if one of them is an order of magnitude faster per byte, it was
+handed a warm cache and the pair is not comparable.
+
 **Throughput here is search plus retrieval, and that is not a whole request.** Production then turns
 every hit into the `ProteinInfo` it returns — an fa-compression decode of the annotations plus a
 `String` for the accession — and serialises the result to JSON. `defaults` times that, in its "what
@@ -431,7 +447,7 @@ overnight sweep restarts where it stopped:
 
 ```bash
 ./sa-benchmarks/run.sh defaults
-./sa-benchmarks/run.sh startup --cold          # first-boot rather than warm-restart load times
+sudo ./sa-benchmarks/run.sh startup            # cold by default; see below for why it has to be
 sudo ./sa-benchmarks/run.sh ram
 sudo ./sa-benchmarks/run.sh threads
 ```

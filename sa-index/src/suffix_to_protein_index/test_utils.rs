@@ -5,7 +5,7 @@
 //! a mapped file are in [`mmap::test_utils`](super::mmap::test_utils) instead.
 
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::InMemoryProteinText;
+use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
 use super::SuffixToProteinMappingBackend;
 use crate::{Nullable, WriteBinary};
@@ -44,6 +44,17 @@ pub fn assert_sample_lookups(mapping: &impl SuffixToProteinMappingBackend) {
     assert_eq!(mapping.suffix_to_protein(3), u32::NULL);
     assert_eq!(mapping.suffix_to_protein(6), u32::NULL);
     assert_eq!(mapping.suffix_to_protein(10), u32::NULL);
+}
+
+/// Walks `prefetch_for_suffix` over the whole mapping and well past its end, then asserts the
+/// lookups still hold. A backend that implements the hint computes the index it touches by hand,
+/// so a wrong bound is an out-of-range panic rather than a wrong answer, and the hint may never
+/// disturb the lookup it precedes. Expects a mapping built from [`sample_text`].
+pub fn assert_prefetch_is_harmless(mapping: &impl SuffixToProteinMappingBackend) {
+    for suffix in 0..sample_text().len() as i64 * 2 {
+        mapping.prefetch_for_suffix(suffix);
+    }
+    assert_sample_lookups(mapping);
 }
 
 /// Asserts two mappings answer identically for every position of a `text_len` byte text.

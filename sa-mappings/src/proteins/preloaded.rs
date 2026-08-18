@@ -106,6 +106,14 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T
         }
     }
 
+    /// Warms the text, which may still be mapped even though the metadata is owned — that is
+    /// exactly the `mmap + preloaded-proteins` build. The `Vec<Protein>` itself is anonymous
+    /// memory and has nothing to fault, so it contributes nothing; without this delegation the
+    /// whole text section went unwarmed in that build, since no other structure can reach it.
+    fn touch_all_pages(&self) -> u64 {
+        self.text.touch_all_pages()
+    }
+
     /// Prefetches the `Protein` struct at `index`. Only the struct header is hinted; the
     /// `String` and `Vec` it owns live elsewhere and are not reachable from one cache line.
     #[inline]

@@ -108,8 +108,9 @@ pub(super) fn load_compressed(
     compressed_suffix_array
         .read_binary(reader)
         .map_err(|_| "Could not read the compressed suffix array from the binary file")?;
-    // Preloaded SA lives in anonymous RAM — request huge pages to cut page-walk cost.
-    compressed_suffix_array.advise_hugepages();
+    // The huge-page advice is not issued here: `DynBitArray::with_capacity` already did it, on the
+    // untouched allocation, which is the only point at which it does anything. See
+    // `bitarray::hugepages`.
     Ok(compressed_suffix_array)
 }
 

@@ -28,4 +28,3 @@ sa-mappings = { path = "../sa-mappings" }
 text-compression = { path = "../text-compression" }
 bitarray = { path = "../bitarray" }
 serde_json = "1.0.116"
-succinct = "0.5.2"

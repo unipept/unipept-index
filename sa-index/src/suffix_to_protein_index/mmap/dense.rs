@@ -27,9 +27,9 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
         }
     }
 
-    fn touch_all_pages(&self) {
+    fn touch_all_pages(&self) -> u64 {
         let end = self.mmap.len();
-        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end)
     }
 }
 

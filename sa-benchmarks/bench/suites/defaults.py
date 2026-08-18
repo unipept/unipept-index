@@ -24,7 +24,6 @@ from .shared import (
     GRID_KEYS,
     fmt_tune,
     by_cell,
-    cell_band,
     floor_of,
     held_and_swept,
     phase_switch,
@@ -339,6 +338,12 @@ def _regime_table(
     The `verdict` column states the ratio's reading rather than leaving the reader to compare it
     against `noise` themselves. Two adjacent columns and a subtraction is exactly the step that gets
     skipped, and skipping it turns every 1.03x into a result.
+
+    `noise` is the whole floor the verdict is decided against — the widest of the cells' bands, their
+    invocation-to-invocation spread and their process's drift residual — and not just the widest
+    band. It used to be the band alone, which made the column disagree with the verdict beside it
+    and, worse, understated the one term that matters here: reps inside one matrix invocation are
+    not independent samples of an arm.
     """
     # A ratio column per arm after the first, all against that first arm. With two arms this is the
     # one `ratio` column it always was; with three it stays readable, where a single ratio would
@@ -362,7 +367,7 @@ def _regime_table(
                 *_coords(key, columns),
                 *(qps(value["p50"]) if value else "-" for value in values),
                 *(ratio_of([values[0], value]) for value in values[1:]),
-                band(max((cell_band(value) for value in values if value), default=float("nan"))),
+                band(floor_of(*(value for value in values if value))),
                 _verdict(values, arms),
             )
     report.table(table, raw=True)

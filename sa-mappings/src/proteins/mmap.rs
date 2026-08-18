@@ -95,11 +95,11 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
         self.protein_count
     }
 
-    fn touch_all_pages(&self) {
+    fn touch_all_pages(&self) -> u64 {
         // Everything from `warm_from` on: the entry table and both string blobs always, and the
         // text section too when the text is mapped rather than owned. See the field's doc.
         let end = self.mmap.len();
-        text_compression::mmap::touch_all_pages(&self.mmap, self.warm_from..end);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.warm_from..end)
     }
 
     /// Prefetches the fixed-size table entry for `index`.
@@ -491,6 +491,26 @@ mod tests {
         let meta_offset = 8 + bit_array_byte_size(owned_text.text.len());
         assert!(meta_offset > 8, "fixture should have a non-empty text section");
         assert_eq!(owned_text.warm_from, meta_offset, "owned text: warming must start at the metadata section");
+    }
+
+    /// Owned metadata over a mapped text is the one pairing where nothing else can reach the text
+    /// pages: `MmapBackedProteins` sweeps its own mapping and would cover them, but this pairing
+    /// does not have that mapping. It inherited the trait's no-op sweep until it was given one,
+    /// which left the whole text section unwarmed in the `mmap + preloaded-proteins` build.
+    ///
+    /// Residency is not observable from inside the process without `mincore`, so what this pins is
+    /// the bound: the sweep slices the mapping by a range it computes from the header, so a wrong
+    /// end offset is a panic here rather than a silently short sweep.
+    #[test]
+    fn owned_metadata_warms_its_mapped_text() {
+        let tmp_dir = TempDir::new("test_mmap_warm_owned_meta").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+
+        let proteins = OwnedMetaMappedText::read_binary_mmap(&bin_path).unwrap();
+        proteins.touch_all_pages();
+
+        assert_eq!(proteins.len(), 3, "the sweep must not disturb what follows it");
+        assert_eq!(proteins.text().len(), proteins.text.len());
     }
 
     /// A named loader, reduced to "did it reject this file?" so the malformed-header tests can

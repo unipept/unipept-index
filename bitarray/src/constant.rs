@@ -34,13 +34,23 @@ impl<const BITS: usize> BitArray<BITS> {
     const MASK: u64 = u64::MAX >> (64 - BITS);
 
     /// Allocates room for `capacity` values, all zero.
+    ///
+    /// The huge-page advice is issued here, on the still-untouched allocation, and not by the
+    /// caller once it has filled it: see [`crate::hugepages`] for why that ordering is the whole
+    /// point.
     pub fn with_capacity(capacity: usize) -> Self {
         let extra = if (capacity * BITS).is_multiple_of(64) { 0 } else { 1 };
-        Self { data: vec![0; capacity * BITS / 64 + extra], len: capacity }
+        let array = Self { data: vec![0; capacity * BITS / 64 + extra], len: capacity };
+        array.advise_hugepages();
+        array
     }
 
     /// Requests transparent huge pages over the backing data (no-op off Linux).
-    /// See [`crate::hugepages`].
+    ///
+    /// [`Self::with_capacity`] already does this, which covers every buffer this crate allocates.
+    /// It stays public for a caller that builds the backing store some other way, and is
+    /// idempotent. Calling it on a buffer that is already populated is close to useless — again,
+    /// see [`crate::hugepages`].
     #[inline]
     pub fn advise_hugepages(&self) {
         crate::hugepages::advise(&self.data);

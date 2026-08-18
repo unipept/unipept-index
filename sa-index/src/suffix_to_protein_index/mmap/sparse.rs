@@ -39,9 +39,9 @@ impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
         protein_index as u32
     }
 
-    fn touch_all_pages(&self) {
+    fn touch_all_pages(&self) -> u64 {
         let end = self.data_offset + self.count * 8;
-        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end);
+        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end)
     }
 }
 

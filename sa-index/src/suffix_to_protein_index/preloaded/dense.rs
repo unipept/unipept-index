@@ -93,7 +93,9 @@ mod tests {
     use super::{DenseSuffixToProtein, read_dense_mapping};
     use crate::{
         Nullable,
-        suffix_to_protein_index::test_utils::{assert_sample_lookups, sample_text, to_binary}
+        suffix_to_protein_index::test_utils::{
+            assert_prefetch_is_harmless, assert_sample_lookups, sample_text, to_binary
+        }
     };
 
     #[test]
@@ -103,6 +105,11 @@ mod tests {
             mapping: vec![0, 0, 0, u32::NULL, 1, 1, u32::NULL, 2, 2, 2, u32::NULL]
         };
         assert_eq!(index, expected);
+    }
+
+    #[test]
+    fn test_dense_prefetch_is_harmless() {
+        assert_prefetch_is_harmless(&DenseSuffixToProtein::new(&sample_text()));
     }
 
     #[test]

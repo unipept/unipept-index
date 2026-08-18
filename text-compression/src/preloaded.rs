@@ -148,8 +148,9 @@ impl ReadBinary for InMemoryProteinText {
         let mut bit_array = BitArray::<5>::with_capacity(text_length);
         let mut limited = <&mut R as Read>::take(reader, n_bytes as u64);
         bit_array.read_binary(&mut limited).map_err(|_| "Could not parse BitArray data from binary file")?;
-        // Preloaded text lives in anonymous RAM — request huge pages to cut page-walk cost.
-        bit_array.advise_hugepages();
+        // The huge-page advice is not issued here: `BitArray::with_capacity` already did it, on the
+        // untouched allocation, which is the only point at which it does anything. See
+        // `bitarray::hugepages`.
 
         Ok(Self::new(bit_array))
     }

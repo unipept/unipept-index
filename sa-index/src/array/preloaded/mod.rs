@@ -41,8 +41,11 @@ pub enum InMemorySA {
 // ── InMemoryRangeIter ────────────────────────────────────────────────────────
 
 /// [`InMemorySA::iter_range`](SuffixArrayBackend::iter_range)'s iterator: whichever of the two
-/// packings' native iterators the loaded variant uses, so iteration costs no dispatch per entry
-/// beyond the one `next` already makes.
+/// packings' native iterators the loaded variant uses.
+///
+/// The enum is matched once per `next`, not once per range — the variant is fixed for the life of
+/// the index, so the branch predicts perfectly, but it is a branch, and the mmap iterator has no
+/// equivalent. Anything that widens this into real work per entry is a regression.
 pub enum InMemoryRangeIter<'a> {
     Original(OriginalRangeIter<'a>),
     Compressed(DynBitArrayRangeIter<'a>)
