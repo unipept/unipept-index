@@ -63,23 +63,32 @@ def build_ram(root: Path) -> Path:
     the first arm — a fixture missing it would exercise none of them. It is given the shape the real
     sweep expects of it and the analysis must not assume: furthest ahead unconstrained, furthest
     behind under a cap, since its residency is anonymous memory that cannot be evicted to make room.
+
+    `ptext` is given the OPPOSITE shape, and the two together are the discrimination this suite has
+    to be capable of: level with `preloaded` while everything is resident, and still ahead once the
+    ceiling bites, because most of what it holds is page cache the kernel can reclaim. One arm that
+    crosses and one that does not, in the same run — if the analysis can only report a single
+    crossover it will say so here rather than on a day of real machine time.
     """
     out_dir = root / "ram"
-    for ceiling, preloaded_qps, mmap_qps, pprot_qps, majflt in [
-        (0, 150_000, 100_000, 121_000, 0),
-        (223, 140_000, 98_000, 118_000, 200),
-        (167, 45_000, 60_000, 55_000, 24_000),
-        (112, 18_000, 31_000, 22_000, 51_000),
+    for ceiling, preloaded_qps, mmap_qps, ptext_qps, pmap_qps, pprot_qps, majflt in [
+        (0, 150_000, 100_000, 149_000, 148_000, 121_000, 0),
+        (223, 140_000, 98_000, 141_000, 139_000, 118_000, 200),
+        (167, 45_000, 60_000, 78_000, 74_000, 55_000, 24_000),
+        (112, 18_000, 31_000, 44_000, 41_000, 22_000, 51_000),
     ]:
         rss = 240 if ceiling == 0 else ceiling * 0.98
-        for slot, arm, value in [
-            ("a", "preloaded", preloaded_qps),
-            ("b", "mmap", mmap_qps),
-            ("c", "pprot", pprot_qps),
-            ("d", "pprot", pprot_qps * 1.01),
-            ("e", "mmap", mmap_qps * 0.99),
-            ("f", "preloaded", preloaded_qps * 1.01),
-        ]:
+        forward = [
+            ("preloaded", preloaded_qps),
+            ("mmap", mmap_qps),
+            ("pprot", pprot_qps),
+            ("ptext", ptext_qps),
+            ("pmap", pmap_qps),
+        ]
+        # Palindrome: forward then reversed, and the reversed half nudged, so every arm holds one
+        # early and one late slot and `slot_spread` has something to measure.
+        order = forward + [(arm, value * 1.01) for arm, value in reversed(forward)]
+        for slot, (arm, value) in zip("abcdefghij", order):
             write_cell(out_dir, {"ceiling_gb": ceiling, "arm": arm, "slot": slot, "features": "mmap"}, value, majflt, rss)
 
     # A cell whose ceiling did not bind: RSS far above the cap. Must read as VOID, never as 90k qps.
@@ -94,14 +103,15 @@ def build_ram(root: Path) -> Path:
 def build_threads(root: Path) -> Path:
     """Oversubscription costs ~10% unconstrained and pays ~60% under a ceiling, faults flat.
 
-    Three arms, matching what the suite declares — the comparison columns are drawn against the
-    first one, so a two-arm fixture would leave every one of them empty and the checks below with
-    nothing to find.
+    Five arms, matching what the suite declares — the comparison columns are drawn against the first
+    one, so a short fixture would leave some of them empty and the checks below with nothing to find.
     """
     out_dir = root / "threads"
     for ceiling in (0, 167, 112):
         for threads, factor in [("default", 1.0), ("48", 1.3 if ceiling else 0.95), ("96", 1.6 if ceiling else 0.90)]:
-            for arm, base in (("preloaded", 72_000), ("mmap", 60_000), ("pprot", 57_000)):
+            for arm, base in (
+                ("preloaded", 72_000), ("mmap", 60_000), ("pprot", 57_000), ("ptext", 71_000), ("pmap", 70_000)
+            ):
                 write_cell(
                     out_dir,
                     {"ceiling_gb": ceiling, "threads": threads, "arm": arm, "features": "mmap"},
@@ -378,14 +388,22 @@ def _response(tryptic: bool) -> dict:
 def build_defaults(root: Path, *, regressed: bool = False) -> Path:
     """The narrowed gate: equate_il x tryptic only, at one k and one batch.
 
-    Two claims. A coordinate the suite holds fixed must NOT become a column — that is what makes
-    the narrowing visible in the report rather than only in the run time. And mmap must read as
-    behind preloaded on `small` by more than the floor, while the two are inside the floor
-    everywhere else, so the suite is shown to separate a real gap from a tie rather than calling
-    every difference a result.
+    A coordinate the suite holds fixed must NOT become a column — that is what makes the narrowing
+    visible in the report rather than only in the run time.
+
+    And the four verdict shapes get one length regime each, so every branch is exercised by a run
+    that also has to tell them apart:
+
+      * `small`  — `preloaded` alone at the top: a real gap must name its winner.
+      * `large`  — `mmap` alone at the top: the sign has to survive, not just the magnitude.
+      * `mixed`  — every arm inside the floor: a tie must read as a tie, not as a small effect.
+      * `medium` — `preloaded`, `ptext` and `pmap` tied, the other two far below: the case that used
+        to be reported as "no configuration separates from the others", which was the opposite of
+        what it found. A tie at the TOP is not a tie overall, and a tie three arms deep is where an
+        implementation that only ever compares two of them shows.
     """
     out_dir = root / ("defaults-base" if regressed else "defaults")
-    for arm in ("preloaded", "mmap", "pprot", "pprot+m"):
+    for arm in ("preloaded", "mmap", "pprot", "ptext", "pmap", "pprot+m"):
         cells = []
         for source, base in BUCKETS.items():
             for equate_il in (True, False):
@@ -393,13 +411,23 @@ def build_defaults(root: Path, *, regressed: bool = False) -> Path:
                     qps = base * (1.35 if tryptic else 1.0)
                     if arm == "mmap":
                         # A real gap in BOTH directions, and a tie in between: the sign has to
-                        # survive, not just the magnitude.
-                        qps *= {"small": 0.80, "large": 1.20}.get(source, 1.005)
+                        # survive, not just the magnitude. Far behind on `medium`, which is where the
+                        # top two tie — a leading GROUP still has to be shown to lead something.
+                        qps *= {"small": 0.80, "large": 1.20, "medium": 0.70}.get(source, 1.005)
                     elif arm == "pprot":
                         # The middle arm, and deliberately the middle number: with three arms the
                         # verdict has to compare the leader against the RUNNER-UP, so a third arm
                         # between them must not change who is reported as ahead.
-                        qps *= {"small": 0.90, "large": 1.10}.get(source, 1.002)
+                        qps *= {"small": 0.90, "large": 1.10, "medium": 0.75}.get(source, 1.002)
+                    elif arm == "ptext":
+                        # Level with `preloaded` on `medium` and nowhere else, so exactly one regime
+                        # produces a tied leading group and the other three keep the shapes they had.
+                        qps *= {"medium": 1.0, "small": 0.85, "large": 0.95}.get(source, 1.001)
+                    elif arm == "pmap":
+                        # Level with `ptext` on `medium`, so the tied group is THREE deep there. A
+                        # pair is the easy case for a group verdict; a pair plus one is where an
+                        # implementation that only ever compares two arms starts to show.
+                        qps *= {"medium": 1.0, "small": 0.88, "large": 0.93}.get(source, 1.0005)
                     # The thing a baseline diff has to catch: one cell, moved well past its floor.
                     if regressed and source == "medium" and equate_il and not tryptic:
                         qps *= 1.25
@@ -610,6 +638,8 @@ CHECKS = {
         ("preloaded ahead", "a backend gap past the floor must name the winner"),
         ("mmap ahead", "and must name the other one when the sign flips"),
         ("cannot separate them", "a gap inside the floor must say so, not read as a small effect"),
+        ("tied, ahead of the rest", "arms tied at the top must still be shown to lead the ones below"),
+        ("preloaded, ptext, pmap tied", "a tied leading group must name every arm in it, in column order"),
         ("search time", "the phase timings must each get a chart of their own"),
         ("time split", "the search/retrieval decomposition must be offered as a stacked chart"),
         ("inside the search", "the instrumented arm must get a section of its own"),

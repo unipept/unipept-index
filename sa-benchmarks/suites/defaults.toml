@@ -69,7 +69,7 @@ measuring the defaults.
 # 20 reps matches the measured 3.9% noise floor; do not lower it without re-checking that floor.
 # This is the one suite where precision is the point, so there is no `runs_target_band` here — a
 # cell that stops early stops at a band this suite exists to resolve.
-runs = 20
+runs = 100
 amount = 10000
 max_matches = 10000
 # Page sweep, then 200k real queries. The sweep alone warms only what is MAPPED, so on an arm that
@@ -96,7 +96,7 @@ strategy = "base"
 # Only here — it is expensive, and it is the one measurement that says what
 # fraction of a real request every other suite's throughput actually describes.
 response = true
-arms = ["preloaded", "mmap", "pprot", "ptext", "pprot+m"]
+arms = ["preloaded", "mmap", "pprot", "ptext", "pmap", "pprot+m"]
 kmer = [6]
 equate_il = [true, false]
 tryptic = [true, false]
@@ -139,6 +139,16 @@ features = ["mmap", "preloaded-proteins"]
 [[arms]]
 name = "ptext"
 features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
 
 [[arms]]
 # One instrumented arm, which used to be a suite of its own. `metrics` swaps the searcher's

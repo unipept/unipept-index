@@ -140,11 +140,18 @@ resident. It did not survive contact: reading a ramp means judging which of two 
 glance, at facet size, and in a screenshot; the residency ORDER still lives in `charts.ARM_ORDER`,
 where it can be read exactly instead of estimated from a tint.
 
-Before substituting any of them, re-run the data-viz validator — the arms are now a categorical
-palette, so they face the categorical gates (lightness band, chroma floor, CVD separation,
-normal-vision floor, contrast). The current three pass in both modes; light-mode green sits at
-2.74:1 on the surface, under the 3:1 contrast gate, and the documented relief applies — every chart
-here sits beside the table holding the same numbers, and every legend is labelled.
+There are five arms now, and the hues for the two newest are taken from the data-viz reference
+palette rather than invented — no ordering of five hand-picked ones cleared the gates.
+
+Before substituting any of them, re-run the data-viz validator — the arms are a categorical palette,
+so they face the categorical gates (lightness band, chroma floor, CVD separation, normal-vision
+floor, contrast). Validate them **in draw order**, `charts.ARM_ORDER`, not in the order the suite
+file declares them: bars and lines are judged on the ADJACENT pairlist, so which hue sits next to
+which is the question, and the same five hues pass or fail depending on it. The current five pass in
+both modes (worst adjacent CVD ΔE 9.1 light / 8.4 dark against an ≥8 target; normal-vision 22.9 /
+19.8 against ≥15). Three of them sit under 3:1 on the light surface and the documented relief
+applies — every chart here sits beside the table holding the same numbers, and every legend is
+labelled.
 
 ### Re-rendering without re-running
 

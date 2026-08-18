@@ -19,9 +19,17 @@ gains +65.3% at a 167G ceiling and +94.4% at 112G — a deployment knob, not a d
 scales with the fault rate. At 167G the curve is monotonic downward from 96 (96 > 128 > 192), so the
 peak is at or below 96. Major faults stayed flat across thread counts (0.24% spread).
 
-The arm list grew a third entry on 2026-08-18: `defaults` at b530143049 put the fully preloaded
-build 21-82% ahead of both mapped arms, so a thread-count recommendation derived from the two mapped
-arms alone is a recommendation for configurations that are no longer the fastest one unconstrained.
+The arm list grew twice on 2026-08-18: `defaults` at b530143049 put the fully preloaded build
+21-82% ahead of both mapped arms, and at 402fbcb546 `ptext` — mapped suffix array, preloaded text and
+metadata — tied with it. A thread-count recommendation derived from the two mapped arms alone is a
+recommendation for configurations that are no longer the fastest ones unconstrained.
+
+`ptext` is the one to watch here for a reason particular to this suite. Oversubscription pays by
+overlapping MAJOR FAULTS, and a fault is what a mapped structure takes when its page has been
+evicted. `ptext` maps the suffix array, so under a ceiling it faults like a mapped arm; the fully
+preloaded arm cannot fault on its own data at all and stalls in reclaim instead. There is no reason
+to assume oversubscription hides the second the way it hides the first, and no run so far has
+looked.
 
 WHICH REGIME THIS MEASURES, and it is only one. Every cell here runs `tryptic=false` on the mixed
 file, because a ceiling sweep cannot afford a workload axis as well. That is the regime in which
@@ -53,7 +61,7 @@ bracket it more finely, or add ceilings, at the cost of roughly an hour per cell
 """
 
 [defaults]
-runs = 40
+runs = 100
 amount = 10000
 peptides = "mixed"
 kmer_table = "k6"
@@ -81,3 +89,18 @@ features = ["mmap"]
 [[arms]]
 name = "pprot"
 features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

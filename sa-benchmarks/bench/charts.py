@@ -116,13 +116,18 @@ def series_color(slot: int, light: bool = False) -> str:
     return f"var({SERIES_VARS[slot % len(SERIES_VARS)]}{'-lt' if light else ''})"
 
 
-#: The storage arms, least resident first: `mmap` maps everything, `pprot` maps everything except
-#: the protein metadata, `ptext` also owns the protein text, `preloaded` owns it all in RAM.
+#: The storage arms, least resident first. They are cumulative, each named for the structure it adds
+#: to the one before: `mmap` maps everything; `pprot` owns the protein metadata; `ptext` owns the
+#: protein text as well; `pmap` the suffix-to-protein mapping as well, leaving only the suffix array
+#: mapped; `preloaded` owns that too.
+#:
+#: This sequence is also the order the arms are DRAWN, which is what the palette was validated
+#: against — see `ARM_HUE` and the comment on `--arm-1` in `html.py`.
 #:
 #: This fixes the order they are drawn in, so an arm keeps its place whatever a filter leaves on
 #: screen. It no longer sets a lightness ramp, and since `ptext` was inserted it no longer sets the
 #: hue either — see `ARM_HUE`.
-ARM_ORDER = ("mmap", "pprot", "ptext", "preloaded")
+ARM_ORDER = ("mmap", "pprot", "ptext", "pmap", "preloaded")
 
 #: Which `--arm-N` hue each arm takes, keyed by NAME rather than by position in `ARM_ORDER`.
 #:
@@ -130,7 +135,7 @@ ARM_ORDER = ("mmap", "pprot", "ptext", "preloaded")
 #: every arm after it — `preloaded` would have gone from green to purple because `ptext` was added
 #: in front of it, and a reader comparing this report against last month's would have had to notice
 #: that on their own. The two orderings are genuinely different questions and are now stored apart.
-ARM_HUE = {"mmap": 1, "pprot": 2, "preloaded": 3, "ptext": 4}
+ARM_HUE = {"mmap": 1, "pprot": 2, "preloaded": 3, "ptext": 4, "pmap": 5}
 
 
 def by_residency(arms: list[str]) -> list[str]:

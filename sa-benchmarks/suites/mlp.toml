@@ -63,7 +63,14 @@ Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner i
 """
 
 [defaults]
-runs = 20
+runs = 100
+# Page sweep, then 200k real queries. The sweep only warms what is MAPPED, so on an arm that
+# preloads a structure the one thing that arm exists to buy goes into the first timed cell cold.
+# `ram`/`threads` warm the pipeline and put `pprot` +14-16% over `mmap` on the mixed file; the matrix
+# suites did not and put the same pair at +0.3-9.6%. With `ptext` and `pmap` here — which preload
+# more than any other arm — measuring them behind a page sweep alone would understate exactly the
+# arms the suite was extended to compare.
+warmup = "all:200000"
 amount = 10000
 max_matches = 10000
 # `mixed` is the unbucketed 5..50 file — the query mix a server actually sees, and the one
@@ -76,7 +83,7 @@ name = "mlp"
 # `ofat` over a single knob is the curve: the shipped value plus every other value of it, with every
 # other SearchTuning field held at its default.
 strategy = "ofat"
-arms = ["preloaded", "mmap", "pprot"]
+arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
 kmer = [6]
 equate_il = [true]
 tryptic = [true, false]
@@ -96,9 +103,30 @@ features = []
 name = "mmap"
 features = ["mmap"]
 
+# `pprot` plus the protein text. This is the arm that closed the gap: at 402fbcb546 it tied fully
+# preloaded in 16 of 16 cells while `pprot` closed only 18%, because the text is read once per
+# residue compared and is the whole of the search cost, where the metadata is the whole of the
+# retrieval cost. Carried by every suite so that no knob is tuned only against configurations that
+# are no longer the fastest ones.
+
 [[arms]]
 # The middle ground, and the one that turned out to matter: everything mapped except the protein
 # store, which is the structure retrieval walks. Kept alongside the two extremes everywhere, because
 # a result that holds for both of them can still fail for the configuration actually deployed.
 name = "pprot"
 features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

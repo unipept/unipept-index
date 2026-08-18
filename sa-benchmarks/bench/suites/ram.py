@@ -185,18 +185,20 @@ def _verdict_tiles(report: Report, crossover: dict[str, list[tuple]], arms: list
     """The ceiling at which the arms swap places — the one number this suite exists to find.
 
     With more than two arms there is more than one pair and only one set of tiles, so one pair has
-    to carry them. The first pair that actually crosses wins that slot, because a resolved crossover
-    is the answer and a pair that never crosses is not; failing any crossing, the pair with the
-    widest gap anywhere does, since that is the comparison closest to becoming one. Every pair is
-    still printed in full in the readout above — this only decides what the headline says.
+    to carry them. A pair that crosses beats one that does not, because a resolved crossover is the
+    answer and a pair that never crosses is not; among several that do — or several that do not —
+    the widest gap anywhere wins, since that is either the most decisive crossing or the comparison
+    closest to becoming one.
+
+    Widest gap and not declaration order: once more than one pair can cross, taking the first would
+    make the headline depend on which arm the suite file happens to list first. Every pair is still
+    printed in full in the readout above — this only decides which one the headline speaks for.
     """
     if not crossover or len(arms) < 2:
         return
     crossings = {other: _crossing_of(series) for other, series in crossover.items()}
-    subject = next(
-        (other for other, crossing in crossings.items() if crossing),
-        max(crossover, key=lambda other: max(abs(entry[1]) for entry in crossover[other])),
-    )
+    widest_gap = {other: max(abs(entry[1]) for entry in series) for other, series in crossover.items()}
+    subject = max(crossover, key=lambda other: (crossings[other] is not None, widest_gap[other]))
     crossing, series = crossings[subject], crossover[subject]
     widest = max(series, key=lambda entry: abs(entry[1]))
     leader = subject if widest[1] > 0 else arms[0]

@@ -277,7 +277,11 @@ def _verdict_tiles(report: Report, cells: dict, arms: list[str]) -> None:
     a caller waits for — so it is the number that scales every verdict in every other suite, and it
     belongs where a reader meets it first rather than three folded sections down.
     """
-    shares, leaders = [], []
+    shares: list[float] = []
+    # The leading GROUP per cell, not the leading arm: a tie at the top has no single winner, and
+    # recording one arm from it would pick whichever noise put on top of the other.
+    leaders: list[tuple[str, ...]] = []
+    margins: list[float] = []
     for per_arm in cells.values():
         for arm, cell in per_arm.items():
             if arm not in arms:
@@ -285,14 +289,15 @@ def _verdict_tiles(report: Report, cells: dict, arms: list[str]) -> None:
             phases = [cell.get(name) or 0.0 for name in ("search_ms", "retrieval_ms", "response_ms")]
             if cell.get("response_ms") and sum(phases):
                 shares.append((phases[0] + phases[1]) / sum(phases) * 100)
-        ranked = sorted(
-            ((arm, cell) for arm, cell in per_arm.items() if arm in arms and cell.get("p50")),
-            key=lambda entry: -entry[1]["p50"],
-        )
+        present = [arm for arm in arms if arm in per_arm]
+        ranked = _ranked([per_arm.get(arm) for arm in present], present)
         if len(ranked) >= 2:
-            floor = floor_of(*(cell for _, cell in ranked))
-            if delta_pct(ranked[0][1]["p50"], ranked[1][1]["p50"]) > floor:
-                leaders.append(ranked[0][0])
+            group = _leading_group(ranked)
+            # Only when the group leaves something below it. A group covering every arm means the run
+            # separated nothing at all, which is the flat case and not a result to attribute to anyone.
+            if len(group) < len(ranked):
+                leaders.append(_named(group, arms))
+                margins.append(delta_pct(ranked[len(group) - 1][1]["p50"], ranked[len(group)][1]["p50"]))
 
     cell_count = len(cells)
     tiles = []
@@ -306,18 +311,35 @@ def _verdict_tiles(report: Report, cells: dict, arms: list[str]) -> None:
             "warn:read this first" if min(shares) < 50 else "",
         ))
     if leaders:
-        top = max(set(leaders), key=leaders.count)
-        tiles.append(("fastest arm", top, f"ahead in {leaders.count(top)} of {cell_count} cells", "good"))
+        # `sorted` before `max`, because set iteration order is hash-randomised: with two groups
+        # winning the same number of cells the headline would otherwise name a different one on each
+        # render of the same records.
+        top = max(sorted(set(leaders)), key=leaders.count)
+        won = leaders.count(top)
+        named = ", ".join(top)
+        if len(top) == 1:
+            tiles.append(("fastest arm", named, f"ahead in {won} of {cell_count} cells", "good"))
+            reading = (
+                f"`{named}` is ahead of the runner-up by more than the floor in {won} of "
+                f"{cell_count} cells."
+            )
+        else:
+            tiles.append(
+                ("fastest arms", named, f"tied, ahead of the rest in {won} of {cell_count} cells", "good")
+            )
+            reading = (
+                f"`{named}` cannot be separated from each other, and together they are ahead of every "
+                f"other arm by more than the floor in {won} of {cell_count} cells — by "
+                f"{median(margins):.0f}% at the median, measured from the slowest of them. A tie at "
+                f"the top is not the same as nothing separating: the arms below it are resolved, and "
+                f"which of the tied ones to ship is settled on what else they cost."
+            )
     else:
         tiles.append(("fastest arm", "none", f"0 of {cell_count} cells separate", "flat"))
-
-    reading = (
-        "No configuration separates from the others by more than its own noise floor — on this box "
-        "that floor is wider than any difference between the storage arms."
-        if not leaders
-        else f"`{max(set(leaders), key=leaders.count)}` is ahead of the runner-up by more than the "
-        f"floor in {leaders.count(max(set(leaders), key=leaders.count))} of {cell_count} cells."
-    )
+        reading = (
+            "No configuration separates from the others by more than its own noise floor — on this "
+            "box that floor is wider than any difference between the storage arms."
+        )
     if shares and min(shares) < 50:
         reading += (
             f" Read every other suite through the measured share: a knob that buys X% of search "
@@ -402,25 +424,68 @@ def _faults(values: list[dict | None], arms: list[str]) -> str:
     )
 
 
-def _verdict(values: list[dict | None], arms: list[str]) -> str:
-    """Which backend is ahead, once more than two of them can be.
-
-    The comparison that matters with three arms is the leader against the RUNNER-UP, not against a
-    fixed reference: a leader that beats the slowest arm by 30% while sitting inside the second's
-    floor has not been shown to lead.
-    """
-    ranked = sorted(
+def _ranked(values: list[dict | None], arms: list[str]) -> list[tuple[str, dict]]:
+    """The arms that produced a number, fastest first."""
+    return sorted(
         ((arm, cell) for arm, cell in zip(arms, values) if cell and cell["p50"]),
         key=lambda entry: -entry[1]["p50"],
     )
+
+
+def _leading_group(ranked: list[tuple[str, dict]]) -> list[str]:
+    """The arms at the top that this run cannot separate from each other.
+
+    The longest prefix of the ranking whose every member sits within `floor_of` of the fastest. With
+    a single clear winner that is one arm; with a tie at the top it is the whole tied set.
+
+    This exists because "who leads" and "what is the leading result" are different questions, and
+    only the first one used to be asked. A leader is recorded only when it beats the RUNNER-UP by
+    more than the floor — rightly, since beating the slowest arm by 30% while sitting inside the
+    second's floor is not leading. But when two arms tie at the top and two more sit a third behind,
+    that rule finds no leader and the report concluded "nothing separates", which was false and was
+    the opposite of the finding. The group is what makes the two cases distinguishable: it has one
+    member when someone leads, several when the top is tied, and every arm when the run genuinely
+    cannot tell any of them apart.
+    """
+    top = ranked[0][1]
+    group = []
+    for arm, cell in ranked:
+        if delta_pct(top["p50"], cell["p50"]) > floor_of(top, cell):
+            break
+        group.append(arm)
+    return group
+
+
+def _named(group: list[str], arms: list[str]) -> tuple[str, ...]:
+    """A leading group in the suite's declared arm order rather than in throughput order.
+
+    Two reasons, and the second is a correctness one. Reading order: the group then matches the
+    column order of the table under it. And identity: `_leading_group` returns its members fastest
+    first, so a pair that ties will come back in whichever order noise put them in — which differs
+    per cell, and would make one tied pair count as two distinct groups when the tile asks which
+    group won most often.
+    """
+    return tuple(sorted(group, key=arms.index))
+
+
+def _verdict(values: list[dict | None], arms: list[str]) -> str:
+    """Which backend is ahead, or which are tied at the top, once more than two of them can be."""
+    ranked = _ranked(values, arms)
     if len(ranked) < 2:
         return "-"
-    (best, top), (_, second) = ranked[0], ranked[1]
-    difference = delta_pct(top["p50"], second["p50"])
+    group = _leading_group(ranked)
     floor = floor_of(*(cell for _, cell in ranked))
-    if difference <= floor:
+
+    if len(group) == len(ranked):
         return f"cannot separate them (within the {floor:.1f}% floor)"
-    return f"{best} ahead by {difference:.1f}%"
+
+    # The margin is measured from the SLOWEST of the tied leaders, not the fastest: it is the part of
+    # the lead the run actually resolved, and quoting the best member's would credit the group with a
+    # difference between its own members that the floor says is not there.
+    margin = delta_pct(ranked[len(group) - 1][1]["p50"], ranked[len(group)][1]["p50"])
+    if len(group) == 1:
+        return f"{group[0]} ahead by {margin:.1f}%"
+    return f"{', '.join(_named(group, arms))} tied, ahead of the rest by {margin:.1f}%"
 
 
 def _regime_figure(

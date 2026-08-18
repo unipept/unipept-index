@@ -13,15 +13,25 @@ Preloaded memory is non-evictable anonymous memory, so under pressure it displac
 cache the mapped structures live in. Unconstrained that costs nothing and the residency is pure win;
 somewhere below it the trade inverts. This sweeps the ceiling down and looks for that crossover.
 
-The arm this is really about changed on 2026-08-18. It used to be `pprot`, on the strength of a
+The arm this is really about has changed twice. It used to be `pprot`, on the strength of a
 storage-axes A/B that put preloaded-proteins 21.5% ahead with the whole index resident. Then
-`defaults` at b530143049 put the FULLY preloaded arm 21-82% ahead of both mapped arms, resolved in
-16 of 16 cells — a lead that only appeared once `MADV_HUGEPAGE` was issued before the buffers were
-filled rather than after, which had been leaving 160 GB of suffix array and 43 GB of text on 4 KiB
-pages. So the question here is no longer "is preloaded metadata worth its RSS" but "how far down
-does the fully preloaded arm's lead survive": it wants 241 GB resident against mmap's 226 GB on a
-295 GB box, and it is the arm with the most to lose as the ceiling falls and the least room to
-absorb it. `pprot` stays in as the middle point between the two.
+`defaults` at b530143049 put the FULLY preloaded arm 21-82% ahead of both mapped arms, once
+`MADV_HUGEPAGE` was issued before the buffers were filled rather than after — it had been leaving
+160 GB of suffix array and 43 GB of text on 4 KiB pages.
+
+Then `defaults` at 402fbcb546 found `ptext` — mapped suffix array, preloaded text and metadata —
+tied with fully preloaded in 16 of 16 cells, and `pprot` closing only 18% of the gap. The
+decomposition was clean: the text is the whole search cost and the metadata the whole retrieval
+cost, while the suffix array, 72% of the index by size, contributes nothing measurable.
+
+So the question here is now specifically about `ptext`, and it is a question about EVICTABILITY
+rather than speed. Unconstrained the two are tied. But `ptext` pins ~78 GB of anonymous memory
+against fully preloaded's 241 GB, and keeps the suffix array and the mapping as page cache the
+kernel can reclaim — 171 GB the fully preloaded arm cannot give back at any price. If that makes
+`ptext` degrade more gently as the ceiling falls, it wins outright rather than tying, and this suite
+is the only thing that can say so. `pprot` stays in because every earlier conclusion here was drawn
+on it, and dropping it in the same run that adds its replacement would leave nothing to attribute a
+change to.
 
 WHICH REGIME THIS MEASURES, and it is only one. Every cell here runs `tryptic=false` on the mixed
 file, because a ceiling sweep cannot afford a workload axis as well. That is the regime in which
@@ -94,3 +104,18 @@ features = ["mmap"]
 [[arms]]
 name = "pprot"
 features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

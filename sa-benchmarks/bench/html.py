@@ -463,10 +463,17 @@ _STYLE = """
      floor). Light-mode green is 2.74:1 on the surface, under the 3:1 gate — the documented relief
      applies: every chart on this page sits beside the table holding the same numbers, and every
      legend is labelled. Re-run the validator before substituting any hue. */
-  /* arm-4 was added for `ptext` and is magenta rather than the violet a categorical scale would
-     reach for next, because violet is already `--void`. It has NOT been through the validator the
-     first three passed; re-run it before this palette is treated as settled. */
-  --arm-1: #2a78d6; --arm-2: #eb6834; --arm-3: #1baf7a; --arm-4: #be185d;
+  /* Five arms now, and the two added for `ptext` and `pmap` come from the data-viz reference
+     palette rather than being invented — slots 7 (violet) and 4 (yellow). Validated as a
+     categorical palette IN DRAW ORDER (mmap, pprot, ptext, pmap, preloaded), which is the pairlist
+     that matters for bars and lines: worst adjacent CVD ΔE 9.1 protan, normal-vision 22.9, both
+     clear. `mmap`, `pprot` and `preloaded` keep the hues they have always had; only `ptext` moved,
+     from a magenta that turned out to fail the dark-mode lightness band.
+     Three of the five sit under 3:1 on the light surface — the documented relief applies, and it is
+     already in force here: every chart sits beside the table holding the same numbers and every
+     legend is labelled. Re-run `validate_palette.js` before substituting any hue.
+     Violet is close to `--void`, which is table-cell text and never a chart mark. */
+  --arm-1: #2a78d6; --arm-2: #eb6834; --arm-3: #1baf7a; --arm-4: #4a3aa7; --arm-5: #eda100;
   --grid: #e3e6ea; --axisink: #6b7280;
   /* Diverging: blue and red poles reading as opposite, three steps each, neutral gray midpoint. */
   --div-mid: #f0efec;
@@ -487,7 +494,7 @@ _STYLE = """
     --s1-lt: #86b6ef; --s2-lt: #eaa084; --s3-lt: #74cbaf; --s4-lt: #e2bf6d; --s5-lt: #e9a1bb;
     /* The arm ramp re-stepped for the dark surface, and reversed with it: "more resident" has to
        move AWAY from the surface in both modes, so preloaded is the lightest step here. */
-    --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #f472b6;
+    --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #9085e9; --arm-5: #c98500;
     --grid: #262b33; --axisink: #9aa3af;
     --div-mid: #383835;
     --div-pos-1: #184f95; --div-pos-2: #2a78d6; --div-pos-3: #9ec5f4;
@@ -501,7 +508,7 @@ _STYLE = """
   --void: #c4b5fd;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
   --s1-lt: #86b6ef; --s2-lt: #eaa084; --s3-lt: #74cbaf; --s4-lt: #e2bf6d; --s5-lt: #e9a1bb;
-  --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #f472b6;
+  --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #9085e9; --arm-5: #c98500;
   --grid: #262b33; --axisink: #9aa3af;
   --div-mid: #383835;
   --div-pos-1: #184f95; --div-pos-2: #2a78d6; --div-pos-3: #9ec5f4;

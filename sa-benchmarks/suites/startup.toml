@@ -55,6 +55,12 @@ features = []
 name = "mmap"
 features = ["mmap"]
 
+# `pprot` plus the protein text. This is the arm that closed the gap: at 402fbcb546 it tied fully
+# preloaded in 16 of 16 cells while `pprot` closed only 18%, because the text is read once per
+# residue compared and is the whole of the search cost, where the metadata is the whole of the
+# retrieval cost. Carried by every suite so that no knob is tuned only against configurations that
+# are no longer the fastest ones.
+
 [[arms]]
 # Everything mapped except the protein store. The nine-way per-structure sweep that used to live
 # here answered which structures are worth preloading; it settled on this one, and re-running the
@@ -62,3 +68,18 @@ features = ["mmap"]
 # Add an arm back if a structure's storage becomes a live question again.
 name = "pprot"
 features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
