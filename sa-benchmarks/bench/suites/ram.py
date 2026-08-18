@@ -32,7 +32,10 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
         aligns=["<", "<", ">", ">", ">", ">", ">", ">", ">"],
         tips=tips_for(["arm", "qps", "band", "drift"]),
     )
-    crossover: list[tuple[str, float, float, str]] = []
+    # `arm after the first` -> its curve against the first arm, one entry per ceiling. A dict rather
+    # than a list because the suite may declare more than two arms, and each pair crosses (or fails
+    # to) independently.
+    crossover: dict[str, list[tuple[str, float, float, str]]] = {}
 
     for ceiling in ceilings:
         name = "none" if ceiling == 0 else f"{ceiling:g}G"
@@ -55,24 +58,30 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
                 gb(summary.rss_gb),
             )
 
-        if len(arms) == 2 and all(arm in present and present[arm].usable for arm in arms):
-            base, other = present[arms[0]], present[arms[1]]
-            difference = delta_pct(other.qps, base.qps)
-            floor = noise_floor(base, other)
-            call = verdict(difference, floor, better=arms[1], worse=arms[0])
-            crossover.append((name, difference, floor, call))
-            table.row("", f"-> {arms[1]} vs {arms[0]}", "", pct(difference), "", band(floor), "", "", call)
+        reference = present.get(arms[0])
+        for other_name in arms[1:]:
+            other = present.get(other_name)
+            if not (reference and reference.usable and other and other.usable):
+                continue
+            difference = delta_pct(other.qps, reference.qps)
+            floor = noise_floor(reference, other)
+            call = verdict(difference, floor, better=other_name, worse=arms[0])
+            crossover.setdefault(other_name, []).append((name, difference, floor, call))
+            table.row("", f"-> {other_name} vs {arms[0]}", "", pct(difference), "", band(floor), "", "", call)
 
     body.table(table, raw=True)
 
     if crossover:
         body.heading("crossover", level=3)
         readout = []
-        for index, (name, difference, floor, call) in enumerate(crossover):
-            mark = ""
-            if index and (crossover[index - 1][1] > 0) != (difference > 0):
-                mark = "   <-- SIGN CHANGE from the previous ceiling"
-            readout.append(f"  {name:>6s}: {difference:+6.1f}%  (floor {floor:.1f}% -> {call}){mark}")
+        for other_name, series in crossover.items():
+            if len(crossover) > 1:
+                readout.append(f"  {other_name} vs {arms[0]}:")
+            for index, (name, difference, floor, call) in enumerate(series):
+                mark = ""
+                if index and (series[index - 1][1] > 0) != (difference > 0):
+                    mark = "   <-- SIGN CHANGE from the previous ceiling"
+                readout.append(f"  {name:>6s}: {difference:+6.1f}%  (floor {floor:.1f}% -> {call}){mark}")
         body.lines(readout)
 
     _verdict_tiles(report, crossover, arms)
@@ -155,30 +164,46 @@ def _unfit_arms(out_dir: Path) -> dict[float, set[str]]:
     return unfit
 
 
-def _verdict_tiles(report: Report, crossover: list[tuple], arms: list[str]) -> None:
-    """The ceiling at which the arms swap places — the one number this suite exists to find.
+def _crossing_of(series: list[tuple[str, float, float, str]]) -> str | None:
+    """The ceiling at which one pair swaps places, or None.
 
     A crossover is a SIGN CHANGE that also clears its floor on both sides. A sign change inside the
     floor is two unresolved cells in a row, not a crossing, and reporting it as one would hand an
     operator a memory budget the run never actually measured.
     """
-    if not crossover or len(arms) < 2:
-        return
-    crossing = next(
+    return next(
         (
-            crossover[index][0]
-            for index in range(1, len(crossover))
-            if (crossover[index - 1][1] > 0) != (crossover[index][1] > 0)
-            and abs(crossover[index][1]) > crossover[index][2]
+            series[index][0]
+            for index in range(1, len(series))
+            if (series[index - 1][1] > 0) != (series[index][1] > 0) and abs(series[index][1]) > series[index][2]
         ),
         None,
     )
-    widest = max(crossover, key=lambda entry: abs(entry[1]))
-    leader = arms[1] if widest[1] > 0 else arms[0]
+
+
+def _verdict_tiles(report: Report, crossover: dict[str, list[tuple]], arms: list[str]) -> None:
+    """The ceiling at which the arms swap places — the one number this suite exists to find.
+
+    With more than two arms there is more than one pair and only one set of tiles, so one pair has
+    to carry them. The first pair that actually crosses wins that slot, because a resolved crossover
+    is the answer and a pair that never crosses is not; failing any crossing, the pair with the
+    widest gap anywhere does, since that is the comparison closest to becoming one. Every pair is
+    still printed in full in the readout above — this only decides what the headline says.
+    """
+    if not crossover or len(arms) < 2:
+        return
+    crossings = {other: _crossing_of(series) for other, series in crossover.items()}
+    subject = next(
+        (other for other, crossing in crossings.items() if crossing),
+        max(crossover, key=lambda other: max(abs(entry[1]) for entry in crossover[other])),
+    )
+    crossing, series = crossings[subject], crossover[subject]
+    widest = max(series, key=lambda entry: abs(entry[1]))
+    leader = subject if widest[1] > 0 else arms[0]
 
     if crossing:
         status, reading = "good", (
-            f"`{arms[1]}` and `{arms[0]}` swap places at the **{crossing}** ceiling, and the swap "
+            f"`{subject}` and `{arms[0]}` swap places at the **{crossing}** ceiling, and the swap "
             f"clears its floor on both sides. That is the memory budget the deployment choice turns "
             f"on: above it the arms are interchangeable, below it they are not."
         )
@@ -192,7 +217,7 @@ def _verdict_tiles(report: Report, crossover: list[tuple], arms: list[str]) -> N
         [
             ("crossover at", crossing or "none", "memory ceiling", status),
             ("widest gap", f"{widest[1]:+.1f}%", f"at {widest[0]}, floor ±{widest[2]:.1f}%", ""),
-            ("leader there", leader, "of the two mapped arms", ""),
+            ("leader there", leader, f"of {subject} vs {arms[0]}", ""),
         ],
         reading,
     )

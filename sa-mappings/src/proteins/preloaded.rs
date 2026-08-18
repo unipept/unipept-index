@@ -28,8 +28,15 @@ use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINAT
 /// All protein metadata held in owned memory, plus the concatenated text.
 ///
 /// `T` is the text backend. At [`InMemoryProteinText`] metadata and text are both owned; it may
-/// instead be instantiated at `MmapBackedProteinText` to keep the (much larger) metadata in RAM
-/// while the text stays mapped. The two axes are independent.
+/// instead be instantiated at `MmapBackedProteinText` to keep the metadata in RAM while the text
+/// stays mapped. The two axes are independent.
+///
+/// That pairing is not about size — the metadata is the *smaller* section by five times, 8.29 GB
+/// against a 43.34 GB text on the 2025-04 index. It is about access shape. Retrieval reads one
+/// metadata record per hit, at an index the suffix array hands it, so the reads are random across
+/// the whole section and each one is a page the kernel cannot predict. The text is read in short
+/// contiguous runs — a peptide's worth of residues from wherever the candidate starts — so a
+/// mapped text reuses the page it just faulted and a mapped metadata table does not.
 pub struct InMemoryProteins<T> {
     /// The concatenated protein text the suffix array is built over.
     pub text: T,

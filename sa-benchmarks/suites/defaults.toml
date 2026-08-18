@@ -42,9 +42,23 @@ a parameter sweep want opposite things from a run. The gate wants few cells at h
 3% move is visible; the sweep wants many cells at whatever precision fits the budget. One grid
 cannot be both, and when it tried, it was the gate that lost.
 
-Read the `noise` column before the `mmap/pre` column. The measured run-to-run noise floor on the
-full database is 3.9%, and any delta below that — or below a cell's own measured band — is noise,
-not signal.
+Read the `noise` column before the ratio columns. It is the widest of the cell's own rep band, the
+gap between the two invocations the palindrome ordering gives each arm, and the measured 3.9%
+full-database floor. Any delta below it is noise, not signal.
+
+WHAT THIS SUITE LAST FOUND (b530143049, 2026-08-18): the fully preloaded arm leads both mapped arms
+by 21-82%, resolved in 16 of 16 cells against a median floor of 13.8%. It is worth knowing how close
+that came to being missed. The run before it (fbc6615a5b) had preloaded and `pprot` tied in all 16
+cells, and the tie was not physics — it was `MADV_HUGEPAGE` being issued after `read_binary` had
+already filled the buffers, which left 160 GB of suffix array and 43 GB of text on 4 KiB pages on a
+box whose THP setting is `madvise`. Moving the advice ahead of the fill was the entire difference:
+preloaded moved 1.26-1.83x while `mmap` moved 1.01x and `pprot` 0.95x, and the instrumented arm's
+`examined` counts are byte-identical across the two runs, so it is the same work done faster.
+
+Two habits come out of that. Read the arm ratios against `noise` and not against each other — the
+floor doubled between those runs, because it now carries between-invocation spread, and the effect
+still cleared it. And when an arm that holds strictly more in RAM fails to beat one that holds less,
+treat it as a bug in the arm rather than a fact about the index, because that is what it was.
 
 Held values are not assumed: the run records every `SearchTuning` field and the summary prints back
 what these cells actually ran at. If that line does not read the shipped values, this run was not

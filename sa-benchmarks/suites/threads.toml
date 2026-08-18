@@ -19,6 +19,10 @@ gains +65.3% at a 167G ceiling and +94.4% at 112G — a deployment knob, not a d
 scales with the fault rate. At 167G the curve is monotonic downward from 96 (96 > 128 > 192), so the
 peak is at or below 96. Major faults stayed flat across thread counts (0.24% spread).
 
+The arm list grew a third entry on 2026-08-18: `defaults` at b530143049 put the fully preloaded
+build 21-82% ahead of both mapped arms, so a thread-count recommendation derived from the two mapped
+arms alone is a recommendation for configurations that are no longer the fastest one unconstrained.
+
 Read it this way:
 
   * `majflt` should stay FLAT across thread counts at a given ceiling. Threads change how many
@@ -48,6 +52,15 @@ no_theoretical_memory = true
 ceiling_gb = [0, 167, 112]
 # "default" leaves RAYON_NUM_THREADS unset, i.e. one thread per core.
 threads = ["default", 48, 96]
+
+# The fully preloaded arm is here because oversubscription's whole mechanism is overlapping major
+# faults, and this arm takes none of the same kind: its pages are anonymous, so under a ceiling it
+# is the kernel's swap and reclaim path that stalls it rather than a file-backed refault. Whether
+# the +65-94% oversubscription wins the mapped arms show reproduce there at all is not something
+# the other two can answer.
+[[arms]]
+name = "preloaded"
+features = []
 
 [[arms]]
 name = "mmap"

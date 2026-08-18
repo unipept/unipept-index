@@ -325,6 +325,20 @@ impl ReadBinaryMmap for super::InMemoryProteins<MmapBackedProteinText> {
         let mmap = map_file(path)?;
         let l = layout(&mmap)?;
         let text = MmapBackedProteinText::from_mmap(Arc::clone(&mmap), l.text_data_offset, l.text_length);
+
+        // Stream the metadata section in before parsing it, rather than letting the parser demand
+        // page it. `map_file` sets `MADV_RANDOM` for the query workload this mapping exists to
+        // serve, and `read_metadata_section` then walks the section with one `read_exact` per
+        // 16-byte entry — so with readahead disabled it faults 8 GB in through ~200 M sixteen-byte
+        // reads. Cold, that measured 38.8 MB/s against the ~530 MB/s the same parser reaches over
+        // the same bytes from a `BufReader`, and it cost this configuration 218.9 s of a 536.7 s
+        // startup (`startup`, b530143049). It went unnoticed for as long as it did because the
+        // suite ran this arm behind the mapped one, whose page sweep left the section warm.
+        //
+        // `touch_all_pages` is the right helper and not just a convenient one: it brackets the walk
+        // with `MADV_SEQUENTIAL` and restores `MADV_RANDOM` afterwards, which is exactly the
+        // temporary reversal wanted for one bulk copy out of a mapping tuned for random access.
+        let _ = text_compression::mmap::touch_all_pages(&mmap, l.meta_offset..mmap.len());
         let proteins = read_metadata_section(&mut &mmap[l.meta_offset..])?;
 
         Ok(Self::new(text, proteins))

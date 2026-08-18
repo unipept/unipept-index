@@ -57,20 +57,28 @@ def write_cell(out_dir: Path, dims: dict, qps: float, majflt: int, rss_gb: float
 
 
 def build_ram(root: Path) -> Path:
-    """A crossover: pprot ahead while resident, mmap ahead under pressure. Plus a void and an OOM."""
+    """A crossover: pprot ahead while resident, mmap ahead under pressure. Plus a void and an OOM.
+
+    `preloaded` is here because the suite declares it first and every comparison is drawn against
+    the first arm — a fixture missing it would exercise none of them. It is given the shape the real
+    sweep expects of it and the analysis must not assume: furthest ahead unconstrained, furthest
+    behind under a cap, since its residency is anonymous memory that cannot be evicted to make room.
+    """
     out_dir = root / "ram"
-    for ceiling, mmap_qps, pprot_qps, majflt in [
-        (0, 100_000, 121_000, 0),
-        (223, 98_000, 118_000, 200),
-        (167, 60_000, 55_000, 24_000),
-        (112, 31_000, 22_000, 51_000),
+    for ceiling, preloaded_qps, mmap_qps, pprot_qps, majflt in [
+        (0, 150_000, 100_000, 121_000, 0),
+        (223, 140_000, 98_000, 118_000, 200),
+        (167, 45_000, 60_000, 55_000, 24_000),
+        (112, 18_000, 31_000, 22_000, 51_000),
     ]:
         rss = 240 if ceiling == 0 else ceiling * 0.98
         for slot, arm, value in [
-            ("a", "mmap", mmap_qps),
-            ("b", "pprot", pprot_qps),
-            ("c", "pprot", pprot_qps * 1.01),
-            ("d", "mmap", mmap_qps * 0.99),
+            ("a", "preloaded", preloaded_qps),
+            ("b", "mmap", mmap_qps),
+            ("c", "pprot", pprot_qps),
+            ("d", "pprot", pprot_qps * 1.01),
+            ("e", "mmap", mmap_qps * 0.99),
+            ("f", "preloaded", preloaded_qps * 1.01),
         ]:
             write_cell(out_dir, {"ceiling_gb": ceiling, "arm": arm, "slot": slot, "features": "mmap"}, value, majflt, rss)
 
@@ -84,11 +92,16 @@ def build_ram(root: Path) -> Path:
 
 
 def build_threads(root: Path) -> Path:
-    """Oversubscription costs ~10% unconstrained and pays ~60% under a ceiling, faults flat."""
+    """Oversubscription costs ~10% unconstrained and pays ~60% under a ceiling, faults flat.
+
+    Three arms, matching what the suite declares — the comparison columns are drawn against the
+    first one, so a two-arm fixture would leave every one of them empty and the checks below with
+    nothing to find.
+    """
     out_dir = root / "threads"
     for ceiling in (0, 167, 112):
         for threads, factor in [("default", 1.0), ("48", 1.3 if ceiling else 0.95), ("96", 1.6 if ceiling else 0.90)]:
-            for arm, base in (("mmap", 60_000), ("pprot", 57_000)):
+            for arm, base in (("preloaded", 72_000), ("mmap", 60_000), ("pprot", 57_000)):
                 write_cell(
                     out_dir,
                     {"ceiling_gb": ceiling, "threads": threads, "arm": arm, "features": "mmap"},

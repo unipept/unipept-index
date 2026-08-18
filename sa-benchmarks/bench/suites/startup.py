@@ -106,18 +106,27 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
             "warmup",
             "GB swept",
             "GB/s",
-            "majflt",
+            "sweep majflt",
             "total",
             "RSS GB",
         ],
         aligns=["<"] + [">"] * (len(PHASES) + 7),
+        tips={
+            "GB swept": "Bytes the page sweep touched. 0 means the arm has nothing mapped, which is "
+            "a different statement from sweeping quickly.",
+            "GB/s": "The sweep's own bytes per second. Two arms sweeping the same structure must "
+            "land at the same rate; an order of magnitude apart means one was handed a warm cache.",
+            "sweep majflt": "Major faults during the PAGE SWEEP only — a cold sweep takes them, a "
+            "warm one does not. The load phase has its own count, `load_major_faults` in the JSON, "
+            "which is where a preloaded arm's disk reads show up.",
+        },
     )
     # Suite order, not alphabetical: the arms are listed from fully preloaded to fully mapped, and
     # that ordering is what makes the trade visible down the column.
     for arm in suite.arms:
         summary = summaries.get(arm.name)
         if summary is None:
-            table.row(arm.name, *["-"] * (len(PHASES) + 4))
+            table.row(arm.name, *["-"] * (len(PHASES) + 7))
             continue
         startup = summary.startup
         load = startup.get("load_total_ms")

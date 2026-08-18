@@ -3,6 +3,8 @@
 Two questions are answered side by side, and they are not the same question. Down a column: does
 oversubscription pay at this ceiling, and where does it peak. Across the arms: does the storage
 choice still matter once faults are overlapped.
+
+Any number of arms works; each is compared against the first one the suite declares.
 """
 
 from __future__ import annotations
@@ -60,8 +62,12 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
         headers = ["threads"]
         for arm in arms:
             headers += [f"{arm} qps", "vs dflt"]
-        if len(arms) == 2:
-            headers.append(f"{arms[1]} vs {arms[0]}")
+        # One comparison column per arm after the first, all against that first arm — the same shape
+        # `defaults` uses for its ratio columns. A fixed reference is what makes the suite's own
+        # reading rule work ("the sign must hold across every thread count at a ceiling"); a
+        # leader-vs-runner-up column would change which pair it names from row to row and the rule
+        # would have nothing to hold onto.
+        headers += [f"{other} vs {arms[0]}" for other in arms[1:]]
         headers += [f"majflt {arm}" for arm in arms] + ["RSS GB"]
         table = Table(headers=headers, aligns=["<"] + [">"] * (len(headers) - 1))
 
@@ -85,11 +91,12 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
                 if summary.usable and (arm not in best or summary.qps > best[arm][1]):
                     best[arm] = (threads, summary.qps)
 
-            if len(arms) == 2:
-                left, right = here[arms[0]], here[arms[1]]
-                if left and right and left.usable and right.usable:
-                    difference = delta_pct(right.qps, left.qps)
-                    floor = noise_floor(left, right)
+            reference = here.get(arms[0])
+            for other in arms[1:]:
+                right = here.get(other)
+                if reference and right and reference.usable and right.usable:
+                    difference = delta_pct(right.qps, reference.qps)
+                    floor = noise_floor(reference, right)
                     row.append(f"{pct(difference)} (floor {floor:.1f}%)")
                 else:
                     row.append("-")
