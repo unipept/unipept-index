@@ -117,11 +117,20 @@ def series_color(slot: int, light: bool = False) -> str:
 
 
 #: The storage arms, least resident first: `mmap` maps everything, `pprot` maps everything except
-#: the protein store, `preloaded` owns it all in RAM.
+#: the protein metadata, `ptext` also owns the protein text, `preloaded` owns it all in RAM.
 #:
-#: The order is what fixes each arm's hue and the order they are drawn in, so an arm keeps its
-#: colour whatever a filter leaves on screen. It no longer sets a lightness ramp — see `arm_color`.
-ARM_ORDER = ("mmap", "pprot", "preloaded")
+#: This fixes the order they are drawn in, so an arm keeps its place whatever a filter leaves on
+#: screen. It no longer sets a lightness ramp, and since `ptext` was inserted it no longer sets the
+#: hue either — see `ARM_HUE`.
+ARM_ORDER = ("mmap", "pprot", "ptext", "preloaded")
+
+#: Which `--arm-N` hue each arm takes, keyed by NAME rather than by position in `ARM_ORDER`.
+#:
+#: Position used to decide it, which meant inserting an arm in residency order silently recoloured
+#: every arm after it — `preloaded` would have gone from green to purple because `ptext` was added
+#: in front of it, and a reader comparing this report against last month's would have had to notice
+#: that on their own. The two orderings are genuinely different questions and are now stored apart.
+ARM_HUE = {"mmap": 1, "pprot": 2, "preloaded": 3, "ptext": 4}
 
 
 def by_residency(arms: list[str]) -> list[str]:
@@ -148,9 +157,9 @@ def arm_color(arm: str) -> str:
     An arm the scale does not name falls back to the neutral axis ink rather than to a hue that
     already means another arm.
     """
-    if arm not in ARM_ORDER:
+    if arm not in ARM_HUE:
         return "var(--axisink)"
-    return f"var(--arm-{ARM_ORDER.index(arm) + 1})"
+    return f"var(--arm-{ARM_HUE[arm]})"
 
 
 @dataclass

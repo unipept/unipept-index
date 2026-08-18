@@ -463,7 +463,10 @@ _STYLE = """
      floor). Light-mode green is 2.74:1 on the surface, under the 3:1 gate — the documented relief
      applies: every chart on this page sits beside the table holding the same numbers, and every
      legend is labelled. Re-run the validator before substituting any hue. */
-  --arm-1: #2a78d6; --arm-2: #eb6834; --arm-3: #1baf7a;
+  /* arm-4 was added for `ptext` and is magenta rather than the violet a categorical scale would
+     reach for next, because violet is already `--void`. It has NOT been through the validator the
+     first three passed; re-run it before this palette is treated as settled. */
+  --arm-1: #2a78d6; --arm-2: #eb6834; --arm-3: #1baf7a; --arm-4: #be185d;
   --grid: #e3e6ea; --axisink: #6b7280;
   /* Diverging: blue and red poles reading as opposite, three steps each, neutral gray midpoint. */
   --div-mid: #f0efec;
@@ -484,7 +487,7 @@ _STYLE = """
     --s1-lt: #86b6ef; --s2-lt: #eaa084; --s3-lt: #74cbaf; --s4-lt: #e2bf6d; --s5-lt: #e9a1bb;
     /* The arm ramp re-stepped for the dark surface, and reversed with it: "more resident" has to
        move AWAY from the surface in both modes, so preloaded is the lightest step here. */
-    --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70;
+    --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #f472b6;
     --grid: #262b33; --axisink: #9aa3af;
     --div-mid: #383835;
     --div-pos-1: #184f95; --div-pos-2: #2a78d6; --div-pos-3: #9ec5f4;
@@ -498,7 +501,7 @@ _STYLE = """
   --void: #c4b5fd;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
   --s1-lt: #86b6ef; --s2-lt: #eaa084; --s3-lt: #74cbaf; --s4-lt: #e2bf6d; --s5-lt: #e9a1bb;
-  --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70;
+  --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #f472b6;
   --grid: #262b33; --axisink: #9aa3af;
   --div-mid: #383835;
   --div-pos-1: #184f95; --div-pos-2: #2a78d6; --div-pos-3: #9ec5f4;

@@ -96,7 +96,7 @@ strategy = "base"
 # Only here — it is expensive, and it is the one measurement that says what
 # fraction of a real request every other suite's throughput actually describes.
 response = true
-arms = ["preloaded", "mmap", "pprot", "pprot+m"]
+arms = ["preloaded", "mmap", "pprot", "ptext", "pprot+m"]
 kmer = [6]
 equate_il = [true, false]
 tryptic = [true, false]
@@ -115,6 +115,30 @@ features = ["mmap"]
 # a result that holds for both of them can still fail for the configuration actually deployed.
 name = "pprot"
 features = ["mmap", "preloaded-proteins"]
+
+# Everything `pprot` preloads, plus the protein TEXT. Added 2026-08-18 to answer one question:
+# where the rest of the gap to `preloaded` is.
+#
+# The pooled phase split at 85c2e772b1 put the two mapped arms 1.52x and 1.08x behind `preloaded` in
+# RETRIEVAL — so `pprot` closes ~85% of that gap, which is what preloading the metadata is for — and
+# 1.54x and 1.57x behind it in SEARCH, where `pprot` closes nothing at all. It cannot: it maps the
+# suffix array and the text exactly as `mmap` does. All that is left of the gap is search, and the
+# two structures search reads are the SA (160.23 GB) and the text (43.34 GB).
+#
+# There is no `preloaded-sa` (see `sa-server/src/backends.rs`) — the suffix array follows `mmap`
+# alone — so this arm is the only way to separate the two. It differs from `pprot` in the text and
+# in nothing else, so the search delta between them IS the text's contribution and whatever is left
+# over is the SA's. If search collapses here, most of preloading's win is reachable while leaving
+# 160 GB mapped; if it does not move, the cost is in the SA and only the fully preloaded build
+# reaches it.
+#
+# The per-structure sweep that once answered this was retired after it settled on `pprot` — but that
+# was settled BEFORE the huge-page ordering fix, i.e. while preloading was crippled by having its
+# `MADV_HUGEPAGE` issued after the buffers were already faulted in. `startup.toml` says to add an
+# arm back when a structure's storage becomes a live question again. It has.
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
 
 [[arms]]
 # One instrumented arm, which used to be a suite of its own. `metrics` swaps the searcher's
