@@ -118,7 +118,13 @@ use text_compression::ProteinTextBackend as _;
 ///     The isolated decoder cost is no longer a field here: it is not a request phase, and
 ///     `cargo bench -p fa-compression` measures it properly. `total_duration_ns` and
 ///     `throughput_qps` are unchanged and still mean search plus retrieval.
-const SCHEMA_VERSION: u32 = 13;
+/// v14: `stats` gains `search_p50_ns` / `retrieval_p50_ns` / `response_p50_ns`, the phase times
+///     pooled over the same reps as `qps_p50`. Readers previously took the phase split off
+///     `result`, which is a single rep, and printed it beside a throughput pooled over twenty —
+///     so the two could disagree, and on the mixed file they disagreed in direction. Records
+///     written before v14 have no such fields and readers must fall back to `result`, which is
+///     what they always did.
+const SCHEMA_VERSION: u32 = 14;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -521,7 +527,24 @@ struct RunStats {
     qps_p10: f64,
     qps_p50: f64,
     qps_p90: f64,
-    qps_max: f64
+    qps_max: f64,
+
+    /// Median phase times across the same reps `qps_p50` is taken over.
+    ///
+    /// These exist because the alternative was reading the phase split off `result`, which is one
+    /// rep — the representative one. A phase decomposition drawn from a single rep and printed
+    /// beside a throughput pooled over twenty of them can disagree with it, and on the mixed file
+    /// it did: the phase times made `pprot` 11% slower than `mmap` where the pooled qps made it
+    /// 0.3-2.8% faster. Whichever was right, a table that answers "where does this configuration
+    /// spend itself" has to rest on the same reps as the table that says how fast it is.
+    ///
+    /// The candidate counters stay on `result` and are deliberately not aggregated: they count work
+    /// the search did, which is a property of the configuration rather than of a rep, so every rep
+    /// reports the same value and a median of them says nothing new.
+    search_p50_ns: u64,
+    retrieval_p50_ns: u64,
+    /// 0 unless the cell set `response`, matching [`BenchmarkResult::response_duration_ns`].
+    response_p50_ns: u64
 }
 
 #[derive(Serialize)]
@@ -559,6 +582,20 @@ fn band_of(results: &[BenchmarkResult]) -> f64 {
 }
 
 /// Linear-interpolated percentile of an already-sorted (ascending) slice. `p` in [0, 1].
+/// Median of one field across a cell's reps, in nanoseconds.
+///
+/// Sorts a copy rather than the results themselves: the caller still needs them in their original
+/// order to pick the representative rep, and a helper that reorders its input behind the caller's
+/// back is the kind of thing that works until someone adds a second call to it.
+fn median_ns(results: &[BenchmarkResult], field: impl Fn(&BenchmarkResult) -> u64) -> u64 {
+    if results.is_empty() {
+        return 0;
+    }
+    let mut values: Vec<f64> = results.iter().map(|r| field(r) as f64).collect();
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    percentile(&values, 0.50) as u64
+}
+
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     match sorted.len() {
         0 => 0.0,
@@ -1168,13 +1205,20 @@ fn run_cell(
 
     let mut qps: Vec<f64> = results.iter().map(|r| r.throughput_qps).collect();
     qps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Each phase is pooled over the same reps as `qps_p50`, and independently of the others: the
+    // median search time and the median retrieval time need not come from the same rep, and forcing
+    // them to would be picking one rep again under another name. They are read as "what this phase
+    // typically cost", not as a decomposition of any single request.
     let stats = RunStats {
         runs: results.len() as u32,
         qps_min: qps[0],
         qps_p10: percentile(&qps, 0.10),
         qps_p50: percentile(&qps, 0.50),
         qps_p90: percentile(&qps, 0.90),
-        qps_max: *qps.last().unwrap()
+        qps_max: *qps.last().unwrap(),
+        search_p50_ns: median_ns(&results, |r| r.search_duration_ns),
+        retrieval_p50_ns: median_ns(&results, |r| r.retrieval_duration_ns),
+        response_p50_ns: median_ns(&results, |r| r.response_duration_ns)
     };
     let band = if stats.qps_p50 > 0.0 { (stats.qps_p90 - stats.qps_p10) / 2.0 / stats.qps_p50 * 100.0 } else { 0.0 };
 
@@ -1479,8 +1523,26 @@ fn run_matrix(
     let (minflt_before_warmup, majflt_before_warmup) = page_faults();
     let warmup_start = Instant::now();
     let sweeps = warmup_touch_pages(&searcher);
-    startup.warmup_ms = warmup_start.elapsed().as_millis() as u64;
     record_sweep(&mut startup, sweeps);
+
+    // Then the pipeline half, if the suite asked for one. Matrix mode used to ignore `--warmup`
+    // entirely and page-sweep only, which is not the same warmup the single-mode suites get — and
+    // the difference falls on one arm. A page sweep touches mapped pages; a build that PRELOADS a
+    // structure has it in anonymous memory, where no sweep reaches it, so the only thing that warms
+    // it is running real queries. `ram` and `threads` do that (`warmup = "all:1000000"`) and put
+    // `pprot` +14-16% over `mmap` on the mixed file; the matrix suites did not and put the same
+    // comparison on the same file at +0.3-9.6%. Whether that is the whole explanation is what the
+    // re-run this was added for will say, but the two modes could not be compared until they warmed
+    // the same way.
+    //
+    // The pipeline warms at the top-level `--equate-il` / `--tryptic` / `--max-matches`, not at each
+    // cell's: a grid has many cells and one warmup, so there is no per-cell value to use. That is
+    // fine for warming — the structures touched are the same whatever the search options say.
+    if let Some(WarmupMode::Count(count) | WarmupMode::AllThenCount(count)) = &args.warmup {
+        warmup_pipeline(&searcher, args, *count)?;
+    }
+
+    startup.warmup_ms = warmup_start.elapsed().as_millis() as u64;
     let (minflt_after_warmup, majflt_after_warmup) = page_faults();
     startup.warmup_minor_faults = minflt_after_warmup.saturating_sub(minflt_before_warmup);
     startup.warmup_major_faults = majflt_after_warmup.saturating_sub(majflt_before_warmup);

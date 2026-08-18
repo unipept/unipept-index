@@ -349,14 +349,15 @@ def _regime_table(
     # one `ratio` column it always was; with three it stays readable, where a single ratio would
     # have to pick two of them and quietly drop the third.
     ratios = [f"{arm}/{arms[0]}" for arm in arms[1:]]
-    headers = ["file", *columns, *arms, *ratios, "noise", "verdict"]
+    headers = ["file", *columns, *arms, *ratios, "majflt", "noise", "verdict"]
     table = Table(
         headers=headers,
-        aligns=["<"] * (len(columns) + 1) + [">"] * (len(arms) + len(ratios) + 1) + ["<"],
+        aligns=["<"] * (len(columns) + 1) + [">"] * (len(arms) + len(ratios) + 2) + ["<"],
         chips=["file", *columns],
         tips={
             **tips_for(headers),
             **{name: RATIO_TIP.format(name=name) for name in ratios},
+            "majflt": MAJFLT_TIP,
         },
     )
     for source in sources:
@@ -367,6 +368,7 @@ def _regime_table(
                 *_coords(key, columns),
                 *(qps(value["p50"]) if value else "-" for value in values),
                 *(ratio_of([values[0], value]) for value in values[1:]),
+                _faults(values, arms),
                 band(floor_of(*(value for value in values if value))),
                 _verdict(values, arms),
             )
@@ -377,6 +379,27 @@ RATIO_TIP = (
     "`{name}` at the median. 1.00x means they measured the same. Only meaningful once its distance "
     "from 1.00 exceeds the noise column."
 )
+
+MAJFLT_TIP = (
+    "Major faults per rep in the timed region, per arm in column order — the mechanism check for "
+    "any ratio beside it. An arm gap that moves with these is residency: the arm is waiting on the "
+    "device. A gap with the faults flat at zero is not, and is something else entirely."
+)
+
+
+def _faults(values: list[dict | None], arms: list[str]) -> str:
+    """Major faults per rep, one figure per arm, in the same order as the throughput columns.
+
+    One column rather than one per arm: on a box where the index fits these are zero everywhere and
+    would be three columns of noughts, and the moment they are not zero the reader wants to compare
+    them against each other rather than read them individually. `0` for every arm is the common and
+    correct answer, and saying it once is enough.
+    """
+    if not any(value and value.get("major_faults") for value in values):
+        return "0"
+    return " / ".join(
+        f"{value['major_faults']:,.0f}" if value and value.get("major_faults") is not None else "-" for value in values
+    )
 
 
 def _verdict(values: list[dict | None], arms: list[str]) -> str:

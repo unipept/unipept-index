@@ -175,7 +175,7 @@ def by_cell(
     *,
     correct_drift: bool = False,
 ) -> dict[tuple, dict[str, dict]]:
-    """`(coordinate tuple) -> arm -> {p10, p50, p90, search_ms, retrieval_ms, floor}`.
+    """`(coordinate tuple) -> arm -> {p10, p50, p90, search_ms, retrieval_ms, major_faults, floor}`.
 
     Cells are keyed on `config`, not on `dims`: a matrix invocation sweeps the grid *inside* one
     process, so every record from one arm shares that arm's dims and only the config tells them
@@ -185,10 +185,11 @@ def by_cell(
     searcher knob (`mlp_batch`) is found the same way as one that is not (`equate_il`) — and moving
     a field into `SearchTuning` later would not break this.
 
-    The two phase timings come along because throughput alone cannot say WHERE a configuration
-    spends itself. In matrix mode `result` is the median-qps rep, so these describe that rep rather
-    than the pooled median — close enough to read the split from, and the only phase numbers an
-    uninstrumented build produces at all.
+    The phase timings come along because throughput alone cannot say WHERE a configuration spends
+    itself. From schema v14 they are pooled over the same reps as the throughput; before it they
+    were the representative rep's, and `_phase_ms` still falls back to those. That distinction was
+    not academic — on the mixed file the single-rep split made `pprot` 11% slower than `mmap` where
+    the pooled throughput beside it made `pprot` faster.
 
     Under palindrome ordering an arm runs the whole grid twice, so a `(key, arm)` pair has one
     record per slot. Both are kept and folded: the cell's value is their midpoint and its
@@ -219,12 +220,18 @@ def by_cell(
             "p10": p10 * scale,
             "p50": p50 * scale,
             "p90": p90 * scale,
-            "search_ms": _millis(result.get("search_duration_ns")),
-            "retrieval_ms": _millis(result.get("retrieval_duration_ns")),
+            "search_ms": _phase_ms(record, "search"),
+            "retrieval_ms": _phase_ms(record, "retrieval"),
             # Only present where a cell opted into the response phase; None everywhere else, which
             # is what keeps it out of the stacked chart for suites that did not measure it.
-            "response_ms": _millis(result.get("response_duration_ns")),
+            "response_ms": _phase_ms(record, "response"),
             "response_bytes": result.get("response_bytes") or None,
+            # From the timed region only, so index loading and the page sweep are excluded. Carried
+            # because an arm difference that moves with the fault count is residency and one that
+            # does not is something else — the first question to ask of any arm gap, and until now
+            # not answerable from a matrix suite's table at all.
+            "major_faults": result.get("major_faults"),
+            "minor_faults": result.get("minor_faults"),
             # What the process this cell came from could resolve at all, however tight this one
             # cell's own reps happened to be. `floor_of` folds it in.
             "floor": series.floor if series else float("nan"),
@@ -420,6 +427,22 @@ def resolution_table(report: Report, loaded: list[Record]) -> None:
         f"floor, against the {NOISE_FLOOR_PCT}% measured full-database floor. **Nothing below a "
         f"process's floor is a result from that process.** Hover any heading for its definition."
     )
+
+
+def _phase_ms(record: Record, phase: str) -> float | None:
+    """One phase's time for a cell, in milliseconds, pooled over reps where the record allows it.
+
+    Schema v14 added `stats.<phase>_p50_ns`, the median across the same reps `qps_p50` is taken
+    over. Before that the only phase times were on `result`, which in matrix mode is a single rep —
+    the representative one — so a phase split could and did disagree with the throughput printed
+    beside it. Prefer the pooled value; fall back to the single rep so older sessions still render,
+    since `--report-only` on an archived run is a thing people do.
+    """
+    stats = record.raw.get("stats") or {}
+    pooled = stats.get(f"{phase}_p50_ns")
+    if pooled is not None:
+        return _millis(pooled)
+    return _millis(record.result.get(f"{phase}_duration_ns"))
 
 
 def _millis(nanoseconds: float | None) -> float | None:

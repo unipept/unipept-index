@@ -292,6 +292,13 @@ class Runner:
 
         args = ["--grid-file", str(grid_path)]
         args += ["--matrix", "--matrix-files", ",".join(str(path) for path in paths.values())]
+        # Matrix mode always page-sweeps; this is what additionally asks it for the pipeline half.
+        # It used to be single-mode only, which meant the two modes warmed differently and the
+        # difference landed on the arms unevenly — a preloaded structure lives in anonymous memory
+        # that no page sweep reaches, so only real queries warm it. See `run_matrix` in main.rs.
+        warmup = _warmup_for(cell, settings.get("warmup"))
+        if warmup:
+            args += ["--warmup", warmup]
         for k in sorted({entry["kmer_k"] for entry in cells} - {0}):
             args += self._kmer_file_arg(k)
         if settings.get("runs_target_band"):

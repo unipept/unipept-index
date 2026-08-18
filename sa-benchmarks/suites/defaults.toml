@@ -72,6 +72,14 @@ measuring the defaults.
 runs = 20
 amount = 10000
 max_matches = 10000
+# Page sweep, then 200k real queries. The sweep alone warms only what is MAPPED, so on an arm that
+# preloads a structure the one thing that arm exists to buy goes into the first timed cell cold —
+# and `ram`/`threads`, which do warm the pipeline, put `pprot` +14-16% over `mmap` on the mixed file
+# where this suite put the same pair at +0.3-9.6%. 200k rather than the million those suites use:
+# this is a grid of 16 cells at 20 reps each, so the steady state is reached inside the measurement
+# anyway and the warmup only has to stop the FIRST cells paying for the rest.
+warmup = "all:200000"
+
 # `mixed` is the unbucketed 5..50 file — the query mix a server actually sees, and the one
 # number to quote. The three buckets are there to say WHERE a change landed, since peptide length
 # moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.

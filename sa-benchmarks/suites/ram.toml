@@ -23,6 +23,18 @@ does the fully preloaded arm's lead survive": it wants 241 GB resident against m
 295 GB box, and it is the arm with the most to lose as the ceiling falls and the least room to
 absorb it. `pprot` stays in as the middle point between the two.
 
+WHICH REGIME THIS MEASURES, and it is only one. Every cell here runs `tryptic=false` on the mixed
+file, because a ceiling sweep cannot afford a workload axis as well. That is the regime in which
+preloading the protein metadata pays: without tryptic the search accepts 9-13% of the candidates it
+examines, so retrieval is a third of the measured work and the structure `pprot` preloads is hot.
+Under tryptic acceptance falls to ~0.5%, retrieval drops to 1-7% of the work, and `defaults` at
+b530143049 measured `pprot` vs `mmap` at a median of -3.6% across the eight tryptic cells against
++9.3% across the eight non-tryptic ones — the sign flips in 15 of 16.
+
+So a `pprot vs mmap` figure from this suite is the best case for `pprot`, not a property of the
+arms. It is stable across the axes swept here; it is not stable across workloads, and `defaults` is
+the suite that says so.
+
 Read the columns in this order:
 
   * `slots` is the gap between a cell's own two invocations. A delta smaller than it is not an
