@@ -45,14 +45,15 @@ impl SuffixArrayBackend for CompressedSA {
 }
 
 impl WriteBinary for CompressedSA {
+    /// Goes through [`write_sa_header`] rather than emitting the ten bytes itself, so that this and
+    /// [`dump_compressed_suffix_array`] — the two routes to a compressed file — cannot drift apart
+    /// in layout or in what they report when a write fails.
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         let CompressedSA(bit_array, sample_rate) = self;
-        writer
-            .write_all(&[bit_array.bits_per_value() as u8])
-            .map_err(|_| "Could not write the required bits")?;
-        writer.write_all(&[sample_rate]).map_err(|_| "Could not write the sparseness factor")?;
-        writer.write_all(&(bit_array.len() as u64).to_le_bytes()).map_err(|_| "Could not write the size")?;
-        bit_array.write_binary(writer).map_err(|_| "Could not write the compressed suffix array")?;
+        write_sa_header(bit_array.bits_per_value(), sample_rate, bit_array.len(), writer)?;
+        bit_array
+            .write_binary(writer)
+            .map_err(|_| "Could not write the compressed suffix array to the writer")?;
         Ok(())
     }
 }

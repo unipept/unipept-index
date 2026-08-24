@@ -50,7 +50,7 @@ impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
 /// entries than the body holds loads, and panics on the first lookup.
 pub(super) fn read_sparse_mmap(mmap: Mmap) -> Result<MmapSparseSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 9 {
-        return Err("Sparse mapping file is truncated: missing count header".into());
+        return Err("The sparse mapping file is too small to contain the count header".into());
     }
     let count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
     Ok(MmapSparseSuffixToProtein { mmap, count, data_offset: 9 })

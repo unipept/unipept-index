@@ -6,9 +6,9 @@
 //!
 //! Only the reading half lives here; the file itself is written by `preloaded`'s `WriteBinary`.
 
-use std::{error::Error, fs::File, io::Write, path::Path, sync::Arc};
+use std::{error::Error, fs::File, path::Path, sync::Arc};
 
-use binary_traits::{ReadBinaryMmap, WriteBinary};
+use binary_traits::ReadBinaryMmap;
 use memmap2::Mmap;
 
 use crate::{BIT5_TO_CHAR, ProteinTextBackend, bit_array_byte_size};
@@ -122,6 +122,10 @@ impl ProteinTextBackend for MmapBackedProteinText {
         BIT5_TO_CHAR[raw as usize]
     }
 
+    /// `#[inline]` for the same reason as [`Self::get`], and the preloaded backend carries it too:
+    /// `Searcher::compare` reads this once per binary-search probe, so without cross-crate LTO it
+    /// would be a real call per probe to return a field.
+    #[inline]
     fn len(&self) -> usize {
         self.len
     }
@@ -142,15 +146,10 @@ impl ProteinTextBackend for MmapBackedProteinText {
     }
 }
 
-impl WriteBinary for MmapBackedProteinText {
-    fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
-        let text_length = self.len as u64;
-        writer.write_all(&text_length.to_le_bytes())?;
-        let n_bytes = bit_array_byte_size(self.len);
-        writer.write_all(&self.mmap[self.data_offset..self.data_offset + n_bytes])?;
-        Ok(())
-    }
-}
+// No `WriteBinary` here, deliberately. Serialisation is the preloaded half's job for every
+// structure in the index — see `binary_traits` — and `sa-builder` names only preloaded types
+// because of it. This module used to carry one anyway, the only mmap type in the workspace that
+// did; nothing in the workspace called it, tests included.
 
 impl ReadBinaryMmap for MmapBackedProteinText {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
@@ -168,14 +167,14 @@ impl ReadBinaryMmap for MmapBackedProteinText {
         mmap.advise(memmap2::Advice::Random)?;
 
         if mmap.len() < 8 {
-            return Err("File is too small to contain ProteinText header (8 bytes required)".into());
+            return Err("The protein text file is too small to contain the text header".into());
         }
 
         let text_length =
             u64::from_le_bytes(mmap[0..8].try_into().map_err(|_| "Failed to parse ProteinText header")?) as usize;
 
         if mmap.len() < 8 + bit_array_byte_size(text_length) {
-            return Err("File is too small to contain ProteinText BitArray data for declared length".into());
+            return Err("The protein text file is too small to contain the text data its header declares".into());
         }
 
         Ok(Self::from_mmap(mmap, 8, text_length))
@@ -188,6 +187,7 @@ impl ReadBinaryMmap for MmapBackedProteinText {
 mod tests {
     use std::sync::Arc;
 
+    use binary_traits::WriteBinary;
     use memmap2::Mmap;
 
     use super::*;
@@ -285,6 +285,20 @@ mod tests {
                 (i * 5) / 64
             );
         }
+    }
+
+    /// The mapped half of the hint contract; the preloaded half is the twin of this test.
+    #[test]
+    fn prefetch_hints_are_harmless() {
+        let input = "ACACA-CAC$MLPGLALLLL$";
+        let mut buf: Vec<u8> = Vec::new();
+        InMemoryProteinText::from_string(input).write_binary(&mut buf).unwrap();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut tmp, &buf).unwrap();
+        std::io::Write::flush(&mut tmp).unwrap();
+
+        let mapped = MmapBackedProteinText::read_binary_mmap(tmp.path()).unwrap();
+        crate::test_utils::assert_prefetch_is_harmless(&mapped, input);
     }
 
     /// `read_binary_mmap` takes an untrusted header. Both of its length checks must produce an

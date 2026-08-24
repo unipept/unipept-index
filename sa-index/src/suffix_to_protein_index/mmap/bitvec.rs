@@ -88,23 +88,51 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
     }
 }
 
-/// Maps a bitvec mapping file. Unlike the other two readers this also checks the body: the bits
-/// and the superblock cells have fixed sizes the header's block count fixes exactly, so a file
-/// that cannot hold them is rejected here rather than panicking on a later lookup.
+/// Maps a bitvec mapping file. Unlike the other two readers this also checks the body, in the two
+/// ways that between them make every in-range lookup addressable:
+///
+/// * the header's `block_count` fixes the size of both the bits and the superblock cells exactly,
+///   so a file too short to hold them is rejected here;
+/// * `bit_len` is what `suffix_to_protein` bounds a position against, so a `block_count` too small
+///   to cover it would let an in-range position index past the bits region. That is the same check
+///   `preloaded::bitvec::read_bitvec_mapping` makes, and must stay in step with it: without it a
+///   crafted header loads cleanly and panics inside a request handler instead, which is what
+///   [`ReadBinaryMmap`](text_compression::ReadBinaryMmap)'s contract forbids.
 pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 17 {
-        return Err("Bitvec mapping file is truncated: missing header fields".into());
+        return Err("The bitvec mapping file is too small to contain the header".into());
     }
     let bit_len = u64::from_le_bytes(mmap[1..9].try_into()?);
     let block_count = u64::from_le_bytes(mmap[9..17].try_into()?) as usize;
-    let expected_size = 17 + block_count * 8 + (block_count / 8 + 1) * 16;
+
+    let needed = (bit_len as usize).div_ceil(64);
+    if block_count < needed {
+        return Err(format!(
+            "Bitvec mapping declares {bit_len} bits but holds only {block_count} of the {needed} blocks that needs"
+        )
+        .into());
+    }
+
+    // Checked, because `block_count` is untrusted: an unchecked `* 8` wraps for a header near
+    // `usize::MAX`, which would make `expected_size` small enough to pass the length check below
+    // and leave `counts_offset` pointing anywhere.
+    let too_many = || -> Box<dyn Error> { "The bitvec mapping header declares too many blocks".into() };
+    let bits_bytes = block_count.checked_mul(8).ok_or_else(too_many)?;
+    let counts_bytes = (block_count / 8 + 1).checked_mul(16).ok_or_else(too_many)?;
+    let expected_size = 17usize
+        .checked_add(bits_bytes)
+        .and_then(|n| n.checked_add(counts_bytes))
+        .ok_or_else(too_many)?;
     if mmap.len() < expected_size {
-        return Err(
-            format!("Bitvec mapping file is truncated: expected {} bytes, got {}", expected_size, mmap.len()).into()
-        );
+        return Err(format!(
+            "The bitvec mapping file is too small to contain the mapping data: expected {} bytes, got {}",
+            expected_size,
+            mmap.len()
+        )
+        .into());
     }
     let bits_offset = 17;
-    let counts_offset = bits_offset + block_count * 8;
+    let counts_offset = bits_offset + bits_bytes;
     Ok(MmapBitVecSuffixToProtein { mmap, bit_len, bits_offset, counts_offset })
 }
 

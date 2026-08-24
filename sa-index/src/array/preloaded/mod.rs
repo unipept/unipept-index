@@ -111,6 +111,7 @@ impl ReadBinary for InMemorySA {
         let mut buf1 = [0u8; 1];
         reader.read_exact(&mut buf1).map_err(|_| "Could not read the required bits from the binary file")?;
         let bits_per_value = buf1[0] as usize;
+        super::check_bits_per_value(bits_per_value)?;
 
         reader.read_exact(&mut buf1).map_err(|_| "Could not read the sample rate from the binary file")?;
         let sample_rate = buf1[0];
@@ -238,6 +239,50 @@ mod tests {
         for (case, bytes) in cases {
             let result = InMemorySA::read_binary(&mut Cursor::new(bytes));
             assert!(result.is_err(), "{case} was accepted");
+        }
+    }
+
+    /// `prefetch_sa_index` was covered for the mmap backend and for neither owned one, though both
+    /// compute the address they hint by hand — `CompressedSA` scales the index by its bit width and
+    /// takes a one-word slice, which is the arithmetic most likely to run off the end. Exercised
+    /// through `InMemorySA` as well, since that forwards to whichever variant is live.
+    #[test]
+    fn prefetch_hints_are_harmless() {
+        use super::super::test_utils::assert_prefetch_is_harmless;
+
+        let sa = sample_sa(300);
+        assert_prefetch_is_harmless(&OriginalSA(sa.clone(), 1), &sa);
+        assert_prefetch_is_harmless(&load(&to_binary(OriginalSA(sa.clone(), 1)), false), &sa);
+
+        for bits in [8usize, 29, 40] {
+            let sa = fit_to_width(&sample_sa(300), bits);
+            assert_prefetch_is_harmless(&owned_compressed(&sa, 2, bits), &sa);
+            assert_prefetch_is_harmless(&load(&to_binary(owned_compressed(&sa, 2, bits)), true), &sa);
+        }
+    }
+
+    /// A width outside `1..=64` must be refused by *both* readers, identically.
+    ///
+    /// Neither used to check. A `0` header made the declared body zero-length, so the file passed
+    /// every size check and the first `get` read off the end of it; a `200` header overflowed the
+    /// shift. Both cases panicked at lookup rather than erroring at load, on both backends.
+    #[test]
+    fn both_readers_reject_an_impossible_width() {
+        use text_compression::ReadBinaryMmap;
+
+        use crate::array::{MmapBackedSA, mmap::test_utils::write_to_tempfile};
+
+        for bad in [0u8, 65, 200, 255] {
+            let mut bytes = to_file_bytes(&sample_sa(5), 1, None);
+            bytes[0] = bad;
+
+            assert!(
+                InMemorySA::read_binary(&mut Cursor::new(bytes.clone())).is_err(),
+                "preloaded accepted a width of {bad}"
+            );
+
+            let tmp = write_to_tempfile(&bytes);
+            assert!(MmapBackedSA::read_binary_mmap(tmp.path()).is_err(), "mmap accepted a width of {bad}");
         }
     }
 

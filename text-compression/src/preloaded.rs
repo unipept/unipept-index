@@ -294,6 +294,14 @@ mod tests {
         assert_eq!(loaded.len(), input.len());
     }
 
+    /// The preloaded half of the hint contract; the mapped half is the twin of this test.
+    #[test]
+    fn prefetch_hints_are_harmless() {
+        let input = "ACACA-CAC$MLPGLALLLL$";
+        let text = InMemoryProteinText::from_string(input);
+        crate::test_utils::assert_prefetch_is_harmless(&text, input);
+    }
+
     #[test]
     fn test_failing_writer() {
         let mut writer = FailingWriter { valid_write_count: 0 };

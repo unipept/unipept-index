@@ -109,6 +109,7 @@ impl ReadBinaryMmap for MmapBackedSA {
         }
 
         let bits_per_value = mmap[0] as usize;
+        super::check_bits_per_value(bits_per_value)?;
         let sample_rate = mmap[1];
         let amount_of_items = u64::from_le_bytes(mmap[2..10].try_into()?) as usize;
 

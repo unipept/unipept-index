@@ -31,6 +31,8 @@ pub use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap, WriteBinary, load
 
 pub mod mmap;
 pub mod preloaded;
+#[cfg(test)]
+mod test_utils;
 
 pub use mmap::MmapBackedProteinText;
 pub use preloaded::InMemoryProteinText;

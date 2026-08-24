@@ -205,7 +205,7 @@ struct Layout {
 fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
     let mmap_len = mmap.len();
     if mmap_len < 8 {
-        return Err("proteins file too short to contain text header".into());
+        return Err("The proteins file is too small to contain the text header".into());
     }
 
     let text_length = u64::from_le_bytes(mmap[0..8].try_into()?) as usize;
@@ -219,7 +219,7 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
         .checked_add(24)
         .ok_or_else(|| "overflow while computing metadata end offset".to_string())?;
     if meta_end > mmap_len {
-        return Err("proteins file too short to contain metadata section".into());
+        return Err("The proteins file is too small to contain the metadata header".into());
     }
 
     let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
@@ -239,7 +239,7 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
         .ok_or_else(|| "overflow while computing fa data offset".to_string())?;
 
     if uid_data_offset > mmap_len || fa_data_offset > mmap_len {
-        return Err("proteins file truncated: data section offsets exceed file length".into());
+        return Err("The proteins file is too small to contain the data sections its header declares".into());
     }
 
     Ok(Layout {
@@ -402,6 +402,32 @@ mod tests {
         let mut bin_file = File::create(&bin_path).unwrap();
         original.write_binary(&mut bin_file).unwrap();
         bin_path
+    }
+
+    /// Both hint methods, walked over every entry and well past the last one.
+    ///
+    /// Neither had a test. `prefetch` is on the retrieval hot path; `prefetch_strings` is called by
+    /// nothing at all today — see its doc for why — which is exactly what makes it worth pinning:
+    /// it follows two `u32` offsets read out of the mapping and indexes with them, so a mistake
+    /// there would sit unnoticed until someone with a longer look-ahead started calling it. Both
+    /// must tolerate an index no entry exists for, and neither may disturb the `get` that follows.
+    #[test]
+    fn prefetch_hints_are_harmless() {
+        let tmp_dir = TempDir::new("test_mmap_prefetch").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let proteins = <Mapped as ReadBinaryMmap>::read_binary_mmap(&bin_path).unwrap();
+
+        for index in 0..proteins.len() * 4 + 16 {
+            proteins.prefetch(index);
+            proteins.prefetch_strings(index);
+        }
+
+        assert_eq!(proteins.len(), 3);
+        for (index, (uid, taxon, _, _)) in TEST_PROTEINS[..3].iter().enumerate() {
+            let protein = proteins.get(index);
+            assert_eq!(protein.uniprot_id, *uid, "uid {index} differs after the hints");
+            assert_eq!(protein.taxon_id, *taxon, "taxon {index} differs after the hints");
+        }
     }
 
     #[test]

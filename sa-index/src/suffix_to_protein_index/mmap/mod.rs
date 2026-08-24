@@ -6,7 +6,7 @@
 
 use std::{error::Error, path::Path};
 
-use memmap2::MmapOptions;
+use memmap2::Mmap;
 
 use crate::{LoadIndex, ReadBinaryMmap};
 
@@ -39,10 +39,19 @@ impl ReadBinaryMmap for MmapBackedSuffixToProteinMapping {
         // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
         // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
         // truncated or written underneath us.
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        let mmap = unsafe { Mmap::map(&file)? };
         if mmap.is_empty() {
             return Err("Mapping file is empty".into());
         }
+
+        // As every other mmap loader in the workspace does. A lookup lands on a position the suffix
+        // array chose, so the access order is one the kernel cannot predict, and the default
+        // readahead drags in neighbouring pages that will not be used. This loader was the only one
+        // missing the advice; the omission is invisible to any benchmark that warms first, because
+        // `touch_all_pages` sets `Random` on the way out.
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Random)?;
+
         match mmap[0] {
             0 => Ok(Self::Dense(dense::read_dense_mmap(mmap)?)),
             1 => Ok(Self::Sparse(sparse::read_sparse_mmap(mmap)?)),
@@ -95,7 +104,7 @@ mod tests {
     /// anything they fail to reject here becomes a panic on the first lookup instead.
     #[test]
     fn test_load_mmap_rejects_malformed_files() {
-        let cases: [(&str, Vec<u8>); 6] = [
+        let cases: [(&str, Vec<u8>); 7] = [
             ("empty file", vec![]),
             ("unknown type byte", vec![99u8, 0, 0, 0, 0, 0, 0, 0, 0]),
             ("dense without a count header", vec![0u8, 0, 0]),
@@ -104,6 +113,21 @@ mod tests {
             (
                 "bitvec header promising blocks the file does not hold",
                 [vec![2u8], 6400u64.to_le_bytes().to_vec(), 100u64.to_le_bytes().to_vec()].concat()
+            ),
+            (
+                // A well-formed 41-byte file whose `bit_len` needs 157 blocks but whose
+                // `block_count` is 1. Every length in it is honest, so the size check passes; only
+                // relating the two fields catches it. Before that check this loaded cleanly and
+                // `suffix_to_protein(1000)` panicked on `mmap[137..]` of a 41-byte mapping.
+                "bitvec bit_len needing more blocks than the header declares",
+                [
+                    vec![2u8],
+                    10_000u64.to_le_bytes().to_vec(),
+                    1u64.to_le_bytes().to_vec(),
+                    vec![0u8; 8],
+                    vec![0u8; 16]
+                ]
+                .concat()
             )
         ];
 

@@ -10,7 +10,10 @@ use tempfile::NamedTempFile;
 use text_compression::ReadBinaryMmap;
 
 use super::MmapBackedSA;
-use crate::array::{SuffixArrayBackend, test_utils::to_file_bytes};
+use crate::array::{
+    SuffixArrayBackend,
+    test_utils::{assert_prefetch_is_harmless, to_file_bytes}
+};
 
 /// Writes `buf` to a temporary file. The caller keeps the returned guard alive for as long as the
 /// file stays mapped.
@@ -29,16 +32,13 @@ pub fn write_and_map(sa: &[i64], sparseness: u8, bits: Option<usize>) -> (MmapBa
     (mapped, tmp)
 }
 
-/// Walks both hint methods over the whole array and past its end, then re-reads every entry. Both
-/// compute byte offsets by hand, so a wrong bound is an out-of-range index on the mapping rather
-/// than a wrong answer, and neither may disturb the entries it precedes.
+/// Walks both hint methods over the whole array and past its end, then re-reads every entry.
+///
+/// `touch_all_pages` is the half only a mapping has; the prefetch walk is
+/// [`assert_prefetch_is_harmless`], shared with the preloaded backends so both sides are held to
+/// the same bound.
 pub fn assert_hints_are_harmless(sa: &[i64], sparseness: u8, bits: Option<usize>) {
     let (mapped, _tmp) = write_and_map(sa, sparseness, bits);
     mapped.touch_all_pages();
-    for index in 0..sa.len() * 2 {
-        mapped.prefetch_sa_index(index);
-    }
-    for (index, &expected) in sa.iter().enumerate() {
-        assert_eq!(mapped.get(index), expected, "entry {index} differs after the hints");
-    }
+    assert_prefetch_is_harmless(&mapped, sa);
 }

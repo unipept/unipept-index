@@ -44,6 +44,22 @@ pub fn assert_backend_holds(backend: &impl SuffixArrayBackend, sa: &[i64], spars
     assert_eq!(backend.iter_range(0, sa.len()).collect::<Vec<i64>>(), sa, "iter_range disagrees with get");
 }
 
+/// Walks `prefetch_sa_index` over the whole array and well past its end, then re-reads every entry.
+///
+/// Every backend computes the address it hints by hand — the compressed one scales the index by its
+/// bit width, the mmap one adds a file offset — so a wrong bound is an out-of-range index rather
+/// than a wrong answer, and a hint may never disturb the entry it precedes. The trait promises
+/// out-of-range indices are ignored rather than panicking, which is what the second half of the
+/// walk exercises.
+pub fn assert_prefetch_is_harmless(backend: &impl SuffixArrayBackend, sa: &[i64]) {
+    for index in 0..sa.len() * 2 {
+        backend.prefetch_sa_index(index);
+    }
+    for (index, &expected) in sa.iter().enumerate() {
+        assert_eq!(backend.get(index), expected, "entry {index} differs after the hints");
+    }
+}
+
 /// Serialises a backend through its [`WriteBinary`] impl. The first byte is the width the loaders
 /// dispatch on.
 pub fn to_binary(sa: impl WriteBinary) -> Vec<u8> {

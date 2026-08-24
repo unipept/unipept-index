@@ -219,9 +219,9 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 
     let needed = (bit_len as usize).div_ceil(64);
     if block_count < needed {
+        // The mmap reader makes the same check with the same message; keep the two in step.
         return Err(format!(
-            "Bitvec mapping declares {} bits but only {} of the {} blocks that needs",
-            bit_len, block_count, needed
+            "Bitvec mapping declares {bit_len} bits but holds only {block_count} of the {needed} blocks that needs"
         )
         .into());
     }
@@ -229,6 +229,13 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     let mut buffer = vec![0u8; READ_CHUNK_BYTES];
 
     let mut blocks = Vec::with_capacity(block_count);
+    // Before the loop below touches a page of it, which is the only point at which the advice does
+    // anything — see `bitarray::hugepages`, and `array::preloaded::original::load_original`, which
+    // does the same for the same reason. At UniProt scale this is the ~8 GB half of a ~10 GB
+    // structure, and it was the one large preloaded allocation in the index that went unadvised.
+    // The fill below pushes exactly `block_count` entries and the `truncate` at the end cannot
+    // reallocate, so the advice stays with the allocation it was issued for.
+    bitarray::hugepages::advise_capacity(&blocks);
     let mut words_left = block_count;
     while words_left > 0 {
         let words = words_left.min(buffer.len() / 8);
@@ -242,6 +249,8 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 
     let sb_count = block_count / 8 + 1;
     let mut counts = Vec::with_capacity(sb_count);
+    // The other ~2 GB of the same structure; same argument as for `blocks` above.
+    bitarray::hugepages::advise_capacity(&counts);
     let mut cells_left = sb_count;
     while cells_left > 0 {
         let cells = cells_left.min(buffer.len() / 16);

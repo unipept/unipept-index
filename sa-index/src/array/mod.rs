@@ -69,6 +69,28 @@ pub(super) fn write_sa_header(
     Ok(())
 }
 
+/// Rejects a width no packing can use, before either reader trusts it.
+///
+/// `bits_per_value` is the first byte of an untrusted header, and both readers go on to shift by
+/// it and to derive byte offsets from it. Outside `1..=64` that is a shift overflow — a panic in
+/// debug, a wrapped value in release — and zero is separately useless: it makes the declared body
+/// zero-length, so the file passes every size check and every lookup then reads off the end.
+/// Neither reader used to check, and both duly panicked at the first `get` on a crafted header
+/// instead of erroring at load, which is what [`ReadBinaryMmap`](text_compression::ReadBinaryMmap)
+/// forbids.
+///
+/// Both call this, so the two agree on what a loadable file is; a width one accepted and the other
+/// did not would be worse than either.
+pub(super) fn check_bits_per_value(bits_per_value: usize) -> Result<(), Box<dyn Error>> {
+    if !(1..=64).contains(&bits_per_value) {
+        return Err(format!(
+            "The SA header declares {bits_per_value} bits per value, outside the supported range of 1..=64"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// Common interface implemented by every SA storage backend.
 ///
 /// - [`OriginalSA`] and [`CompressedSA`] — owned memory, one packing each.

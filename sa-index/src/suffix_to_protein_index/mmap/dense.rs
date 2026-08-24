@@ -8,7 +8,11 @@ use super::super::SuffixToProteinMappingBackend;
 /// Format: [1 byte type=0x00] [8 bytes count (u64 LE)] [count × 4 bytes (u32 LE)]
 pub struct MmapDenseSuffixToProtein {
     mmap: Mmap,
-    data_offset: usize // 9 = 1 (type) + 8 (count)
+    data_offset: usize, // 9 = 1 (type) + 8 (count)
+    /// Entries the header declares. A lookup does not need it — it addresses its entry directly —
+    /// but [`Self::touch_all_pages`] does, so that the sweep covers this structure's own entries
+    /// rather than everything to the end of the file, the way the sparse one already did.
+    count: usize
 }
 
 impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
@@ -28,20 +32,24 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
     }
 
     fn touch_all_pages(&self) -> u64 {
-        let end = self.mmap.len();
+        // This structure's own entries, the way the sparse backend bounds its sweep. Clamped to the
+        // mapping, because the header is untrusted and `read_dense_mmap` does not check the body
+        // against it.
+        let end = (self.data_offset + self.count * 4).min(self.mmap.len());
         text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end)
     }
 }
 
-/// Maps a dense mapping file, validating its header only: the entry count it carries is not kept,
-/// because a lookup addresses the entry it wants directly. A file whose body is shorter than the
-/// text it was built for therefore loads, and panics on the first lookup past the end of it.
+/// Maps a dense mapping file, validating its header only. The entry count is kept, since
+/// [`MmapDenseSuffixToProtein::touch_all_pages`] needs it, but is not checked against the file
+/// length: a file whose body is shorter than the text it was built for loads, and panics on the
+/// first lookup past the end of it.
 pub(super) fn read_dense_mmap(mmap: Mmap) -> Result<MmapDenseSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 9 {
-        return Err("Dense mapping file is truncated: missing count header".into());
+        return Err("The dense mapping file is too small to contain the count header".into());
     }
-    let _count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
-    Ok(MmapDenseSuffixToProtein { mmap, data_offset: 9 })
+    let count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
+    Ok(MmapDenseSuffixToProtein { mmap, data_offset: 9, count })
 }
 
 #[cfg(test)]
