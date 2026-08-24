@@ -105,7 +105,6 @@ files = ["mixed", "small", "medium", "large"]
 
 [[sweep]]
 name = "kmer"
-strategy = "base"
 arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
 # Drift cadence: the reference is re-measured every 8 cells so the process's own movement is
 # measured and removed rather than folded into every table's delta.

@@ -1,42 +1,25 @@
 """Expanding `[[sweep]]` blocks into the cell list one process executes.
 
-A sweep of N knobs across M contexts has two possible shapes, and the choice between them decides
-whether the run takes an hour or a day.
-
-**Multiplicative** — every knob value crossed with every context — asks "does every knob's optimum
-depend on every context?". Four knobs at their measured value counts, three k-mer tables, four
-thread counts, both search options and both backends is 3,456 cells, nearly all of them
-re-measuring a curve that was flat the first three times.
-
-**Additive** — several blocks, each varying one thing against a fixed background — asks the three
-questions anyone actually has, and adds their costs instead of multiplying them:
-
-    what is each knob's curve?          every knob,  ONE context     ->  ~36 cells
-    what does each context cost?        ONE tuning point, every one  ->  ~96 cells
-    does a knob's optimum MOVE?         only the pairs with a mechanism behind them
-
-so a suite is a list of blocks rather than one grid. A block that turns out to matter gets widened;
-a cross-product cannot be narrowed after the fact, because the run is already over.
+A suite is a list of blocks, each varying one thing against a fixed background, rather than one
+grid crossing everything with everything. Their costs then add instead of multiplying: a block that
+turns out to matter gets widened, where a cross-product cannot be narrowed after the fact, because
+the run is already over.
 
 Everything a block does not name is inherited: contexts from the suite's `[axes]`, precision from
-its `[defaults]`, tuning from the knob values this binary reports as shipped. That inheritance is
-what keeps a block down to the two or three lines that say what it is *for*.
+its `[defaults]`. That inheritance is what keeps a block down to the two or three lines that say
+what it is *for*.
 
-## Strategies
+## What a block can vary
 
-    base    the shipped defaults, one point. For blocks whose subject is the context.
-    ofat    one knob moved at a time, every other knob at its shipped value. `1 + sum(len-1)`
-            points, so knobs add rather than multiply.
-    pairs   ofat, plus the full 2-D product of each named knob pair. A plane already contains both
-            ofat lines through the default point, so the lines it subsumes are dropped rather than
-            re-run — a pair costs |A|x|B| instead of |A|x|B| + (|A|-1) + (|B|-1).
-    full    the complete cross-product of every knob in the block. Honest for two or three values
-            of two knobs, ruinous beyond that.
+The contexts in `CONTEXT_KEYS` — the workload, the build, the machine — and nothing else. Blocks
+used to carry a `[sweep.tune]` table and a `strategy` (`ofat`, `pairs`, `full`) describing how to
+walk it, because the searcher had runtime performance knobs. It does not any more: those became
+compile-time constants once no sweep could separate their values from noise, so every block is now
+the one shape that used to be called `base` — one measurement per context.
 
-Deduplication is on the fully-resolved cell, not on bookkeeping about which strategy emitted it.
-Two blocks that happen to describe the same measurement therefore collapse into one, whichever
-routes led there — which is what lets a block be added without auditing every other one for
-overlap.
+Deduplication is on the fully-resolved cell, not on bookkeeping about which block emitted it. Two
+blocks that happen to describe the same measurement therefore collapse into one, which is what lets
+a block be added without auditing every other one for overlap.
 """
 
 from __future__ import annotations
@@ -54,82 +37,12 @@ PROCESS_KEYS = ("arms", "threads", "ceiling_gb")
 CELL_KEYS = ("files", "kmer", "equate_il", "tryptic", "amounts", "cutoffs")
 CONTEXT_KEYS = PROCESS_KEYS + CELL_KEYS
 
-#: Everything else a block may set, beyond its contexts and its `tune` table.
-SETTING_KEYS = ("name", "strategy", "runs", "amount", "base_every", "pairs", "response")
-
-STRATEGIES = ("base", "ofat", "pairs", "full")
+#: Everything else a block may set, beyond its contexts.
+SETTING_KEYS = ("name", "runs", "amount", "base_every", "response")
 
 
 class GridError(Exception):
     """A `[[sweep]]` block is malformed, or asks for something that cannot be expanded."""
-
-
-# ---------------------------------------------------------------------------
-# Tuning points
-# ---------------------------------------------------------------------------
-
-
-def tuning_points(block: dict, defaults: dict[str, Any]) -> list[dict[str, Any]]:
-    """The `SearchTuning` overrides this block measures, as a list of `{field: value}` dicts.
-
-    Every point is complete — it names every knob, at its swept or shipped value — so two points
-    are equal exactly when they describe the same measurement, and dedup needs no knowledge of how
-    either was produced.
-    """
-    knobs = block.get("tune") or {}
-    strategy = block.get("strategy", "base" if not knobs else "ofat")
-    if strategy not in STRATEGIES:
-        raise GridError(
-            f"sweep '{block.get('name', '?')}': strategy must be one of {STRATEGIES}, got '{strategy}'"
-        )
-    if strategy != "base" and not knobs:
-        raise GridError(f"sweep '{block.get('name', '?')}': strategy '{strategy}' needs a [sweep.tune] table")
-
-    base = dict(defaults)
-    if strategy == "base":
-        return [base]
-
-    if strategy == "full":
-        names = sorted(knobs)
-        return [{**base, **dict(zip(names, values))} for values in product(*(knobs[name] for name in names))]
-
-    # ofat / pairs. Planes first, so the lines they subsume are already in `seen` and get skipped
-    # rather than being emitted and then deduplicated away — the difference is visible in the cell
-    # ORDER, and cell order is what the drift cadence interleaves against.
-    points: list[dict[str, Any]] = [base]
-    seen = {_key(base)}
-
-    for pair in block.get("pairs") or []:
-        axes = pair.get("axes") if isinstance(pair, dict) else pair
-        if not isinstance(axes, list) or len(axes) != 2:
-            raise GridError(
-                f"sweep '{block.get('name', '?')}': a pair must name exactly two knobs, got {axes!r}. "
-                f"A plane is two-dimensional; three knobs at once is `strategy = \"full\"`."
-            )
-        for axis in axes:
-            if axis not in knobs:
-                raise GridError(
-                    f"sweep '{block.get('name', '?')}': pair axis '{axis}' has no values in "
-                    f"[sweep.tune] (has: {', '.join(sorted(knobs)) or 'nothing'})"
-                )
-        for left, right in product(knobs[axes[0]], knobs[axes[1]]):
-            point = {**base, axes[0]: left, axes[1]: right}
-            if _key(point) not in seen:
-                seen.add(_key(point))
-                points.append(point)
-
-    for name in sorted(knobs):
-        for value in knobs[name]:
-            point = {**base, name: value}
-            if _key(point) not in seen:
-                seen.add(_key(point))
-                points.append(point)
-
-    return points
-
-
-def _key(point: dict[str, Any]) -> tuple:
-    return tuple(sorted(point.items()))
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +51,7 @@ def _key(point: dict[str, Any]) -> tuple:
 
 
 def contexts(block: dict, suite_axes: dict[str, list], suite_files: list[str]) -> list[dict[str, Any]]:
-    """The (process coordinate, cell coordinate) points this block runs its tuning points at.
+    """The (process coordinate, cell coordinate) points this block measures at.
 
     A key the block does not name falls back to the suite's `[axes]`, then to a single sensible
     value. Inheriting rather than requiring each block to restate every context is what keeps a
@@ -156,8 +69,8 @@ def contexts(block: dict, suite_axes: dict[str, list], suite_files: list[str]) -
         # Query count is a coordinate, not a precision dial: two cells that ran different stream
         # lengths are not comparable, so a suite that varies it is measuring it.
         "amounts": block.get("amounts", [None]),
-        # The match cutoff. `None` leaves the invocation's `--max-matches` alone. Unlike a tuning
-        # knob this one changes the ANSWER, so it is a coordinate rather than a setting.
+        # The match cutoff. `None` leaves the invocation's `--max-matches` alone. This one changes
+        # the ANSWER, not just the time, so it is a coordinate rather than a setting.
         "cutoffs": block.get("cutoffs", [None]),
     }
     if not values["arms"]:
@@ -178,7 +91,6 @@ def contexts(block: dict, suite_axes: dict[str, list], suite_files: list[str]) -
 
 def expand(
     sweeps: list[dict],
-    defaults: dict[str, Any],
     *,
     suite_axes: dict[str, list] | None = None,
     suite_files: list[str] | None = None,
@@ -200,7 +112,6 @@ def expand(
 
     for block in sweeps:
         _validate(block)
-        points = tuning_points(block, defaults)
         runs = block.get("runs", suite_defaults.get("runs"))
         amount = block.get("amount", suite_defaults.get("amount"))
 
@@ -208,30 +119,28 @@ def expand(
             process = (context["arms"], context["threads"], context["ceiling_gb"])
             cells = processes.setdefault(process, [])
             known = seen.setdefault(process, set())
-            for point in points:
-                cell = _cell(block, context, point, runs, amount)
-                # Identity is the measurement, not the block that asked for it. `sweep` and
-                # `grid_slot` are excluded so two blocks describing the same cell collapse rather
-                # than running it twice at (possibly) different precision.
-                identity = _identity(cell)
-                if identity in known:
-                    continue
-                known.add(identity)
-                cells.append(cell)
+            cell = _cell(block, context, runs, amount)
+            # Identity is the measurement, not the block that asked for it. `sweep` and
+            # `grid_slot` are excluded so two blocks describing the same cell collapse rather
+            # than running it twice at (possibly) different precision.
+            identity = _identity(cell)
+            if identity in known:
+                continue
+            known.add(identity)
+            cells.append(cell)
 
     for process, cells in processes.items():
-        processes[process] = _with_drift_cadence(cells, sweeps, defaults)
+        processes[process] = _with_drift_cadence(cells, sweeps)
     return processes
 
 
-def _cell(block: dict, context: dict, point: dict, runs, amount) -> dict:
+def _cell(block: dict, context: dict, runs, amount) -> dict:
     amount = context["amounts"] if context.get("amounts") is not None else amount
     cell = {
         "file": context["files"],
         "kmer_k": int(context["kmer"]),
         "equate_il": bool(context["equate_il"]),
         "tryptic": bool(context["tryptic"]),
-        "tune": dict(point),
         "sweep": block.get("name", ""),
         "grid_slot": "a",
     }
@@ -252,7 +161,6 @@ def _identity(cell: dict) -> tuple:
         cell["kmer_k"],
         cell["equate_il"],
         cell["tryptic"],
-        _key(cell["tune"]),
         cell.get("runs"),
         cell.get("amount"),
         cell.get("max_matches"),
@@ -260,13 +168,20 @@ def _identity(cell: dict) -> tuple:
 
 
 def _validate(block: dict) -> None:
-    unknown = set(block) - set(CONTEXT_KEYS) - set(SETTING_KEYS) - {"tune"}
+    unknown = set(block) - set(CONTEXT_KEYS) - set(SETTING_KEYS)
     if unknown:
+        retired = {"tune", "strategy", "pairs"} & unknown
+        hint = (
+            f"\n  {', '.join(sorted(retired))} went with `SearchTuning`: the searcher's performance "
+            f"parameters are compile-time constants, so there is nothing left to sweep."
+            if retired
+            else ""
+        )
         raise GridError(
             f"sweep '{block.get('name', '?')}': unknown key(s) {', '.join(sorted(unknown))}. A key "
             f"with no defined effect would narrow nothing while still reading as though it did.\n"
             f"  contexts: {', '.join(CONTEXT_KEYS)}\n"
-            f"  settings: {', '.join(SETTING_KEYS)}, tune"
+            f"  settings: {', '.join(SETTING_KEYS)}{hint}"
         )
     for key in CONTEXT_KEYS:
         if key in block and not isinstance(block[key], list):
@@ -278,7 +193,7 @@ def _validate(block: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _with_drift_cadence(cells: list[dict], sweeps: list[dict], defaults: dict[str, Any]) -> list[dict]:
+def _with_drift_cadence(cells: list[dict], sweeps: list[dict]) -> list[dict]:
     """Interleaves a reference cell every `base_every` cells, in slots "z0", "z1", ...
 
     A process running a hundred cells takes long enough that machine drift across it can exceed the
@@ -294,7 +209,6 @@ def _with_drift_cadence(cells: list[dict], sweeps: list[dict], defaults: dict[st
         return cells
 
     reference = dict(cells[0])
-    reference["tune"] = dict(defaults)
     reference["sweep"] = "drift"
 
     out: list[dict] = []
@@ -325,6 +239,6 @@ def query_count(cells: Iterable[dict], runs: int, amount: int) -> int:
     """Timed queries these cells will run, which is what the wall clock tracks.
 
     Not the cell count: once cells may differ in size, a tryptic cell at a fifth the query count is
-    a fifth of the cost, and counting configurations hides exactly the thing that was tuned.
+    a fifth of the cost, and counting configurations hides exactly that difference.
     """
     return sum(cell.get("runs", runs) * cell.get("amount", amount) for cell in cells)

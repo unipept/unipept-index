@@ -130,8 +130,8 @@ class Report:
     def verdict(self, tiles: list[tuple[str, str, str, str]], reading: str = "") -> "Report":
         """What this suite found, as a row of stat tiles above everything it found it from.
 
-        A suite's answer is one or two numbers and a word — `mlp_batch 16 -> 64, +12.6%, resolved in
-        20 of 24 contexts`. It used to live in the `reading` column at the right edge of a 42-row
+        A suite's answer is one or two numbers and a word — `6-mer, +4.1%, resolved in 20 of 24
+        contexts`. It used to live in the `reading` column at the right edge of a 42-row
         table, which is the single most reliable way for a page to bury its own point: the reader
         who needs it most is the one who will not read that far.
 

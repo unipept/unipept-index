@@ -21,21 +21,21 @@
 //! at a time.
 //!
 //! Hence the shape: pass 1 issues hints for a whole batch, pass 2 consumes it once the loads are
-//! in flight. The lookahead distance is `SearchTuning::retrieval_prefetch_distance`.
+//! in flight. The lookahead distance is `RETRIEVAL_PREFETCH_DISTANCE`.
 
 use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
 
-use super::Searcher;
+use super::{RETRIEVAL_PREFETCH_DISTANCE, Searcher};
 use crate::{Nullable, array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
     /// Returns all the proteins that correspond with the provided suffixes.
     ///
-    /// Two-pass prefetch pipeline, look-ahead D = `tuning.retrieval_prefetch_distance`:
+    /// Two-pass prefetch pipeline, look-ahead D = `RETRIEVAL_PREFETCH_DISTANCE`:
     /// Pass 1 — prefetch suffix_to_protein mapping entries D iterations ahead, collect protein_indices.
     /// Pass 2 — prefetch protein entries D iterations ahead, build ProteinRef result.
     ///
-    /// D defaults to 32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the protein read in
+    /// D is 32 → D/2 iterations × ~5 ns ≈ 80–100 ns gap before the protein read in
     /// `proteins.get()`, giving the prefetch hint time to complete for most DRAM configs.
     ///
     /// Note: prefetch_strings is intentionally omitted — it reads the fixed-table entry to obtain
@@ -43,7 +43,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// prefetch hint (D/2 iterations × ~5 ns < ~80–100 ns DRAM latency).
     #[inline]
     pub fn retrieve_proteins(&self, suffixes: &[i64]) -> Vec<ProteinRef<'_>> {
-        let distance = self.tuning.retrieval_prefetch_distance;
+        let distance = RETRIEVAL_PREFETCH_DISTANCE;
 
         // Pass 1: prefetch suffix_to_protein mapping, collect protein_indices
         let mut protein_indices = Vec::with_capacity(suffixes.len());
@@ -84,7 +84,7 @@ mod tests {
 
         // "A" matches 5 suffixes: once in protein 0 (taxon 10), three times in protein 1
         // (taxon 20), once in protein 2 (taxon 30); never in protein 3 (KCRLY).
-        let suffixes = match searcher.search_matching_suffixes(b"A", usize::MAX, false, false) {
+        let suffixes = match searcher.search_matching_suffixes_scalar(b"A", usize::MAX, false, false) {
             SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
             SearchAllSuffixesResult::NoMatches => vec![]
         };
@@ -104,13 +104,13 @@ mod tests {
         assert!(searcher.retrieve_proteins(&[]).is_empty());
     }
 
-    // > the default retrieval_prefetch_distance (32) suffixes to exercise the two-pass prefetch-ahead loop.
+    // > RETRIEVAL_PREFETCH_DISTANCE (32) suffixes, to exercise the two-pass prefetch-ahead loop.
     #[test]
     fn test_retrieve_proteins_many() {
         let n = 70usize;
         let searcher = repeated_residue_searcher('A', n);
 
-        let suffixes = match searcher.search_matching_suffixes(b"A", usize::MAX, false, false) {
+        let suffixes = match searcher.search_matching_suffixes_scalar(b"A", usize::MAX, false, false) {
             SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
             SearchAllSuffixesResult::NoMatches => vec![]
         };

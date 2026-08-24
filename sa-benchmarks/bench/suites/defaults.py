@@ -4,7 +4,7 @@ Matrix-mode records already aggregate their reps, so each line here is one grid 
 own p10/p50/p90.
 
 This suite is the regression gate, which decides everything about how it reports. It varies only the
-two search options — the rest of the grid moved out to `kmer`, `mlp` and `validate` — so the tables
+two search options — the rest of the grid moved out to `kmer` — so the tables
 are four rows per length regime and the columns that would have read the same value in every row are
 stated once, in prose, instead. The comparison against a baseline lives here too: with
 `--baseline <session>`, every cell is diffed against the same cell in a previous run and only
@@ -52,8 +52,8 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
     cells = by_cell(loaded)
     # Instrumented arms are excluded from every throughput table, chart and verdict below. Their
     # counters perturb the very number those are about; they exist for `_inside_the_search`.
-    arms = [arm.name for arm in suite.arms if not arm.metrics]
-    instrumented = [arm.name for arm in suite.arms if arm.metrics]
+    arms = [arm.name for arm in suite.arms if not arm.measure]
+    instrumented = [arm.name for arm in suite.arms if arm.measure]
     # Everything except the peptide file, which is not a column — it is what the tables are split by.
     columns = [key for key in varying(cells) if key != "peptide_source"]
 
@@ -132,9 +132,9 @@ def _summary(report: Report, cells: dict, arms: list[str], loaded: list[Record])
         caption,
     )
     report.para(
-        "Production defaults: equate_il on, tryptic off, at the tuning stated above. The rows below "
+        "Production defaults: equate_il on, tryptic off, at the configuration stated above. The rows below "
         "vary only the two search options; what the k-mer table and the MLP batch cost is measured "
-        "by `kmer` and `mlp`."
+        "by `kmer`."
     )
 
 
@@ -602,12 +602,12 @@ def _inside_the_search(report: Report, loaded: list[Record], arms: list[str], co
     This was the `detail` suite. It is here because its two useful numbers are both about the search
     OPTIONS — the acceptance rate is the answer to "what is tryptic actually costing", and that
     question only exists in the tryptic rows this grid already runs — and because a separate suite
-    meant a separate index load and a second, redundant MLP batch sweep that `mlp` measures better
+    meant a separate index load and a second, redundant MLP batch sweep that no longer exists
     on an uninstrumented build.
     """
     report.heading("inside the search (instrumented)", level=3, folded=True)
     report.warn(
-        f"the {', '.join(arms)} arm is built with `metrics`, whose counters perturb throughput by "
+        f"the {', '.join(arms)} arm is built with `measure`, whose counters perturb throughput by "
         "~2%. Its qps is shown for scale only and is excluded from every table above."
     )
 
@@ -643,7 +643,7 @@ def _inside_the_search(report: Report, loaded: list[Record], arms: list[str], co
         "`bounds` and `iter` are shares of search THREAD-time, which is summed across every rayon "
         "thread and so exceeds wall time by the parallelism factor in the last column — they are "
         "meaningful against each other, not against the clock. Which of the two dominates is what "
-        "decides whether a prefetch distance ever had a phase to work on; see `prefetch`."
+        "decides how much of the work the retrieval prefetch pipeline has to hide."
     )
 
 
@@ -738,7 +738,7 @@ def _share(part: float, whole: float) -> str:
 
 
 def _accept(phases: dict[str, float]) -> str:
-    """Candidate acceptance rate; zero counters mean the build had no `metrics`."""
+    """Candidate acceptance rate; zero counters mean the build had no `measure`."""
     examined = phases["examined"]
     if not examined:
         return "n/a"

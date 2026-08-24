@@ -49,18 +49,18 @@
 //!   change to one cannot perturb the other. Where that produces near-duplicate code it is marked
 //!   as intentional at the site.
 //!
-//! # The `metrics` feature
+//! # The `measure` feature
 //!
 //! The one feature this crate has. Off by default. It swaps the counters on
 //! [`sa_searcher::Searcher`] from zero-sized no-ops to real atomics, so the benchmark harness can
-//! attribute time and count candidates. Enabling it costs throughput; see `sa_searcher::metrics`.
+//! attribute time and count candidates. Enabling it costs throughput; see `sa_searcher::measure`.
 //!
 //! **This is the only gate for measurement code in this workspace.** Anything that reads a clock or
 //! bumps a counter to describe how the search behaves belongs behind it — or, if it is a property of
 //! a whole run rather than of the hot path (load timings, page-fault counts), in the `sa-benchmarks`
 //! crate, which is excluded from the workspace's `default-members` and never ships.
 //!
-//! Nothing that ships may turn it on. `sa-server` and `sa-builder` deliberately have no `metrics`
+//! Nothing that ships may turn it on. `sa-server` and `sa-builder` deliberately have no `measure`
 //! passthrough, and CI resolves their feature graphs on every push to prove none appears — adding
 //! one would compile cleanly and produce a slower server that nothing else would complain about.
 //! See `.github/workflows/test.yml`.
@@ -137,9 +137,12 @@
 //! 112 GB, -7.8% and -9.3% unconstrained, with major faults flat to within 0.24% across thread
 //! counts. Every sign and rough magnitude held across three months and a rewritten harness.
 //!
-//! **`preloaded-proteins` is a bet on full residency, not a free 17%.** Resident, it is the
-//! fastest thing to build: +17.0% over plain `mmap` (36,687 → 42,928 qps, floor ±7.2%, resolved).
-//! That is the only ceiling where it leads. Preloaded metadata is non-evictable anonymous memory,
+//! **`preloaded-proteins` is a bet on full residency, not a free 17%.** Resident, it is +17.0%
+//! over plain `mmap` (36,687 → 42,928 qps, floor ±7.2%, resolved). That is the only ceiling where
+//! it leads, and even there it is not the configuration to reach for: the later run at 660befd7ee
+//! put `mmap,preloaded-text,preloaded-proteins` ahead of it in all 16 default cells, at a lower
+//! resident footprint. Preloading the metadata alone closes the retrieval gap and none of the
+//! search one, which is the larger half. Preloaded metadata is non-evictable anonymous memory,
 //! so under pressure it cannot be reclaimed and instead displaces file-backed page cache for the
 //! suffix array and the mapping — both bigger and hotter per query. Sweeping the ceiling down
 //! (100 reps x 10,000 peptides per cell, 6-mer attached):
@@ -170,7 +173,7 @@
 //! ceiling while search goes 135 ms → 1127 ms, so the two-pass prefetch pipeline in
 //! `sa_searcher::retrieval` keeps working under paging and needs nothing. Within search, the split
 //! is roughly even between the dependent binary-search chain and the contiguous SA range scan
-//! (52% / 48% of thread-time, `metrics` build at a 167 GB ceiling).
+//! (52% / 48% of thread-time, `measure` build at a 167 GB ceiling).
 //!
 //! Two further ideas were measured and rejected. **`MADV_WILLNEED` over the SA range about to be
 //! scanned does not pay**: the advice lands (major faults -23-25% under a ceiling) but the
@@ -193,7 +196,6 @@ pub mod suffix_to_protein_index;
 pub use array::SuffixArrayBackend;
 pub use kmer_table::KmerTable;
 pub use sa_mappings::proteins::ProteinsBackend;
-pub use sa_searcher::{MAX_VALIDATE_BATCH, SearchTuning};
 
 /// Custom trait implemented by types that have a value that represents NULL
 pub trait Nullable<T> {

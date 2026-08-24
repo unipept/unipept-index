@@ -1024,7 +1024,8 @@ def _grid_svg(
     PAD_L = frame.pad_l
     # Both axes are named in ONE line across the top, rather than as a centred x title and a rotated
     # y title. A plane is short — three rows is ~130px — and a knob's name is long:
-    # `retrieval_prefetch_distance` rotated into that height runs off both ends of the figure. On
+    # a name the length of `retrieval_prefetch_distance` — the longest knob this ever carried —
+    # rotated into that height runs off both ends of the figure. On
     # one line it fits the full width, and it can say which way each axis runs, which a rotated
     # word beside the row labels still leaves the reader to infer.
     axis_line = " · ".join(

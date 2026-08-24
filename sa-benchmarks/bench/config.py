@@ -10,7 +10,6 @@ unrecognised name is an error rather than a silently inert extra dimension:
 
     ceiling_gb   cgroup v2 MemoryMax for this cell, in GB. 0 = unconstrained.
     threads      RAYON_NUM_THREADS. "default" leaves it unset.
-    mlp_batch    --mlp-batch: peptides interleaved per rayon task. 1 = scalar.
     peptides     profile peptide-file key -> --peptide-file.
     kmer_table   profile k-mer-table key -> --kmer-table-file. "none" attaches no table.
     equate_il    --equate-il true|false.
@@ -19,8 +18,7 @@ unrecognised name is an error rather than a silently inert extra dimension:
 A matrix-mode suite is different: it loads the index once and sweeps in-process, so an axis there
 would cost a whole index load per value. Only `threads` and `ceiling_gb` may be axes (see
 `PROCESS_AXES` — neither can change while a process lives), and everything else it varies goes in
-`[[sweep]]` blocks, which `bench.grid` expands into a grid file the harness reads. That is also the
-only way to sweep a `SearchTuning` knob at matrix-mode cost.
+`[[sweep]]` blocks, which `bench.grid` expands into a grid file the harness reads.
 
 Ordering decides how cells are interleaved in time, which is not cosmetic: it is the only defence
 against machine drift being read as an arm effect.
@@ -51,10 +49,10 @@ from typing import Any
 
 #: Axis names with a defined effect, and a one-line description used in error messages.
 #:
-#: `tune.<field>` is handled separately: it sweeps any field of the searcher's `SearchTuning`, and
-#: the set of those is defined in Rust, not here. That is deliberate — a knob added to that struct
-#: becomes sweepable and reportable without this file changing, and a misspelled one is rejected by
-#: the harness (which knows the real field list) rather than being silently accepted here.
+#: There used to be a `tune.<field>` form that swept any field of the searcher's `SearchTuning`.
+#: That struct is gone — its fields are compile-time constants now, because no sweep could separate
+#: their values from noise — so the searcher exposes nothing to vary at runtime and every axis left
+#: here is either the workload, the build, or the machine.
 KNOWN_AXES = {
     "ceiling_gb": "cgroup MemoryMax in GB (0 = unconstrained)",
     "threads": "RAYON_NUM_THREADS ('default' = unset)",
@@ -63,9 +61,6 @@ KNOWN_AXES = {
     "equate_il": "true | false",
     "tryptic": "true | false",
 }
-
-#: Prefix for a SearchTuning field used as a sweep axis, e.g. `tune.mlp_batch = [1, 16]`.
-TUNE_PREFIX = "tune."
 
 #: Axes that decide which *process* a cell runs in, rather than what it measures inside one.
 #:
@@ -88,21 +83,21 @@ class Arm:
 
     name: str
     features: tuple[str, ...]
-    #: Build this arm with sa-index's `metrics` feature. Per arm rather than per suite, so a suite
+    #: Build this arm with sa-index's `measure` feature. Per arm rather than per suite, so a suite
     #: can carry ONE instrumented arm alongside its uninstrumented ones — the counters perturb
-    #: throughput (~2% at mlp_batch=1), so an instrumented arm is a different measurement sitting in
+    #: throughput (~2%), so an instrumented arm is a different measurement sitting in
     #: the same run, and every analysis has to keep it out of its throughput tables.
-    metrics: bool = False
+    measure: bool = False
 
     @property
     def feature_string(self) -> str:
         """Comma-separated features, i.e. what goes after `--features`. Empty = default build.
 
-        `metrics` is included, because this string is what every record reports as the binary that
+        `measure` is included, because this string is what every record reports as the binary that
         produced it — and an instrumented arm sharing a storage configuration with an uninstrumented
         one would otherwise be indistinguishable in the records.
         """
-        features = list(self.features) + (["metrics"] if self.metrics else [])
+        features = list(self.features) + (["measure"] if self.measure else [])
         return ",".join(features)
 
 
@@ -165,9 +160,9 @@ class Suite:
     #: harness sweeps in-process. This is the only way a matrix suite says what it measures — the
     #: harness has no built-in grid of its own, so a sweep cannot be described in two places.
     sweeps: list[dict[str, Any]] = field(default_factory=list)
-    #: Build EVERY arm with sa-index's `metrics` feature. Prefer the per-arm flag: a suite where
+    #: Build EVERY arm with sa-index's `measure` feature. Prefer the per-arm flag: a suite where
     #: every arm is instrumented can report no throughput at all.
-    metrics: bool = False
+    measure: bool = False
     #: Prose printed under this suite's tables, explaining how to read them.
     notes: str = ""
     #: Results directory of a previous run of this suite, for the regression comparison. Set from
@@ -233,18 +228,19 @@ def load(name: str, repo: Path) -> Suite:
     if len({arm.name for arm in arms}) != len(arms):
         raise ConfigError(f"{path}: two arms share a name; arm names become file names")
 
-    axes = _flatten_tune(raw.get("axes", {}))
+    axes = raw.get("axes", {})
     for axis, values in axes.items():
-        if axis.startswith(TUNE_PREFIX):
-            if len(axis) == len(TUNE_PREFIX):
-                raise ConfigError(f"{path}: axis '{axis}' names no tuning field")
-        elif axis not in KNOWN_AXES:
+        if axis not in KNOWN_AXES:
             known = "\n    ".join(f"{key:<12} {why}" for key, why in KNOWN_AXES.items())
+            hint = (
+                "\n  `tune.<field>` was removed with `SearchTuning`: the searcher's performance "
+                "parameters are compile-time constants now."
+                if axis.startswith("tune")
+                else ""
+            )
             raise ConfigError(
                 f"{path}: unknown axis '{axis}'. An axis with no defined effect would sweep "
-                f"nothing while still multiplying the run time.\n  known axes:\n    {known}\n"
-                f"    {TUNE_PREFIX}<field>  any SearchTuning field "
-                f"(see `sa-benchmarks --help-tuning`)"
+                f"nothing while still multiplying the run time.\n  known axes:\n    {known}{hint}"
             )
         if not isinstance(values, list) or not values:
             raise ConfigError(f"{path}: axis '{axis}' must be a non-empty list")
@@ -272,7 +268,7 @@ def load(name: str, repo: Path) -> Suite:
         drop_caches=drop_caches,
         defaults=raw.get("defaults", {}),
         sweeps=raw.get("sweep", []),
-        metrics=bool(raw.get("metrics", False)),
+        measure=bool(raw.get("measure", False)),
         notes=raw.get("notes", "").strip(),
     )
 
@@ -306,24 +302,6 @@ def _check_matrix(suite: Suite, path: Path) -> None:
         )
 
 
-def _flatten_tune(axes: dict) -> dict:
-    """Turns the `[axes.tune]` table into flat `tune.<field>` axis names.
-
-    TOML reads `tune.mlp_batch = [...]` as a nested table, not as a key with a dot in it, so a
-    suite writes the natural thing:
-
-        [axes.tune]
-        mlp_batch = [1, 16]
-
-    and everything downstream sees one flat axis named `tune.mlp_batch`. Flattening here rather
-    than teaching the expander about nesting keeps cells, dims and labels one level deep.
-    """
-    flat = {key: value for key, value in axes.items() if key != "tune"}
-    for field, values in (axes.get("tune") or {}).items():
-        flat[f"{TUNE_PREFIX}{field}"] = values
-    return flat
-
-
 def _arm(entry: dict, path: Path) -> Arm:
     try:
         name = entry["name"]
@@ -332,4 +310,4 @@ def _arm(entry: dict, path: Path) -> Arm:
     features = entry.get("features", [])
     if not isinstance(features, list):
         raise ConfigError(f"{path}: arm '{name}': features must be a list")
-    return Arm(name=name, features=tuple(features), metrics=bool(entry.get("metrics", False)))
+    return Arm(name=name, features=tuple(features), measure=bool(entry.get("measure", False)))

@@ -48,7 +48,7 @@ pub(super) enum TrypticQuery {
     /// Degenerate zero-length query: `match_start == match_end`, so neither substitution above
     /// exists and we fall back to the original four-read formulation. Unreachable in production
     /// (`search_proteins_for_peptide` drops peptides shorter than the sparseness factor), but
-    /// `search_matching_suffixes` is public, so stay bit-exact for it anyway.
+    /// `search_matching_suffixes_scalar` is public, so stay bit-exact for it anyway.
     ZeroLength
 }
 
@@ -56,7 +56,7 @@ pub(super) enum TrypticQuery {
 /// protein separator (a match at a protein start needs no cut).
 ///
 /// Searching `X + peptide` for each of these — instead of truncating the peptide — is what makes
-/// the tryptic path cheap; see `search_matching_suffixes` for the derivation. Ordered K, R,
+/// the tryptic path cheap; see `search_matching_suffixes_scalar` for the derivation. Ordered K, R,
 /// separator so the two common cases run first.
 pub(super) const TRYPTIC_EXTENSION_CHARS: [u8; 3] = [b'K', b'R', b'-'];
 

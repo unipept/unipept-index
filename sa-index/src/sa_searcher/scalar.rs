@@ -11,7 +11,7 @@ use super::{
     BoundSearch,
     BoundSearch::{Maximum, Minimum},
     BoundSearchResult, MAX_RESULT_PREALLOC, SearchAllSuffixesResult, Searcher,
-    metrics::Timer,
+    measure::Timer,
     tryptic::tryptic_extension_chars
 };
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
@@ -26,7 +26,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ///
     /// Returns `(found, bound_index)` where `found` is true if any suffix matched the full
     /// search string, and `bound_index` is the min (inclusive) or max (inclusive) SA index.
-    fn binary_search_bound_in_range(
+    fn binary_search_bound_scalar(
         &self,
         bound: BoundSearch,
         search_string: &[u8],
@@ -89,7 +89,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ///
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
-    pub fn search_bounds(&self, search_string: &[u8]) -> BoundSearchResult {
+    pub fn search_bounds_scalar(&self, search_string: &[u8]) -> BoundSearchResult {
         let (left, right, lcp_skip) = match &self.kmer_table {
             Some(table) if search_string.len() >= table.k => match table.lookup(&search_string[..table.k]) {
                 Some((lo, hi)) => (lo, hi + 1, table.k),
@@ -97,14 +97,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             },
             _ => (0, self.sa.len(), 0)
         };
-        self.search_bounds_within(search_string, left, right, lcp_skip)
+        self.search_bounds_inner_scalar(search_string, left, right, lcp_skip)
     }
 
-    /// `search_bounds` over the whole suffix array, never consulting the k-mer table.
+    /// `search_bounds_scalar` over the whole suffix array, never consulting the k-mer table.
     ///
     /// Required for search strings containing the protein separator, which the k-mer table
     /// cannot represent: `ALPHABET` in `kmer_table.rs` holds amino acids only, so
-    /// `bytes_to_kmer_index` returns `None` for any k-mer containing `-`, and `search_bounds`
+    /// `bytes_to_kmer_index` returns `None` for any k-mer containing `-`, and `search_bounds_scalar`
     /// would turn that into `NoMatches`. Routing the separator variant of the left-extended
     /// tryptic search through the table would therefore silently drop every protein-start
     /// match — roughly 3 % of all tryptic hits, and every protein's N-terminal peptide.
@@ -115,26 +115,26 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// k-mer table's ALPHABET would remove the special case, at +29 MB and a rebuild of every
     /// table file — not worth it while the bypass is free. Bounded by
     /// `test_extended_protein_start_with_kmer_table`.
-    fn search_bounds_full_range(&self, search_string: &[u8]) -> BoundSearchResult {
-        self.search_bounds_within(search_string, 0, self.sa.len(), 0)
+    fn search_bounds_full_range_scalar(&self, search_string: &[u8]) -> BoundSearchResult {
+        self.search_bounds_inner_scalar(search_string, 0, self.sa.len(), 0)
     }
 
-    /// Shared tail of `search_bounds` / `search_bounds_full_range`: the two bound searches over
+    /// Shared tail of `search_bounds_scalar` / `search_bounds_full_range_scalar`: the two bound searches over
     /// an already-chosen window.
-    fn search_bounds_within(
+    fn search_bounds_inner_scalar(
         &self,
         search_string: &[u8],
         left: usize,
         right: usize,
         lcp_skip: usize
     ) -> BoundSearchResult {
-        let (found_min, min_bound) = self.binary_search_bound_in_range(Minimum, search_string, left, right, lcp_skip);
+        let (found_min, min_bound) = self.binary_search_bound_scalar(Minimum, search_string, left, right, lcp_skip);
 
         if !found_min {
             return BoundSearchResult::NoMatches;
         }
 
-        let (_, max_bound) = self.binary_search_bound_in_range(Maximum, search_string, left, right, lcp_skip);
+        let (_, max_bound) = self.binary_search_bound_scalar(Maximum, search_string, left, right, lcp_skip);
 
         BoundSearchResult::SearchResult((min_bound, max_bound + 1))
     }
@@ -153,7 +153,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ///
     /// Returns all the matching suffixes
     #[inline]
-    pub fn search_matching_suffixes(
+    pub fn search_matching_suffixes_scalar(
         &self,
         search_string: &[u8],
         max_matches: usize,
@@ -161,7 +161,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         tryptic: bool
     ) -> SearchAllSuffixesResult {
         // There is no k-mer prefetch pass here, and there is no longer one in the batched path
-        // either. The call used to sit immediately before the `search_bounds` below that repeats
+        // either. The call used to sit immediately before the `search_bounds_scalar` below that repeats
         // the identical k-mer table lookup — no intervening work, so no latency to hide — and
         // once the mmap `madvise` behind it was removed, the hint it issued became a no-op and
         // only the discarded probe remained. Removing it from this path measured +0.3% median
@@ -221,8 +221,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
             let t_bounds = Timer::start();
-            let search_bound_result = self.search_bounds(&search_string[skip..]);
-            self.metrics.search_bounds_ns.add(t_bounds.elapsed_ns());
+            let search_bound_result = self.search_bounds_scalar(&search_string[skip..]);
+            self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
@@ -245,7 +245,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         // entries directly. The tight collect() loop lets the compiler emit
                         // efficient (potentially SIMD) code for the Vec fill.
                         let result: Vec<i64> = self.sa.iter_range(min_bound, min_bound + max_matches).collect();
-                        self.metrics.match_iter_ns.add(t_iter.elapsed_ns());
+                        self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                         return SearchAllSuffixesResult::MaxMatches(result);
                     }
                     // range_size < max_matches: collect all entries and continue to the next
@@ -253,7 +253,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     for s in self.sa.iter_range(min_bound, max_bound) {
                         matching_suffixes.push(s);
                     }
-                    self.metrics.match_iter_ns.add(t_iter.elapsed_ns());
+                    self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                 } else {
                     // Generic path: tryptic filtering, IL checking, or skip > 0.
                     let text = self.proteins.text();
@@ -271,7 +271,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         &mut matching_suffixes,
                         max_matches
                     );
-                    self.metrics.match_iter_ns.add(t_iter.elapsed_ns());
+                    self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
                         return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
                     }
@@ -296,14 +296,14 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
                 let t_bounds = Timer::start();
                 // The separator cannot be represented in the k-mer table — see
-                // `search_bounds_full_range` for why routing it there would silently drop every
+                // `search_bounds_full_range_scalar` for why routing it there would silently drop every
                 // protein-start match.
                 let bounds = if prefix_char == SEPARATION_CHARACTER {
-                    self.search_bounds_full_range(&extended)
+                    self.search_bounds_full_range_scalar(&extended)
                 } else {
-                    self.search_bounds(&extended)
+                    self.search_bounds_scalar(&extended)
                 };
-                self.metrics.search_bounds_ns.add(t_bounds.elapsed_ns());
+                self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
                 if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
                     let t_iter = Timer::start();
@@ -318,7 +318,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         &mut matching_suffixes,
                         max_matches
                     );
-                    self.metrics.match_iter_ns.add(t_iter.elapsed_ns());
+                    self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
                         return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
                     }
@@ -358,15 +358,15 @@ mod tests {
         let searcher = example_searcher_with(&EXAMPLE_SA_FULL, 1, Mapping::BitVec);
 
         // search bounds 'A'
-        let bounds_res = searcher.search_bounds(b"A");
+        let bounds_res = searcher.search_bounds_scalar(b"A");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((4, 9)));
 
         // search bounds '$'
-        let bounds_res = searcher.search_bounds(b"$");
+        let bounds_res = searcher.search_bounds_scalar(b"$");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((0, 1)));
 
         // search bounds 'AC'
-        let bounds_res = searcher.search_bounds(b"AC");
+        let bounds_res = searcher.search_bounds_scalar(b"AC");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((6, 8)));
     }
 
@@ -380,11 +380,11 @@ mod tests {
             let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, mapping);
 
             // 'VAA' sits at 7, which sparseness 3 does not sample: only skip = 1 finds it.
-            let found_suffixes = searcher.search_matching_suffixes(b"VAA", usize::MAX, false, false);
+            let found_suffixes = searcher.search_matching_suffixes_scalar(b"VAA", usize::MAX, false, false);
             assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![7]));
 
             // 'AC' matches twice, at a sampled (position 12 → skip 0) and an unsampled position.
-            let found_suffixes = searcher.search_matching_suffixes(b"AC", usize::MAX, false, false);
+            let found_suffixes = searcher.search_matching_suffixes_scalar(b"AC", usize::MAX, false, false);
             assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![5, 11]));
         }
     }
@@ -393,11 +393,11 @@ mod tests {
     fn test_il_equality() {
         let searcher = example_searcher_with(&EXAMPLE_SA_FULL, 1, Mapping::BitVec);
 
-        let bounds_res = searcher.search_bounds(b"I");
+        let bounds_res = searcher.search_bounds_scalar(b"I");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
 
         // search bounds 'RIZ' with equal I and L
-        let bounds_res = searcher.search_bounds(b"RIY");
+        let bounds_res = searcher.search_bounds_scalar(b"RIY");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((17, 18)));
     }
 
@@ -406,11 +406,11 @@ mod tests {
         let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, Mapping::Sparse);
 
         // search bounds 'RIZ' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes_scalar(b"RIY", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
         // search bounds 'RIZ' without equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(b"RIY", usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes_scalar(b"RIY", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
 
@@ -420,7 +420,7 @@ mod tests {
         let searcher = searcher_over_text("LMPYY$", 2);
 
         // search bounds 'IM' with equal I and L
-        let found_suffixes = searcher.search_matching_suffixes(b"IM", usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes_scalar(b"IM", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0]));
     }
 
@@ -428,7 +428,7 @@ mod tests {
     fn test_il_missing_matches() {
         let searcher = searcher_over_text("AAILLL$", 1);
 
-        let found_suffixes = searcher.search_matching_suffixes(b"I", usize::MAX, true, false);
+        let found_suffixes = searcher.search_matching_suffixes_scalar(b"I", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![2, 3, 4, 5]));
     }
 
@@ -440,7 +440,7 @@ mod tests {
         for text in ["IIIILL$", "IILLLL$"] {
             let searcher = searcher_over_text(text, 1);
 
-            let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, true, false);
+            let found_suffixes = searcher.search_matching_suffixes_scalar(b"II", usize::MAX, true, false);
             assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2, 3, 4]), "text {text}");
         }
     }
@@ -451,7 +451,7 @@ mod tests {
 
         // search all places where II is in the string IIIILL, but with a sparse SA
         // this way we check if filtering the suffixes works as expected
-        let found_suffixes = searcher.search_matching_suffixes(b"II", usize::MAX, false, false);
+        let found_suffixes = searcher.search_matching_suffixes_scalar(b"II", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![0, 1, 2]));
     }
 
@@ -459,10 +459,10 @@ mod tests {
     fn test_tryptic_search() {
         let searcher = searcher_over_text("PAA-AAKPKAPAA$", 1);
 
-        let found_suffixes_1 = searcher.search_matching_suffixes(b"PAA", usize::MAX, false, true);
+        let found_suffixes_1 = searcher.search_matching_suffixes_scalar(b"PAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_1, SearchAllSuffixesResult::SearchResult(vec![0]));
 
-        let found_suffixes_2 = searcher.search_matching_suffixes(b"APAA", usize::MAX, false, true);
+        let found_suffixes_2 = searcher.search_matching_suffixes_scalar(b"APAA", usize::MAX, false, true);
         assert_eq!(found_suffixes_2, SearchAllSuffixesResult::SearchResult(vec![9]));
     }
 
@@ -483,8 +483,8 @@ mod tests {
 
         for p in &peptides {
             assert_eq!(
-                kmered.search_matching_suffixes(p, usize::MAX, false, false),
-                plain.search_matching_suffixes(p, usize::MAX, false, false),
+                kmered.search_matching_suffixes_scalar(p, usize::MAX, false, false),
+                plain.search_matching_suffixes_scalar(p, usize::MAX, false, false),
                 "k-mer vs plain mismatch for {:?}",
                 std::str::from_utf8(p).unwrap()
             );
@@ -497,7 +497,7 @@ mod tests {
         let searcher = example_searcher();
 
         // "A" has 5 matches; cap at 2.
-        match searcher.search_matching_suffixes(b"A", 2, true, false) {
+        match searcher.search_matching_suffixes_scalar(b"A", 2, true, false) {
             SearchAllSuffixesResult::MaxMatches(v) => assert_eq!(v.len(), 2),
             other => panic!("expected MaxMatches, got {:?}", other)
         }
@@ -521,7 +521,10 @@ mod tests {
         let hits = peptides
             .iter()
             .filter(|p| {
-                !matches!(dense.search_matching_suffixes(p, usize::MAX, true, true), SearchAllSuffixesResult::NoMatches)
+                !matches!(
+                    dense.search_matching_suffixes_scalar(p, usize::MAX, true, true),
+                    SearchAllSuffixesResult::NoMatches
+                )
             })
             .count();
         assert!(hits >= 5, "fixture yields only {hits} tryptic hits; comparison would be weak");
@@ -531,8 +534,8 @@ mod tests {
             for equate_il in [false, true] {
                 for p in &peptides {
                     assert_eq!(
-                        sparse.search_matching_suffixes(p, usize::MAX, equate_il, true),
-                        dense.search_matching_suffixes(p, usize::MAX, equate_il, true),
+                        sparse.search_matching_suffixes_scalar(p, usize::MAX, equate_il, true),
+                        dense.search_matching_suffixes_scalar(p, usize::MAX, equate_il, true),
                         "sparseness={sparseness} equate_il={equate_il} peptide={:?}",
                         std::str::from_utf8(p).unwrap()
                     );
@@ -543,7 +546,7 @@ mod tests {
 
     // A match at a protein start is found through the `'-' + peptide` variant, which must bypass
     // the k-mer table: `'-'` is not in the table's ALPHABET, so a table lookup returns None and
-    // `search_bounds` would report NoMatches — silently losing every protein-start match.
+    // `search_bounds_scalar` would report NoMatches — silently losing every protein-start match.
     //
     // "PKTR" starts protein 2 at position 21, which is *odd*, so at sparseness 2 it is not in the
     // suffix array and can only be reached via the extended search (whose SA entry is the
@@ -557,15 +560,15 @@ mod tests {
 
         // Non-vacuous: the protein-start match really is there, and really is at position 21.
         assert_eq!(
-            plain.search_matching_suffixes(b"PKTR", usize::MAX, true, true),
+            plain.search_matching_suffixes_scalar(b"PKTR", usize::MAX, true, true),
             SearchAllSuffixesResult::SearchResult(vec![21]),
             "protein-start tryptic match missing from the un-tabled searcher"
         );
 
         for p in [&b"PKTR"[..], b"RIY", b"KTR", b"MKA", b"AKT", b"QST"] {
             assert_eq!(
-                kmered.search_matching_suffixes(p, usize::MAX, true, true),
-                plain.search_matching_suffixes(p, usize::MAX, true, true),
+                kmered.search_matching_suffixes_scalar(p, usize::MAX, true, true),
+                plain.search_matching_suffixes_scalar(p, usize::MAX, true, true),
                 "k-mer table changed the tryptic result for {:?}",
                 std::str::from_utf8(p).unwrap()
             );
@@ -580,14 +583,17 @@ mod tests {
 
         // "PKTR" at 21 is a protein start → found.
         assert_eq!(
-            s.search_matching_suffixes(b"PKTR", usize::MAX, true, true),
+            s.search_matching_suffixes_scalar(b"PKTR", usize::MAX, true, true),
             SearchAllSuffixesResult::SearchResult(vec![21])
         );
         // "PQST" at 16 is preceded by K (15), but proline blocks the cut → no tryptic match,
         // even though the same peptide matches fine without the tryptic filter.
-        assert_eq!(s.search_matching_suffixes(b"PQST", usize::MAX, true, true), SearchAllSuffixesResult::NoMatches);
         assert_eq!(
-            s.search_matching_suffixes(b"PQST", usize::MAX, true, false),
+            s.search_matching_suffixes_scalar(b"PQST", usize::MAX, true, true),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"PQST", usize::MAX, true, false),
             SearchAllSuffixesResult::SearchResult(vec![16])
         );
     }
@@ -603,14 +609,14 @@ mod tests {
     fn test_extended_guard_leaves_dense_index_alone() {
         let dense = searcher_over_text(TRYPTIC_FIXTURE, 1);
         assert_eq!(
-            dense.search_matching_suffixes(b"MKAPTR", usize::MAX, true, true),
+            dense.search_matching_suffixes_scalar(b"MKAPTR", usize::MAX, true, true),
             SearchAllSuffixesResult::SearchResult(vec![0]),
             "match at ms=0 lost on the dense index"
         );
         // and it survives on a sparse index too, via the skip=0 pass (0 is always sampled)
         for &sparseness in &[2u8, 3] {
             assert_eq!(
-                searcher_over_text(TRYPTIC_FIXTURE, sparseness).search_matching_suffixes(
+                searcher_over_text(TRYPTIC_FIXTURE, sparseness).search_matching_suffixes_scalar(
                     b"MKAPTR",
                     usize::MAX,
                     true,
@@ -636,13 +642,13 @@ mod tests {
 
         // range_size (70) < max_matches: both collect the full range via the fast path.
         assert_eq!(
-            searcher.search_matching_suffixes(b"A", usize::MAX, false, false),
-            searcher.search_matching_suffixes(b"A", usize::MAX, true, false)
+            searcher.search_matching_suffixes_scalar(b"A", usize::MAX, false, false),
+            searcher.search_matching_suffixes_scalar(b"A", usize::MAX, true, false)
         );
         // range_size (70) >= max_matches (10): both hit the MaxMatches cutoff identically.
         assert_eq!(
-            searcher.search_matching_suffixes(b"A", 10, false, false),
-            searcher.search_matching_suffixes(b"A", 10, true, false)
+            searcher.search_matching_suffixes_scalar(b"A", 10, false, false),
+            searcher.search_matching_suffixes_scalar(b"A", 10, true, false)
         );
     }
 
@@ -658,15 +664,18 @@ mod tests {
         let searcher = repeated_residue_searcher('L', n);
 
         // equate_il=true takes the fast path and happily returns 10 raw (unvalidated) matches...
-        match searcher.search_matching_suffixes(b"I", 10, true, false) {
+        match searcher.search_matching_suffixes_scalar(b"I", 10, true, false) {
             SearchAllSuffixesResult::MaxMatches(v) => assert_eq!(v.len(), 10),
             other => panic!("expected MaxMatches, got {:?}", other)
         }
         // ...but equate_il=false must still validate and reject them all: no position actually
         // holds 'I'. Covers both the range_size >= max_matches and < max_matches branches.
-        assert_eq!(searcher.search_matching_suffixes(b"I", 10, false, false), SearchAllSuffixesResult::NoMatches);
         assert_eq!(
-            searcher.search_matching_suffixes(b"I", usize::MAX, false, false),
+            searcher.search_matching_suffixes_scalar(b"I", 10, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(
+            searcher.search_matching_suffixes_scalar(b"I", usize::MAX, false, false),
             SearchAllSuffixesResult::NoMatches
         );
     }

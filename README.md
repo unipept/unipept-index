@@ -42,13 +42,20 @@ while the metadata table is the largest thing in the index and read once per rep
 `--features mmap,preloaded-text` keeps the index mapped but the hottest structure resident — worth
 measuring on your own data before choosing a default.
 
-**`preloaded-proteins` is a bet on the index fitting.** It is +17% over plain `mmap` with
-everything resident, and that is the only regime where it leads: preloaded metadata is
-non-evictable, so under memory pressure it displaces page cache for the suffix array instead of
-being reclaimed. Measured on the full UniProt index, `mmap` is ahead at every ceiling that binds,
-and at 78 GB the preloaded arm loses 96% of its throughput to a 25x fault rate. Use it when
-residency is guaranteed; do not use it where the ceiling might move. The numbers are in the
-"When the index does not fit in RAM" section of `sa-index/src/lib.rs`.
+**If you preload anything, preload the text as well as the metadata.**
+`--features mmap,preloaded-text,preloaded-proteins` is the fastest configuration measured that
+still leaves the 160 GB suffix array mapped: on the full UniProt index it beats
+`mmap,preloaded-proteins` alone in all 16 default cells, and ties the fully preloaded build.
+Preloading only the metadata is the configuration to avoid — it carries the highest resident
+footprint of any arm (250 GB against 242 GB fully preloaded) and still leaves search mapped, which
+is where the remaining gap lives.
+
+**Any of them is a bet on the index fitting.** Preloaded memory is non-evictable, so under pressure
+it displaces the page cache the mapped structures live in rather than being reclaimed. Measured
+against a falling ceiling, plain `mmap` is ahead of `mmap,preloaded-proteins` at every ceiling that
+binds, and at 78 GB the preloaded arms lose almost all their throughput to the fault rate. Preload
+when residency is guaranteed; do not where the ceiling might move. The numbers are in the "When the
+index does not fit in RAM" section of `sa-index/src/lib.rs`.
 
 These nine feature combinations are the ones the server exposes; the types themselves compose into
 sixteen, and `sa-index`'s `backend_agreement` test builds every one of them and asserts they return
@@ -188,7 +195,7 @@ give identical answers:
 
 ```bash
 cargo test                                  # everything, both backends
-cargo test -p sa-index --features metrics   # the one remaining feature
+cargo test -p sa-index --features measure   # the one remaining feature
 ```
 
 CI additionally checks that all nine of `sa-server`'s feature combinations typecheck. Lints:
@@ -247,7 +254,7 @@ Every run writes a self-contained `report.html` — sidebar, row filter, sortabl
 its results, plus `report.md` and, for `all`, a `report.json` a later run can use as its baseline.
 
 Measurement code stays out of what ships. The hot-path instrumentation is behind `sa-index`'s
-`metrics` feature, which compiles to nothing when off and which CI proves `sa-server` and
+`measure` feature, which compiles to nothing when off and which CI proves `sa-server` and
 `sa-builder` never enable; run-level measurement lives in `sa-benchmarks`, which never ships at all.
 
 ## Further reading

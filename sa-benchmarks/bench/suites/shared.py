@@ -1,9 +1,8 @@
 """Reporting every suite needs, that no single suite owns.
 
-Two things live here. The first is stating what tuning a set of records ran at: both the suite that
-holds the knobs fixed and the suite that sweeps them have to say so, and they have to say it the
-same way — a report where "held at the shipped value" and "overridden" are worded differently
-depending on which suite produced it is a report whose reader has to learn two vocabularies.
+Two things live here. The first is stating what configuration a set of records ran at, in one
+vocabulary — a report where two suites word the same fact differently is a report whose reader has
+to learn both.
 
 The second is reading a matrix-mode grid. `defaults`, `kmer` and `mlp` are the same experiment
 pointed at different coordinates: one process per arm, a grid swept inside it, one row per cell with
@@ -17,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import median
 
-from ..charts import FACET_PLANE, Series, by_residency, heatmap, lines, sequential_heatmap
+from ..charts import Series, by_residency, lines
 from ..records import NOISE_FLOOR_PCT, Record, delta_pct
 from ..report import Report, Table, band, pct, qps
 
@@ -26,7 +25,7 @@ from ..report import Report, Table, band, pct, qps
 #: `amount_of_peptides` is in here because a block that runs a shorter query stream is not
 #: comparable with one that runs the full one — the per-rep setup amortises differently — so two
 #: cells that differ only by it must stay two cells rather than silently becoming one.
-GRID_KEYS = ("peptide_source", "equate_il", "tryptic", "kmer_k", "mlp_batch", "amount_of_peptides")
+GRID_KEYS = ("peptide_source", "equate_il", "tryptic", "kmer_k", "amount_of_peptides")
 
 #: Coordinates the configuration table reports, in reading order. A superset of `GRID_KEYS`: the
 #: table names everything a cell ran at, including coordinates no suite currently varies, because
@@ -37,7 +36,6 @@ CONTEXT_KEYS = ("peptide_source", "amount_of_peptides", "kmer_k", "equate_il", "
 #: How a coordinate's value is printed in the configuration table.
 _COORD_LABELS = {
     "kmer_k": lambda k: {0: "none", 5: "5-mer", 6: "6-mer"}.get(k, str(k)),
-    "mlp_batch": lambda b: "scalar" if b == 1 else str(b),
     "amount_of_peptides": lambda n: f"{n:,} queries",
     "peptide_source": str,
 }
@@ -61,32 +59,27 @@ def held_and_swept(report: Report, loaded: list[Record]) -> None:
     at a glance: four sentences of `field=value, field=value` is where the shipped defaults used to
     live, and nobody reads to the end of it to notice that one knob is not at its default.
 
-    So: one row per setting, the swept one marked, and a `shipped` column that makes an override
-    impossible to miss. Everything is read out of the records — both the values used and the
-    defaults they are compared against — so a field added to `SearchTuning` appears here the first
-    time it is measured with no change to this file. That is what `tuning_defaults` is carried for:
-    a report that hardcoded the defaults would start lying the day one is re-tuned, which is exactly
-    when it matters.
+    So: one row per setting, with the swept one marked. Everything is read out of the records, so a
+    coordinate a suite starts varying appears here the first time it is measured with no change to
+    this file.
 
     Split in two, because the two halves are read at different times. What the suite VARIES is the
     suite's subject and stays open; what it HOLDS is the background, and in a full report it is the
-    same seven rows of `held at the shipped default` under every one of ten suites. Folding it keeps
-    it one click away rather than seventy lines of the page — and an OVERRIDDEN row is never folded,
-    since a run that is not at the shipped tuning has to say so where it cannot be missed.
+    same rows under every suite. Folding it keeps it one click away rather than a screenful.
+
+    The `shipped` column is vestigial and always reads `-`: it distinguished a runtime knob held at
+    its default from one overridden on the command line, and the searcher no longer has any. It is
+    left in place because the column still carries meaning the day something settable comes back.
     """
     configs = [record.config for record in loaded if record.config]
     if not configs:
         return
-    defaults = next((config.get("tuning_defaults") for config in configs if config.get("tuning_defaults")), {})
 
     rows: list[tuple[str, set, object]] = []
     for key in _WORKLOAD_KEYS + tuple(k for k in CONTEXT_KEYS if k not in _WORKLOAD_KEYS):
         values = {config.get(key) for config in configs if config.get(key) is not None}
         if values:
             rows.append((key, values, None))
-    for field in sorted({key for config in configs for key in (config.get("tuning") or {})}):
-        values = {(config.get("tuning") or {}).get(field) for config in configs}
-        rows.append((field, {value for value in values if value is not None}, defaults.get(field)))
 
     def new_table() -> Table:
         return Table(
@@ -127,12 +120,12 @@ def held_and_swept(report: Report, loaded: list[Record]) -> None:
     if varies.rows:
         report.table(varies)
     if held.rows:
-        report.table(held, raw=f"held at the shipped defaults ({len(held.rows)} settings)")
+        report.table(held, raw=f"held fixed ({len(held.rows)} settings)")
 
     if overridden:
         report.warn(
-            "this run is NOT at the shipped tuning — " + ", ".join(overridden) + " was overridden. "
-            "Its numbers describe that tuning, not the defaults."
+            "this run is NOT at the shipped configuration — " + ", ".join(overridden) + " was "
+            "overridden. Its numbers describe that configuration, not the defaults."
         )
     if mixed:
         report.para(
@@ -181,10 +174,6 @@ def by_cell(
     process, so every record from one arm shares that arm's dims and only the config tells them
     apart.
 
-    Each key is looked up in `config` first and in `config.tuning` second, so a coordinate that is a
-    searcher knob (`mlp_batch`) is found the same way as one that is not (`equate_il`) — and moving
-    a field into `SearchTuning` later would not break this.
-
     The phase timings come along because throughput alone cannot say WHERE a configuration spends
     itself. From schema v14 they are pooled over the same reps as the throughput; before it they
     were the representative rep's, and `_phase_ms` still falls back to those. That distinction was
@@ -209,8 +198,7 @@ def by_cell(
         if config.get("sweep") == DRIFT:
             # The reference repeats are the correction, not a measurement of anything.
             continue
-        tuning = config.get("tuning", {})
-        key = tuple(config.get(name, tuning.get(name)) for name in keys)
+        key = tuple(config.get(name) for name in keys)
         spread = record.spread()
         p10, p50, p90 = spread if spread else (record.qps, record.qps, record.qps)
         result = record.result
@@ -235,12 +223,6 @@ def by_cell(
             # What the process this cell came from could resolve at all, however tight this one
             # cell's own reps happened to be. `floor_of` folds it in.
             "floor": series.floor if series else float("nan"),
-            # Kept so a caller can tell how far off the shipped tuning a cell is. A suite sweeping
-            # one knob has to exclude the cells a PLANE block moved two knobs in, or its curve is
-            # several curves overlaid and its "context" is whatever the other knob happened to be.
-            "off_default": tuple(
-                sorted(name for name, value in tuning.items() if (config.get("tuning_defaults") or {}).get(name) != value)
-            ),
         })
     return {key: {arm: _fold_slots(slots) for arm, slots in arms.items()} for key, arms in cells.items()}
 
@@ -461,7 +443,7 @@ def varying(cells: dict[tuple, dict], keys: tuple[str, ...] = GRID_KEYS) -> list
 
     A grid narrowed in its suite file should narrow its table too: a column that reads `16` in every
     row is not a coordinate, it is a caption, and it belongs in the prose above the table where it
-    is stated once. `held_and_swept` already prints the tuning half of that.
+    is stated once. `held_and_swept` already prints the held half of that.
     """
     return [
         name
@@ -515,20 +497,14 @@ def kmer_label(k) -> str:
     return {0: "none", 5: "5-mer", 6: "6-mer"}.get(k, str(k))
 
 
-def batch_label(batch) -> str:
-    """`mlp_batch = 1` is not a batch size, it is the scalar path, and reads better said so."""
-    return "scalar" if batch == 1 else str(batch)
-
-
 #: The arm a composition figure is drawn for, when only one can be. The deployed configuration, so
 #: the split shown is the split production actually pays.
 DEPLOYED_ARM = "pprot"
 
 #: The k-mer size that ships, mirrored from `sa-builder`'s `--kmer-size` default.
 #:
-#: Every `SearchTuning` field is read out of the binary, so the driver cannot drift from what ships.
-#: The table is the exception: it is a build-time artefact chosen by `sa-builder`, not a searcher
-#: knob, so nothing in a record says which k is production. It is written here instead of at each
+#: Nothing in a record says which k is production — the table is a build-time artefact chosen by
+#: `sa-builder`, not something the searcher reads. It is written here instead of at each
 #: use, so changing the shipped table is one edit rather than a hunt — and the `kmer = [...]` lines
 #: in `suites/*.toml` have to be moved with it, since those are what actually pin the background.
 SHIPPED_KMER_K = 6
@@ -717,10 +693,6 @@ COLUMN_TIPS = {
     "verdict": "What the delta and the floor beside it add up to, stated so it cannot be skimmed past.",
     "arm": "Which storage build produced this row.",
     "kmer": "The k-mer table attached for this row. `none` is the reference the others are read against.",
-    "mlp_batch": (
-        "How many independent peptide searches are interleaved per rayon task. "
-        "1 is the scalar path; the shipped value is what the server passes on every request."
-    ),
     "resolved": (
         "How many of this knob's contexts produced a difference clearing their own floor. "
         "The verdict is decided on these, not on the raw argmaxes in the winners column."
@@ -749,8 +721,8 @@ def tips_for(headers) -> dict[str, str]:
 #: Length regimes short to long; anything else follows alphabetically.
 BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
 
-#: Per-value formatting for the knobs that read better as words than as numbers.
-KNOB_LABELS = {"mlp_batch": batch_label, "kmer_k": kmer_label}
+#: Per-value formatting for the coordinates that read better as words than as numbers.
+KNOB_LABELS = {"kmer_k": kmer_label}
 
 #: How a context coordinate reads inside a compound label. `equate_il=false · tryptic=false ·
 #: amount_of_peptides=10000` is three facts and sixty characters, and it prefixes every row of
@@ -761,8 +733,6 @@ CONTEXT_LABELS = {
     # same thing in the reader's own words, and the page paints them as coloured pills.
     "amount_of_peptides": lambda value: f"{value:,}q",
     "kmer_k": kmer_label,
-    "mlp_batch": lambda value: f"mlp {batch_label(value)}",
-    "validate_batch": lambda value: f"validate {value}",
 }
 
 
@@ -788,24 +758,6 @@ def order_buckets(sources) -> list[str]:
     return known + sorted(name for name in sources if name not in BUCKET_ORDER)
 
 
-def shipped_value(loaded: list[Record], knob: str, fallback=None):
-    """What the binary reports as this knob's default, so no suite restates it.
-
-    Read out of `tuning_defaults` on the records rather than written down here: a report that
-    hardcoded a default would start lying the day it is re-tuned, which is exactly when a re-tuning
-    suite is being read.
-
-    A coordinate OUTSIDE `SearchTuning` — `amount_of_peptides`, `max_matches` — has no entry there
-    and falls through to `fallback`, which is the first swept value and is usually the wrong
-    reference. Such a suite should pass `reference` to `knob_analysis` explicitly.
-    """
-    for record in loaded:
-        value = (record.config.get("tuning_defaults") or {}).get(knob)
-        if value is not None:
-            return value
-    return fallback
-
-
 def knob_analysis(
     report: Report,
     suite,
@@ -816,15 +768,16 @@ def knob_analysis(
     mechanism: str = "",
     reference=None,
 ) -> None:
-    """The whole report for a suite whose subject is one `SearchTuning` knob.
+    """The whole report for a suite whose subject is one swept coordinate.
 
-    `mlp`, `validate` and any knob suite after them are the same analysis pointed at a different
-    field, so it lives here once: the configuration table, the resolution table, a curve per context
-    normalised to the shipped value, a verdict per context, and a folded section per length regime
-    with the phase split.
+    `stream` is the one such suite left, but this is written for any of them: the configuration
+    table, the resolution table, a curve per context normalised to `reference`, a verdict per
+    context, and a folded section per length regime with the phase split.
 
-    What each suite supplies is the knob's name and its mechanism. Nothing here knows the field list
-    — a knob added to `SearchTuning` is analysable the day a suite names it.
+    What the suite supplies is the coordinate's name, its mechanism, and the value every curve is
+    read against. That last one used to be optional — a `SearchTuning` field carried its shipped
+    default on the record — and is now required in practice, because nothing on a record says what
+    a coordinate's reference value is.
     """
     label = KNOB_LABELS.get(knob, fmt_tune)
     keys = GRID_KEYS if knob in GRID_KEYS else GRID_KEYS + (knob,)
@@ -837,26 +790,17 @@ def knob_analysis(
         held_and_swept(report, loaded)
         report.warn(f"only one {knob} value ran — there is no curve to read.")
         return
-    # `reference` is what every curve is read against. A `SearchTuning` field has one on the record
-    # and needs nothing here; a coordinate that is not a knob — the query count, the match cutoff —
-    # has no shipped value at all, and falling back to the first swept value picks the smallest.
-    # That is how `stream` came to report "+2229.7%" against a ten-peptide call.
-    shipped = reference if reference is not None else shipped_value(loaded, knob, values[0])
+    # `reference` is what every curve is read against. Without one there is nothing to normalise
+    # to but the first swept value, which is the smallest — that is how `stream` came to report
+    # "+2229.7%" against a ten-peptide call. Suites should pass it.
+    shipped = reference if reference is not None else values[0]
     if shipped not in values:
         shipped = values[-1] if reference is not None else values[0]
 
     # Everything that varies besides the knob and the peptide file, which is what sections the
     # report. A suite crossing its knob with `tryptic` gets two lines per regime rather than one
     # silently overwriting the other.
-    # A knob the suite also crosses in a plane block varies in `cells` but is not a context — it is
-    # the other axis of a figure this analysis does not draw. Excluded from both.
-    swept_elsewhere = {
-        name
-        for per_arm in cells.values()
-        for cell in per_arm.values()
-        for name in cell.get("off_default", ())
-        if name != knob
-    }
+    swept_elsewhere: set[str] = set()
     extra = [
         name
         for name in varying(cells, keys)
@@ -903,10 +847,9 @@ def knob_analysis(
 def knob_points(cells: dict, keys: tuple, index: int, extra: list[str], knob: str | None = None) -> dict:
     """`(source, context label) -> arm -> {swept value: cell}`.
 
-    With `knob`, cells that move any OTHER tuning field off its default are left out. A suite that
-    sweeps one knob and also sweeps a plane has both kinds of cell in its records, and folding them
-    together gives a curve that is several curves overlaid — the point at `validate_batch=64` would
-    be whichever `mlp_batch` the plane happened to visit last.
+    `knob` is accepted and unused: it filtered out cells that a plane block had moved a SECOND
+    tuning field in, so that one suite's curve was not several curves overlaid. There are no tuning
+    fields and no plane blocks any more, so every cell in `cells` belongs to the curve.
     """
     points: dict[tuple[str, tuple], dict[str, dict]] = {}
     for key, per_arm in cells.items():
@@ -916,8 +859,6 @@ def knob_points(cells: dict, keys: tuple, index: int, extra: list[str], knob: st
         # that occurred, which is the opposite of a filter.
         context = tuple(key[keys.index(name)] for name in extra)
         for arm, cell in per_arm.items():
-            if knob and any(name != knob for name in cell.get("off_default", ())):
-                continue
             points.setdefault((key[0], context), {}).setdefault(arm, {})[key[index]] = cell
     return points
 
@@ -1071,7 +1012,7 @@ def _knob_verdict_tiles(report, outcomes: list[tuple], label, knob: str, shipped
         best_value = f"{label(shipped)} → {label(winner)}"
         reading = (
             f"`{knob}={label(winner)}` wins every context that resolved "
-            f"({len(cleared)} of {len(outcomes)}) — proposed as a change to `SearchTuning::default()`."
+            f"({len(cleared)} of {len(outcomes)}) — a candidate for the shipped value."
         )
     else:
         # Not "unresolved" — these contexts resolved perfectly well, they just disagree. The two
@@ -1147,239 +1088,3 @@ def _knob_table(report, points, sources, values, arms, label, knob, shipped, ext
 # ---------------------------------------------------------------------------
 # Knob planes
 # ---------------------------------------------------------------------------
-
-
-def knob_planes(report: Report, loaded: list[Record], keys: tuple[str, ...] | None = None) -> list[bool]:
-    """Every two-knob plane in the records, as a heatmap against the shipped configuration.
-
-    The question a plane answers and a pair of curves cannot: is the ridge diagonal? If the best
-    value of one knob depends on the other, one-at-a-time sweeping reports the slice through the
-    default point and never sees the rest.
-
-    That question is now drawn as well as written: the ridge — the best cell in each row — is a
-    polyline over the plane, so a peak that moves is a line that bends and a reader sees the
-    interaction before reading a word. The text readout stays as the table-view twin.
-
-    The planes are one facet grid on one diverging key rather than a column of full-width figures,
-    for the same reason everything else here is: six of them, each with its own legend, is the same
-    legend six times and six scroll-lengths between the first and the last.
-
-    Cells that sit on an axis of the plane were measured as one-knob cells, so they live on that
-    knob's curve rather than in the plane. Both are pulled in, which is what keeps the grid whole
-    instead of leaving its edges blank.
-
-    Returns one flag per plane: whether that plane's peak MOVED, which is the suite's finding.
-    """
-    grouped = _plane_cells(loaded, keys)
-    if not grouped:
-        return []
-    planes, singles, bases = grouped
-    figures: list[str] = []
-    rates: list[str] = []
-    readouts: list[str] = []
-    moved: list[bool] = []
-
-    for (knobs, context), points in sorted(planes.items(), key=str):
-        base = bases.get(context)
-        if base is None or not base["p50"]:
-            continue
-        rows = _in_order({key[1] for key in points})
-        columns = _in_order({key[0] for key in points})
-        grid = {}
-        rate = {}
-        for row, down in enumerate(rows):
-            for column, across in enumerate(columns):
-                cell = points.get((across, down)) or _axis_cell(singles, knobs, across, down, context, base)
-                if cell is None or not cell["p50"]:
-                    continue
-                difference = delta_pct(cell["p50"], base["p50"])
-                floor = floor_of(cell, base)
-                hover = (
-                    f"{knobs[0]}: {fmt_tune(across)}\n"
-                    f"{knobs[1]}: {fmt_tune(down)}\n"
-                    f"throughput: {cell['p50']:,.0f} qps\n"
-                    f"at the shipped pair: {base['p50']:,.0f} qps\n"
-                    f"difference: {difference:+.1f}% (floor {floor:.1f}%)"
-                )
-                grid[(row, column)] = (difference, floor, hover)
-                rate[(row, column)] = (cell["p50"], hover)
-        peaks = _peaks(grid, rows, columns)
-        moved.append(len({column for _, column in peaks}) > 1)
-        headers = [fmt_tune(value) for value in columns]
-        side = [fmt_tune(value) for value in rows]
-        figures.append(
-            heatmap(
-                headers,
-                side,
-                grid,
-                context,
-                pos_label="faster than shipped",
-                neg_label="slower",
-                frame=FACET_PLANE,
-                x_title=knobs[0],
-                y_title=knobs[1],
-                # One key above the grid, drawn from the first plane only — every plane uses the
-                # same diverging scale by construction.
-                legend=not figures,
-                ridge=peaks,
-            )
-        )
-        # The same cells as the throughput they were measured at. The diverging view answers "is
-        # this better than what ships", which is the suite's question, and answers it as a wall of
-        # neutral cells whenever the knobs do nothing — correct, and unreadable as the only view.
-        # This one just shows the numbers, on a ramp scaled to the plane so the shape is visible at
-        # all; the key states the spread against the noise floor, so a shape made of scatter says so.
-        values = [value for value, _ in rate.values()]
-        if values:
-            low, high = min(values), max(values)
-            rates.append(
-                sequential_heatmap(
-                    headers,
-                    side,
-                    rate,
-                    context,
-                    low,
-                    high,
-                    " qps",
-                    frame=FACET_PLANE,
-                    ridge=peaks,
-                    floor=base.get("floor"),
-                    compact=True,
-                    x_title=knobs[0],
-                    y_title=knobs[1],
-                )
-            )
-        readouts += _ridge(grid, rows, columns, knobs) + [""]
-
-    if figures:
-        knob_names = sorted({knobs for knobs, _ in planes})
-        axes = (
-            f"columns: {knob_names[0][0]} · rows: {knob_names[0][1]}"
-            if len(knob_names) == 1
-            else "one knob pair per plane — see the readout below"
-        )
-        # Throughput leads. It is the reading that always says something: the deltas collapse to one
-        # neutral colour on a suite where nothing clears its floor, which is most of them, and a
-        # reader who opens the section to a grey grid learns nothing until they have read the prose.
-        variants = [("throughput", rates)] if rates else []
-        variants.append(("vs shipped", figures))
-        report.switch("cell", variants, default=variants[0][0])
-        report.para(
-            f"The same planes, twice ({axes}). **throughput** is what each pair measured, on a ramp "
-            f"scaled to that plane — read the spread beside its key before its shape, since a plane "
-            f"that varies by less than its floor has none. **vs shipped** is each cell against the "
-            f"shipped pair, neutral wherever the difference is inside the noise. "
-            f"The dark line is the ridge — the best cell in each row; a ridge that bends is the "
-            f"interaction a one-at-a-time sweep cannot see."
-        )
-        report.lines(readouts[:-1])
-    return moved
-
-
-def _peaks(grid: dict, rows: list, columns: list) -> list[tuple[int, int]]:
-    """The best cell in each row, as (row, column) — the ridge, for drawing and for counting."""
-    out = []
-    for row in range(len(rows)):
-        row_cells = {column: grid[(row, column)][0] for column in range(len(columns)) if (row, column) in grid}
-        if row_cells:
-            out.append((row, max(row_cells, key=lambda column: row_cells[column])))
-    return out
-
-
-def _plane_cells(loaded: list[Record], keys: tuple[str, ...] | None):
-    """`(planes, single-knob cells, reference cells)`, all keyed by context.
-
-    Grouped straight off the records rather than through `by_cell`, because a plane's coordinates
-    are the two knobs a cell moved — which is a property of the cell, not a fixed column list.
-    """
-    keys = keys or GRID_KEYS
-    drift = drift_by_process(loaded)
-    planes: dict[tuple, dict] = {}
-    singles: dict[tuple, dict] = {}
-    bases: dict[str, dict] = {}
-
-    for index, record in _positions(loaded):
-        config = record.config
-        if config.get("sweep") == DRIFT:
-            continue
-        tuning = config.get("tuning") or {}
-        defaults = config.get("tuning_defaults") or {}
-        moved = tuple(sorted(name for name, value in tuning.items() if defaults.get(name) != value))
-        spread = record.spread()
-        p10, p50, p90 = spread if spread else (record.qps, record.qps, record.qps)
-        series = drift.get(_process_key(record))
-        scale = series.scale_at(index) if series else 1.0
-        cell = {
-            "p10": p10 * scale,
-            "p50": p50 * scale,
-            "p90": p90 * scale,
-            "floor": series.floor if series else float("nan"),
-            "tuning": tuning,
-        }
-        context = _plane_context(record, keys)
-        if len(moved) == 2:
-            planes.setdefault((moved, context), {})[(tuning[moved[0]], tuning[moved[1]])] = cell
-        elif len(moved) == 1:
-            singles[((moved[0], tuning[moved[0]]), context)] = cell
-        else:
-            bases[context] = cell
-    return (planes, singles, bases) if planes else None
-
-
-def _plane_context(record: Record, keys: tuple[str, ...]) -> str:
-    """Everything about a cell except its tuning — what a plane's numbers must be read against.
-
-    The two booleans are spelled out, `tryptic=false` as readily as `tryptic=true`. This used to
-    append the coordinate's NAME when it was true and nothing at all when it was false, so the
-    non-tryptic plane was identified by noticing an ABSENT word next to its twin — and a reader who
-    saw only one of the two had no way to tell which they were looking at. It is also what lets the
-    page tag the figure with the mode it was measured under; `charts._figure` reads this text, and a
-    coordinate that goes unwritten cannot be filtered on.
-    """
-    config = record.config
-    parts = [str(record.dims.get("arm", "?"))]
-    for name in ("peptide_source", "kmer_k", "equate_il", "tryptic", "amount_of_peptides"):
-        value = config.get(name)
-        if value is None:
-            continue
-        if name == "peptide_source":
-            parts.append(str(value))
-        elif name == "kmer_k":
-            parts.append(kmer_label(value))
-        elif name == "amount_of_peptides":
-            parts.append(f"{value:,}q")
-        else:
-            parts.append(context_label(name, bool(value)))
-    return " · ".join(parts)
-
-
-def _axis_cell(singles: dict, knobs: tuple, across, down, context: str, base: dict) -> dict | None:
-    """The plane point that lies on an axis, recovered from the one-knob cells."""
-    shipped = base["tuning"]
-    if across == shipped.get(knobs[0]) and down == shipped.get(knobs[1]):
-        return base
-    if across == shipped.get(knobs[0]):
-        return singles.get(((knobs[1], down), context))
-    if down == shipped.get(knobs[1]):
-        return singles.get(((knobs[0], across), context))
-    return None
-
-
-def _ridge(grid: dict, rows: list, columns: list, knobs: tuple) -> list[str]:
-    """Where the best column sits in each row — a diagonal here is the interaction."""
-    out = [f"  best {knobs[0]} per {knobs[1]}:"]
-    peaks = []
-    for row, peak in _peaks(grid, rows, columns):
-        peaks.append(peak)
-        out.append(
-            f"    {knobs[1]}={fmt_tune(rows[row]):<6} -> {knobs[0]}={fmt_tune(columns[peak]):<6} "
-            f"({grid[(row, peak)][0]:+.1f}% against the shipped pair)"
-        )
-    if len(set(peaks)) > 1:
-        out.append(
-            f"  the peak MOVES: the best {knobs[0]} is not the same at every {knobs[1]}, which is "
-            f"the interaction a one-at-a-time sweep cannot see."
-        )
-    elif peaks:
-        out.append(f"  the peak holds at one {knobs[0]} for every {knobs[1]} — no interaction here.")
-    return out

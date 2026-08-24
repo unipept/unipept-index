@@ -17,10 +17,7 @@ is printed and the run proceeds, because most of what invalidates a comparison (
 co-tenant job) is the operator's call and not something to refuse over.
 
 The counts here are the same expansion the runner executes — `select` is what both call — so the
-plan cannot describe a different run from the one that happens. The one caveat is a matrix suite's
-grid before its arms are built: the shipped tuning defaults are read out of a binary, so the cell
-count is an upper bound by at most one cell per knob until then (see `runner.tuning_defaults`). The
-progress bar re-totals from the real grid once the arms exist.
+plan cannot describe a different run from the one that happens.
 """
 
 from __future__ import annotations

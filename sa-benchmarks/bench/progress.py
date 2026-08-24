@@ -66,9 +66,8 @@ class Progress:
     def begin_suite(self, name: str, weight: int, cells: int) -> None:
         """Starts a suite, correcting the session total with its now-exact weight.
 
-        The preflight's estimate for a matrix suite is an upper bound until its arms are built (the
-        shipped tuning defaults are read out of a binary), so the total is restated here rather than
-        left to describe a grid nobody ran.
+        A suite that is skipped, or whose grid the preflight could only estimate, would otherwise
+        leave the session total describing a run nobody performed.
         """
         self.begun.add(name)
         self.total += weight - self.estimates.get(name, 0)

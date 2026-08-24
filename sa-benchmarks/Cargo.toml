@@ -22,7 +22,7 @@ preloaded-mapping = ["sa-server/preloaded-mapping"]
 # Pass-through for sa-index's hot-path instrumentation. Off by default so timing runs are
 # uninstrumented; switch it on for diagnostic runs that want the phase breakdown and the
 # tryptic candidate acceptance rate.
-metrics = ["sa-index/metrics"]
+measure = ["sa-index/measure"]
 
 [dependencies]
 sa-index            = { path = "../sa-index" }

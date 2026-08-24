@@ -117,7 +117,7 @@ pub fn search_proteins_for_peptide<
         return None;
     }
 
-    let suffix_search = searcher.search_matching_suffixes(peptide.as_bytes(), cutoff, equate_il, tryptic);
+    let suffix_search = searcher.search_matching_suffixes_scalar(peptide.as_bytes(), cutoff, equate_il, tryptic);
     let (suffixes, cutoff_used) = match suffix_search {
         SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
         SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
@@ -217,7 +217,7 @@ where
     //
     // Retrieval is per peptide by design: a cross-query batched variant was built and measured
     // (run3) and moved throughput by a median of +1.7%, never clearing the noise floor. See the
-    // module comment on `sa_searcher::orchestrate` for the full result.
+    // module comment on `sa_searcher::batched` for the full result.
     prepared
         .par_iter()
         .zip(suffix_results.par_iter())

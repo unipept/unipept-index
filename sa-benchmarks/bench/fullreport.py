@@ -372,8 +372,8 @@ def _settings_line(name: str, args, repo: Path) -> str:
     for key, label in (("peptides", "queries"), ("kmer_table", "kmer"), ("warmup", "warmup")):
         if defaults.get(key):
             parts.append(f"{label} {defaults[key]}")
-    if suite.metrics:
-        parts.append("instrumented (metrics)")
+    if suite.measure:
+        parts.append("instrumented (measure)")
     if suite.axes:
         parts.append("axes " + ", ".join(f"{axis}={values}" for axis, values in sorted(suite.axes.items())))
     if suite.mode == "matrix":

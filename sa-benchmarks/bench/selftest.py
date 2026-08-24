@@ -123,16 +123,8 @@ def build_threads(root: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# tuning: a process whose machine drifts, knobs that do and do not matter
+# a process whose machine drifts
 # ---------------------------------------------------------------------------
-
-#: The shipped tuning the fabricated records claim to have been built against.
-TUNING_DEFAULTS = {
-    "mlp_batch": 16,
-    "validate_batch": 64,
-    "prefetch_threshold": 32,
-    "retrieval_prefetch_distance": 32,
-}
 
 #: How much slower the fabricated machine gets from the first cell of a process to the last.
 #: Linear, so the drift cadence can cancel it exactly and any residual is a bug in the analysis
@@ -155,7 +147,7 @@ def _grid_record(suite: str, dims: dict, config: dict, qps: float) -> dict:
         "commit": "selftest",
         "suite": suite,
         "dims": {key: str(value) for key, value in dims.items()},
-        "config": {"tuning_defaults": TUNING_DEFAULTS, "peptide_source": "mixed", **config},
+        "config": {"peptide_source": "mixed", **config},
         "startup": {"load_total_ms": 1000, "warmup_ms": 500},
         "result": {
             "throughput_qps": qps,
@@ -193,7 +185,6 @@ def _write_drifting(out_dir: Path, suite: str, plan: list[tuple[dict, float]], c
     dims = {"arm": "mmap", "threads": "default", "ceiling_gb": 0, "features": "mmap"}
 
     reference = {
-        "tuning": dict(TUNING_DEFAULTS),
         "sweep": "drift",
         "kmer_k": 5,
         "equate_il": True,
@@ -215,116 +206,8 @@ def _write_drifting(out_dir: Path, suite: str, plan: list[tuple[dict, float]], c
     return out_dir
 
 
-def build_validate(root: Path) -> Path:
-    """The validate_batch curve, its tryptic twin, and a plane with a diagonal ridge.
-
-    One claim per group:
-
-      * `validate_batch = 128` is a real +15% at 10,000 queries, placed late in a process that is
-        getting slower, so it reads as a win only under drift correction.
-      * the 2,000-query tryptic block wins at a DIFFERENT value, and its throughput is deliberately
-        implausible against the block above — a report that folded the two stream lengths into one
-        curve would put the shipped value four times below every swept value and call it a
-        landslide.
-      * the `mlp_batch` x `validate_batch` plane has a diagonal ridge: the best batch rises with the
-        validation batch, which is the interaction one-at-a-time sweeping structurally cannot see.
-    """
-    base = 100_000.0
-    cells: list[tuple[dict, float]] = []
-
-    def add(qps: float, *, amount: int = 10_000, tryptic: bool = False, sweep: str = "curve", **tune) -> None:
-        cells.append((
-            {
-                "tuning": {**TUNING_DEFAULTS, **tune},
-                "sweep": sweep,
-                "grid_slot": "a",
-                "kmer_k": 5,
-                "equate_il": True,
-                "tryptic": tryptic,
-                "amount_of_peptides": amount,
-                "peptide_source": "mixed",
-            },
-            qps,
-        ))
-
-    for tryptic in (False, True):
-        add(base, tryptic=tryptic)
-        for value in (16, 32, 256):
-            add(base * 1.005, tryptic=tryptic, validate_batch=value)
-    # Late, and therefore deepest into the fabricated slowdown: only a drift-corrected number can
-    # still see this as a win.
-    for tryptic in (False, True):
-        add(base * 1.15, tryptic=tryptic, validate_batch=128)
-    return _write_drifting(root / "validate", "validate", cells, cadence=12)
-
-
-def build_mlp_validate(root: Path) -> Path:
-    """A plane with a diagonal ridge: the best mlp_batch rises with the validation batch.
-
-    That is the interaction one-at-a-time sweeping structurally cannot see, and the only reason this
-    suite exists — so the fixture has it, and the check fails if the ridge readout stops saying so.
-    """
-    base = 100_000.0
-    cells: list[tuple[dict, float]] = []
-
-    def cell(tune: dict, qps: float) -> None:
-        cells.append((
-            {
-                "tuning": {**TUNING_DEFAULTS, **tune},
-                "sweep": "plane",
-                "grid_slot": "a",
-                "kmer_k": 5,
-                "equate_il": True,
-                "tryptic": False,
-                "amount_of_peptides": 10_000,
-                "peptide_source": "mixed",
-            },
-            qps,
-        ))
-
-    # The reference cell every plane point is read against. Without one the plane has no origin and
-    # the whole grid is skipped — which is a real failure mode, so the fixture has to carry it.
-    cell({}, base)
-    for validate, peak in ((16, 4), (32, 4), (128, 16), (256, 64)):
-        for mlp in (1, 4, 16, 64):
-            cell({"mlp_batch": mlp, "validate_batch": validate}, base * (1.20 if mlp == peak else 0.95))
-    return _write_drifting(root / "mlp_validate", "mlp_validate", cells, cadence=12)
-
-
-
-
-def build_prefetch(root: Path) -> Path:
-    """A 4x4 plane where nothing clears the floor — the null result this suite exists to state.
-
-    Every pair within a percent of the shipped one. The suite has to report that as FLAT and as
-    grounds for dropping both knobs, not as sixteen small effects.
-    """
-    base = 100_000.0
-    cells = []
-    for index, threshold in enumerate((8, 16, 32, 64)):
-        for offset, distance in enumerate((8, 16, 32, 64)):
-            cells.append((
-                {
-                    "tuning": {
-                        **TUNING_DEFAULTS,
-                        "prefetch_threshold": threshold,
-                        "retrieval_prefetch_distance": distance,
-                    },
-                    "sweep": "plane",
-                    "grid_slot": "a",
-                    "kmer_k": 5,
-                    "equate_il": True,
-                    "tryptic": False,
-                    "amount_of_peptides": 10_000,
-                    "peptide_source": "mixed",
-                },
-                base * (1.0 + 0.002 * ((index + offset) % 3)),
-            ))
-    return _write_drifting(root / "prefetch", "prefetch", cells, cadence=8)
-
-
 # ---------------------------------------------------------------------------
-# defaults / kmer / mlp: the three narrow matrix suites
+# defaults / kmer: the narrow matrix suites
 # ---------------------------------------------------------------------------
 
 
@@ -343,11 +226,11 @@ COUNTERS = (
 def _write_grid(out_dir: Path, suite: str, arm: str, cells: list[tuple[dict, float]]) -> None:
     """One process's jsonl: an arm, and the cells it swept in the order it swept them."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    dims = {"arm": arm, "features": "metrics" if arm.endswith("+m") else arm, "slot": "a"}
+    dims = {"arm": arm, "features": "measure" if arm.endswith("+m") else arm, "slot": "a"}
     with (out_dir / f"{arm.replace('+', '_')}__a.jsonl").open("w") as handle:
         for config, qps in cells:
             counters = {name: config.pop(name) for name in COUNTERS if name in config}
-            record = _grid_record(suite, dims, {"tuning": dict(TUNING_DEFAULTS), **config}, qps)
+            record = _grid_record(suite, dims, dict(config), qps)
             record["result"].update(counters)
             handle.write(json.dumps(record) + "\n")
 
@@ -490,35 +373,6 @@ def build_kmer(root: Path) -> Path:
 MLP_CURVE = {1: 0.70, 4: 0.85, 8: 0.96, 16: 1.00, 32: 0.995, 64: 0.99, 128: 0.98}
 
 
-def build_mlp(root: Path) -> Path:
-    """A curve that peaks at the shipped batch for preloaded, and is flat for mmap.
-
-    Both readings have to survive: "the shipped batch is the peak" is the answer that leaves the
-    default alone, and a flat curve is the answer that says batching is not the constraint here.
-    Neither is "no data", and a report that only knew how to name a winner would invent one.
-    """
-    out_dir = root / "mlp"
-    for arm in ("preloaded", "mmap", "pprot"):
-        cells = []
-        for source, base in BUCKETS.items():
-            for batch, gain in MLP_CURVE.items():
-                cells.append((
-                    {
-                        "peptide_source": source,
-                        "kmer_k": 5,
-                        "equate_il": True,
-                        "tryptic": False,
-                        "amount_of_peptides": 10_000,
-                        "sweep": "mlp",
-                        "grid_slot": "a",
-                        "tuning": {**TUNING_DEFAULTS, "mlp_batch": batch},
-                    },
-                    base * (1.0 if arm == "mmap" else gain),
-                ))
-        _write_grid(out_dir, "mlp", arm, cells)
-    return out_dir
-
-
 def _check_defaults_baseline(root: Path, repo) -> list[str]:
     """The gate's other half: a cell that moved past its floor must read as a REGRESSION.
 
@@ -556,47 +410,25 @@ def _check_grid() -> list[str]:
             failures.append(f"grid: {label}")
         print(f"  {'ok  ' if ok else 'FAIL'} grid     {label}")
 
-    knobs = {"tune": {"mlp_batch": [1, 16, 64], "validate_batch": [16, 64, 256]}}
-
-    ofat = grid.tuning_points({"name": "t", "strategy": "ofat", **knobs}, TUNING_DEFAULTS)
-    # 1 base + (3-1) per knob: the shipped value of each knob is already the base point.
-    check("ofat spends 1 + sum(len-1) points, not their product", len(ofat) == 5)
-    check("ofat emits no duplicate point", len({tuple(sorted(p.items())) for p in ofat}) == len(ofat))
-    check(
-        "an ofat point holds every other knob at its shipped value",
-        all(all(p[k] == v for k, v in TUNING_DEFAULTS.items() if k not in ("mlp_batch", "validate_batch")) for p in ofat),
-    )
-
-    paired = grid.tuning_points(
-        {"name": "t", "strategy": "pairs", "pairs": [{"axes": ["mlp_batch", "validate_batch"]}], **knobs},
-        TUNING_DEFAULTS,
-    )
-    # The 3x3 plane already contains both lines through the default point, so the total is the
-    # plane, not the plane plus the lines.
-    check("a pair costs |A|x|B|, absorbing the lines it subsumes", len(paired) == 9)
-    check("a pair emits no duplicate point", len({tuple(sorted(p.items())) for p in paired}) == len(paired))
-
+    # `tuning_points`, `ofat`, `pairs` and `full` all went with `SearchTuning`: a block has no
+    # knobs to walk, so what is left to check is that it expands its CONTEXTS correctly, dedups on
+    # the measurement, groups cells by process, and interleaves the drift cadence.
     try:
-        grid.tuning_points({"name": "t", "strategy": "pairs", "pairs": [{"axes": ["mlp_batch"]}], **knobs}, TUNING_DEFAULTS)
-        check("a one-axis pair is rejected", False)
-    except grid.GridError:
-        check("a one-axis pair is rejected", True)
-    try:
-        grid.tuning_points({"name": "t", "strategy": "ofat", "tune": {"nope": [1]}, "pairs": [{"axes": ["nope", "x"]}]}, TUNING_DEFAULTS)
-        check("a pair axis with no values is rejected", False)
-    except grid.GridError:
-        check("a pair axis with no values is rejected", True)
-    try:
-        grid.expand([{"name": "t", "strategy": "base", "arms": ["mmap"], "files": ["mixed"], "kmr": [5]}], TUNING_DEFAULTS)
+        grid.expand([{"name": "t", "arms": ["mmap"], "files": ["mixed"], "kmr": [5]}])
         check("a misspelled context key is rejected", False)
     except grid.GridError:
         check("a misspelled context key is rejected", True)
+    try:
+        grid.expand([{"name": "t", "arms": ["mmap"], "files": ["mixed"], "tune": {"mlp_batch": [1]}}])
+        check("a block still carrying `tune` is rejected", False)
+    except grid.GridError as error:
+        check("a block still carrying `tune` is rejected", "SearchTuning" in str(error))
 
     # Two blocks describing the same measurement must collapse: identity is what was measured, not
     # which block asked for it.
-    common = {"arms": ["mmap"], "files": ["mixed"], "kmer": [5], "strategy": "base"}
+    common = {"arms": ["mmap"], "files": ["mixed"], "kmer": [5]}
     expanded = grid.expand(
-        [{"name": "one", **common}, {"name": "two", **common}], TUNING_DEFAULTS, suite_defaults={"runs": 8, "amount": 10}
+        [{"name": "one", **common}, {"name": "two", **common}], suite_defaults={"runs": 8, "amount": 10}
     )
     cells = expanded[("mmap", "default", 0)]
     check("two blocks describing the same cell collapse into one", len(cells) == 1)
@@ -604,26 +436,23 @@ def _check_grid() -> list[str]:
     # ... but not when they measure it at different precision, which is a different measurement.
     expanded = grid.expand(
         [{"name": "one", **common}, {"name": "two", "amount": 2_000, **common}],
-        TUNING_DEFAULTS,
         suite_defaults={"runs": 8, "amount": 10_000},
     )
     check("the same cell at two precisions stays two cells", len(expanded[("mmap", "default", 0)]) == 2)
 
     # Process grouping: a block naming one arm must not put cells in the other arm's process.
     expanded = grid.expand(
-        [{"name": "m", "arms": ["mmap"], "threads": [48], "files": ["mixed"], "strategy": "base"}],
-        TUNING_DEFAULTS,
+        [{"name": "m", "arms": ["mmap"], "threads": [48], "files": ["mixed"]}],
     )
     check("cells land in the process their block named", list(expanded) == [("mmap", 48, 0)])
 
     # The cadence must interleave rather than replace, and must bracket the last stretch.
     expanded = grid.expand(
-        [{"name": "k", "arms": ["mmap"], "files": ["mixed"], "strategy": "ofat", "base_every": 2, **knobs}],
-        TUNING_DEFAULTS,
+        [{"name": "k", "arms": ["mmap"], "files": ["mixed"], "kmer": [0, 5, 6], "base_every": 2}],
     )
     cells = expanded[("mmap", "default", 0)]
     drift = [cell for cell in cells if cell["sweep"] == "drift"]
-    check("the drift cadence is interleaved, not substituted", len(cells) - len(drift) == 5)
+    check("the drift cadence is interleaved, not substituted", len(cells) - len(drift) == 3)
     check("every drift mark has its own slot", len({cell["grid_slot"] for cell in drift}) == len(drift))
     check("the last stretch of cells is bracketed by a closing mark", cells[-1]["sweep"] == "drift")
     return failures
@@ -633,7 +462,8 @@ CHECKS = {
     "defaults": [
         ("equate_il", "the two search options must be the table's columns"),
         ("by length regime", "the regimes must be one figure on one scale, not a section each"),
-        ("held at the shipped default", "held knobs must be stated against the value that ships"),
+        ("kmer_k", "the k-mer table this suite held fixed must be named in the configuration table"),
+        ("fixed", "a coordinate the suite did not vary must be marked as held, not left implicit"),
         ("a panel of the figure each", "the peptide file is how results are faceted, not what is swept"),
         ("preloaded ahead", "a backend gap past the floor must name the winner"),
         ("mmap ahead", "and must name the other one when the sign flips"),
@@ -658,25 +488,6 @@ CHECKS = {
         ("for nothing this run can show", "a table inside the floor must be a cost, not a tie"),
         ("2.85 GB", "the price of an unresolved table must travel with the verdict"),
         ("reference", "the no-table row must be marked as what the others are read against"),
-    ],
-    "mlp": [
-        ("the shipped value is the peak", "a curve peaking at the shipped value must leave it alone"),
-        ("flat", "a curve with nothing above the floor must read as flat, not as a winner"),
-        ("scalar", "mlp_batch=1 is the scalar path and must be named as one"),
-    ],
-    "validate": [
-        ("validate_batch=128", "a real win late in a drifting process must survive the correction"),
-        ("tryptic", "each swept search option must get a column of its own, not a joined label"),
-        ("residual", "the resolution table must state what the process could resolve at all"),
-    ],
-    "mlp_validate": [
-        ("the peak MOVES", "a diagonal ridge in a plane must be reported"),
-        ("residual", "the resolution table must state what the process could resolve at all"),
-    ],
-    "prefetch": [
-        ("FLAT", "a plane where nothing clears its floor must say so, not list small effects"),
-        ("grounds for dropping both knobs", "a null result must be stated as the finding it is"),
-        ("prefetch_threshold", "both knobs must be named as the suite's subject"),
     ],
     "ram": [
         ("VOID", "the cell whose cap did not bind must read as VOID, not as a throughput"),
@@ -946,52 +757,10 @@ def _check_charts() -> list[str]:
     return failures
 
 
-def _check_unknown_knob() -> list[str]:
-    """A `SearchTuning` field this driver has never heard of must still be swept and reported.
-
-    That is the whole contract of the generic tuning path: adding a knob in Rust should need no
-    change on this side. The check uses a made-up field name, so it passes only if nothing here is
-    matching against a list of known knobs.
-    """
-    from .records import Record
-    from .report import Report
-    from .suites.shared import held_and_swept as _held
-
-    made_up = "a_knob_this_driver_has_never_heard_of"
-    loaded = [
-        Record({"config": {"tuning": {made_up: value, "validate_batch": 64},
-                           "tuning_defaults": {made_up: 7, "validate_batch": 64}}})
-        for value in (7, 9)
-    ]
-    report = Report()
-    _held(report, loaded)
-    text = report.to_text()
-
-    failures = []
-    for needle, why in (
-        (made_up, "a knob this driver has never heard of must appear in the configuration table"),
-        ("SWEPT", "a knob varied across cells must be marked as the suite's subject"),
-        ("held at the shipped default", "a knob left alone must say so against the shipped value"),
-    ):
-        if needle not in text:
-            failures.append(f"tuning: {why}")
-        print(f"  {'ok  ' if needle in text else 'FAIL'} tuning   {why}")
-
-    # And an override of a knob it has never heard of must still be called out.
-    overridden = [Record({"config": {"tuning": {made_up: 99}, "tuning_defaults": {made_up: 7}}})]
-    report = Report()
-    _held(report, overridden)
-    flagged = "NOT at the shipped tuning" in report.to_text()
-    if not flagged:
-        failures.append("tuning: an overridden knob must be flagged even if unknown to the driver")
-    print(f"  {'ok  ' if flagged else 'FAIL'} tuning   an overridden unknown knob is flagged")
-    return failures
-
-
 def main() -> int:
     random.seed(7)
     repo = rig.repo_root()
-    failures: list[str] = _check_categories() + _check_charts() + _check_unknown_knob() + _check_grid()
+    failures: list[str] = _check_categories() + _check_charts() + _check_grid()
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -999,12 +768,8 @@ def main() -> int:
         for name, build in (
             ("defaults", build_defaults),
             ("kmer", build_kmer),
-            ("mlp", build_mlp),
             ("ram", build_ram),
             ("threads", build_threads),
-            ("validate", build_validate),
-            ("mlp_validate", build_mlp_validate),
-            ("prefetch", build_prefetch),
         ):
             out_dir = build(root)
             suite = config.load(name, repo)

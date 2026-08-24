@@ -22,7 +22,7 @@ that ran different stream lengths are not comparable, so a suite holding everyth
 must hold this constant too. Here it IS the variable.
 
 The mechanism is occupancy. `search_all_matching_suffixes` splits its input with
-`par_chunks(tuning.mlp_batch)`, so a call of N peptides produces `N / mlp_batch` rayon tasks. At the
+`par_chunks(MLP_BATCH)`, so a call of N peptides produces `N / 16` rayon tasks. At the
 10,000 every other suite measures, that is 625 tasks and the machine is saturated. At a realistic
 50-peptide request it is three, and on a twelve-core box nine cores idle for the whole call.
 Retrieval has the same shape: it parallelises over the peptides that matched.
@@ -62,7 +62,6 @@ amount = 10000
 
 [[sweep]]
 name = "stream"
-strategy = "base"
 arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
 kmer = [6]
 equate_il = [true]

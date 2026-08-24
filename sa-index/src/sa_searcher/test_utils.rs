@@ -12,21 +12,22 @@
 //! combination — there is no `#[cfg]` here, and none is mirrored from `sa-server`.
 //!
 //! Most tests want one combination and take the default, [`PreloadedSearcher`]. The one that wants
-//! all sixteen is `super::backend_agreement`, which asserts they answer identically.
+//! all sixteen is `super::tests::every_backend_combination_returns_identical_results`, which
+//! asserts they answer identically; [`fingerprint`] below is what it compares.
 
 use std::{
     io::Write,
     ops::{Deref, DerefMut}
 };
 
-use sa_mappings::proteins::{InMemoryProteins, Protein, ProteinsBackend};
+use sa_mappings::proteins::{InMemoryProteins, MmapBackedProteins, Protein, ProteinsBackend};
 use tempfile::NamedTempFile;
-use text_compression::{InMemoryProteinText, LoadIndex, WriteBinary};
+use text_compression::{InMemoryProteinText, LoadIndex, MmapBackedProteinText, WriteBinary};
 
 use crate::{
     KmerTable,
     array::{InMemorySA, OriginalSA, SuffixArrayBackend},
-    sa_searcher::{SearchTuning, Searcher},
+    sa_searcher::{PREFETCH_THRESHOLD, RETRIEVAL_PREFETCH_DISTANCE, SearchAllSuffixesResult, Searcher},
     suffix_to_protein_index::{
         BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein,
         SuffixToProteinMappingBackend
@@ -199,18 +200,17 @@ pub(crate) fn example_searcher() -> TestSearcher {
 /// A single protein of `n` copies of one residue, terminated — the fixture for anything that
 /// needs an SA range larger than a hand-written array can conveniently give.
 ///
-/// `n` must clear both defaults that gate the two-pass paths: `prefetch_threshold` and
-/// `retrieval_prefetch_distance`, both 32. Callers pass 70. The requirement is asserted rather than
+/// `n` must clear both constants that gate the two-pass paths: `PREFETCH_THRESHOLD` and
+/// `RETRIEVAL_PREFETCH_DISTANCE`, both 32. Callers pass 70. The requirement is asserted rather than
 /// left to a comment because a fixture that no longer reaches the two-pass path does not fail — it
 /// quietly tests the scalar loop instead and goes on passing, which is the failure mode worth
-/// catching. A default raised past 70 is exactly what would trigger it.
+/// catching. Either constant raised past 70 is exactly what would trigger it.
 ///
 /// Use `'A'` for a residue the I/L rules do not touch, and `'L'` to make `equate_il` matter:
 /// `compare` normalises L to I, so searching `"I"` over an all-`L` text matches every position
 /// during the bound search and every one of them must then be rejected by validation.
 pub(crate) fn repeated_residue_searcher(residue: char, n: usize) -> TestSearcher {
-    let tuning = SearchTuning::default();
-    let gate = tuning.prefetch_threshold.max(tuning.retrieval_prefetch_distance);
+    let gate = PREFETCH_THRESHOLD.max(RETRIEVAL_PREFETCH_DISTANCE);
     assert!(
         n > gate,
         "repeated_residue_searcher: n={n} does not clear the two-pass gate ({gate}); \
@@ -260,7 +260,7 @@ pub(crate) fn tryptic_fixture_peptides() -> Vec<Vec<u8>> {
 /// that, sparse/L-containing fixtures would exercise a suffix array no real build produces.
 ///
 /// `sparseness` keeps only the SA entries whose text position is a multiple of it, which is
-/// the sparse layout `search_matching_suffixes` compensates for with its `skip` loop.
+/// the sparse layout `search_matching_suffixes_scalar` compensates for with its `skip` loop.
 /// Each `-`-separated segment becomes a protein with taxon `10, 20, …`.
 pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> TestSearcher {
     let normalised: Vec<u8> = text.bytes().map(|c| if c == b'L' { b'I' } else { c }).collect();
@@ -282,3 +282,86 @@ pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> TestSearcher {
 
     build_searcher(text, proteins, positions, sparseness, Mapping::BitVec)
 }
+
+// ── Backend agreement ───────────────────────────────────────────────────────────────────
+//
+// The searcher is generic over three backends, each with an owned and a mapped implementation, and
+// the protein struct is generic over its text backend on top of that — sixteen combinations in all.
+// Which one a binary uses is a build-time choice made in `sa-server`; which one is *correct* is
+// none, individually, because they are all the same index read three different ways.
+//
+// So one test asserts the only property that matters across them: same files in, same answers out.
+// Every other test in this crate runs on the fully-owned combination alone, and that is what
+// entitles them to. The fixture below is its subject; the test itself is in `super::tests`.
+
+/// One row per (mapping representation, peptide, equate_il, tryptic): the result-variant tag, the
+/// sorted matching suffixes, and the `(taxon_id, uniprot_id)` pairs they retrieve.
+///
+/// Suffixes are sorted because the batched path may emit them in a different order than the scalar
+/// one; that ordering is not part of the contract, but the set is.
+pub(crate) type Fingerprint = Vec<(&'static str, &'static str, bool, bool, &'static str, Vec<i64>, Vec<(u32, String)>)>;
+
+/// Peptides over [`EXAMPLE_TEXT`] (`"AI-CLACVAA-AC-KCRLY$"`), chosen to hit every branch a backend
+/// could get wrong: a hit in several proteins, a single hit, one that only matches with I/L
+/// equated, one that only survives without the tryptic filter, and one that matches nothing.
+const PEPTIDES: [&[u8]; 5] = [b"AC", b"CLACVAA", b"AL", b"KCRLY", b"WWW"];
+
+/// Searches every peptide against a freshly built searcher of the requested backend combination.
+pub(crate) fn fingerprint<SA, P, STPM>() -> Fingerprint
+where
+    SA: SuffixArrayBackend + LoadIndex,
+    P: ProteinsBackend + LoadIndex,
+    STPM: SuffixToProteinMappingBackend + LoadIndex
+{
+    let mut rows = Fingerprint::new();
+
+    // The three suffix-to-protein representations are a runtime choice, not a type parameter, so
+    // covering them here is free — it does not multiply the monomorphisations.
+    for (mapping_name, mapping) in [("dense", Mapping::Dense), ("sparse", Mapping::Sparse), ("bitvec", Mapping::BitVec)]
+    {
+        let searcher =
+            build_searcher::<SA, P, STPM>(EXAMPLE_TEXT, example_protein_list(), EXAMPLE_SA_FULL.to_vec(), 1, mapping);
+
+        for equate_il in [false, true] {
+            for tryptic in [false, true] {
+                for peptide in PEPTIDES {
+                    let (tag, mut suffixes) = match searcher
+                        .search_all_matching_suffixes(&[peptide], usize::MAX, equate_il, tryptic)
+                        .remove(0)
+                    {
+                        SearchAllSuffixesResult::NoMatches => ("none", Vec::new()),
+                        SearchAllSuffixesResult::MaxMatches(s) => ("max", s),
+                        SearchAllSuffixesResult::SearchResult(s) => ("found", s)
+                    };
+                    suffixes.sort();
+
+                    let mut proteins: Vec<(u32, String)> = searcher
+                        .retrieve_proteins(&suffixes)
+                        .iter()
+                        .map(|p| (p.taxon_id, p.uniprot_id.to_string()))
+                        .collect();
+                    proteins.sort();
+
+                    rows.push((
+                        mapping_name,
+                        std::str::from_utf8(peptide).unwrap(),
+                        equate_il,
+                        tryptic,
+                        tag,
+                        suffixes,
+                        proteins
+                    ));
+                }
+            }
+        }
+    }
+
+    rows
+}
+
+// The four ways `proteins.bin` can be read. The text and the metadata are independent axes over
+// one file, which is why there are four rather than two.
+pub(crate) type OwnedProteins = InMemoryProteins<InMemoryProteinText>;
+pub(crate) type OwnedMetaMappedText = InMemoryProteins<MmapBackedProteinText>;
+pub(crate) type MappedMetaOwnedText = MmapBackedProteins<InMemoryProteinText>;
+pub(crate) type MappedProteins = MmapBackedProteins<MmapBackedProteinText>;

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import grid
-from .config import TUNE_PREFIX, Cell, Suite
+from .config import Cell, Suite
 from .profile import Profile
 from .rig import RigError, check_peptide_supply, drop_caches, is_root
 
@@ -67,8 +67,7 @@ class Runner:
         self.progress = progress
         # Not created here: `--check` and `--dry-run` build a Runner purely to expand and weigh the
         # cell list, and a question about a run should not leave a session directory behind.
-        self._grid: dict[tuple, list[dict]] = {}
-        self._grid_key: tuple | None = None
+        self._grid: dict[tuple, list[dict]] | None = None
 
     # -- planning
 
@@ -80,14 +79,11 @@ class Runner:
     def grid(self) -> dict[tuple, list[dict]]:
         """`(arm, threads, ceiling_gb) -> [grid cell]` for a `[[sweep]]` suite; empty otherwise.
 
-        Recomputed once the arms are built, because the shipped tuning defaults are read out of a
-        binary: before the build there may be none to ask, and a dry run then reports a cell count
-        that is an upper bound (see `tuning_defaults`).
+        Expanded from the suite file alone, so it is the same before and after the arms are built —
+        which is what makes a dry run's cell count exact rather than an upper bound.
         """
-        key = tuple(sorted(self.binaries))
-        if self._grid_key != key:
+        if self._grid is None:
             self._grid = self._expand_grid()
-            self._grid_key = key
         return self._grid
 
     def _expand_grid(self) -> dict[tuple, list[dict]]:
@@ -95,7 +91,6 @@ class Runner:
             return {}
         return grid.expand(
             self.suite.sweeps,
-            tuning_defaults(self.binaries, self.profile.repo, echo=self.echo),
             suite_axes=self.suite.axes,
             suite_files=self.suite.defaults.get("files", []),
             suite_defaults=self.suite.defaults,
@@ -332,12 +327,6 @@ class Runner:
             args += ["--equate-il", _bool(settings["equate_il"])]
         if "tryptic" in settings:
             args += ["--tryptic", _bool(settings["tryptic"])]
-        # Every `tune.<field>` setting, passed straight through. This driver never learns the field
-        # names: the harness validates them against the real `SearchTuning`, so a knob added there
-        # is sweepable the same day without a change here.
-        for key, value in sorted(settings.items()):
-            if key.startswith(TUNE_PREFIX):
-                args += ["--tune", f"{key[len(TUNE_PREFIX):]}={_tune_value(value)}"]
         return args
 
     def _kmer_args(self, settings: dict[str, Any]) -> list[str]:
@@ -434,35 +423,6 @@ class Runner:
         return lines
 
 
-def tuning_defaults(binaries: dict[str, Path], repo: Path, echo=print) -> dict[str, Any]:
-    """The shipped `SearchTuning`, read out of a built harness.
-
-    A grid that sweeps one knob has to hold the others at their shipped values, and this side must
-    know what those are to tell "the default point" from "the swept value that happens to equal it"
-    — the two are one measurement and must not be run twice. Asking the binary rather than keeping a
-    copy here is what stops that copy from going stale the day a default is re-tuned, silently and
-    while still producing plausible tables.
-
-    Before the arms are built there may be nothing to ask. That only happens under `--dry-run`, and
-    the consequence is bounded: the default point stops deduplicating against the swept values equal
-    to it, so the planned cell count is an upper bound by at most one cell per knob. Said out loud
-    rather than guessed at.
-    """
-    for candidate in [*binaries.values(), repo / "target" / "release" / "sa-benchmarks"]:
-        if not candidate.exists():
-            continue
-        result = subprocess.run(
-            [str(candidate), "--tuning-defaults"], capture_output=True, text=True, check=False
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return json.loads(result.stdout)
-    echo(
-        "  note: no harness binary to read the shipped tuning defaults from, so the planned cell "
-        "count is an upper bound (a swept value equal to a default will not fold into the base cell)"
-    )
-    return {}
-
-
 def _warmup_for(cell: Cell, warmup: Any) -> str | None:
     """Translates a suite's warmup setting for this arm.
 
@@ -502,7 +462,3 @@ def _kmer_k(name: str) -> int:
 def _bool(value: Any) -> str:
     return "true" if str(value).lower() in ("true", "1", "yes", "on") else "false"
 
-
-def _tune_value(value: Any) -> str:
-    """TOML booleans reach us as Python bools, which stringify as `True` — Rust wants `true`."""
-    return _bool(value) if isinstance(value, bool) else str(value)

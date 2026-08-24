@@ -11,12 +11,16 @@
 //!     prints the planned config list without touching the index.
 //!
 //! The matrix grid is always the driver's: `--grid-file` names a JSONL cell list, one object per
-//! line, and each cell may set any `SearchTuning` knob plus its own rep count and query count.
+//! line, and each cell sets its k-mer size, its search options, its rep count and its query count.
 //! This binary carries no grid of its own — it used to, and a grid described half in Rust and half
 //! in TOML could only be widened by editing both, so every suite's sweep now lives in its suite
-//! file. That is also what lets a sweep vary knobs this binary has never heard of: cells are
-//! resolved through `SearchTuning`'s own serde representation, so a knob added to that struct is
-//! sweepable the same day, and a misspelled one is an error rather than a silent no-op.
+//! file.
+//!
+//! There is no longer a tuning axis. The searcher's performance parameters became compile-time
+//! constants once the sweeps could not separate any of their values from noise, so `--tune` and
+//! the `tune` key in a grid cell are gone with them. Restoring one means giving the searcher a
+//! runtime field again and re-teaching this binary to set it; `sa_index::sa_searcher::tuning`
+//! carries the evidence and the argument.
 //!
 //! Dev-only: this crate is a workspace member but is excluded from `default-members`, so a
 //! plain `cargo build` skips it. Build and run it explicitly:
@@ -28,7 +32,7 @@
 //!     --peptide-file <peptides.txt> --amount-of-peptides 10000 --runs 20 --warmup all
 //! ```
 //!
-//! The `metrics` feature adds the per-candidate counters and the internal phase breakdown, at
+//! The `measure` feature adds the per-candidate counters and the internal phase breakdown, at
 //! the cost of perturbing what it measures — keep it off for timing runs.
 //!
 //! This binary measures **one** configuration per invocation and knows nothing about sweeps. The
@@ -50,7 +54,7 @@ use clap::Parser;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use sa_index::{
-    KmerTable, ProteinsBackend as _, SearchTuning, SuffixArrayBackend,
+    KmerTable, ProteinsBackend as _, SuffixArrayBackend,
     kmer_table::AMINO_ACID_COUNT,
     peptide_search::{ProteinInfo, SearchResult, frame_chunks, json_chunk},
     sa_searcher::{SearchAllSuffixesResult, Searcher},
@@ -66,6 +70,9 @@ use text_compression::ProteinTextBackend as _;
 /// v3: every `SearchTuning` field is recorded in `config` (was previously implicit/default),
 ///     plus a `phase` tag so records from different sweeps are groupable in one jsonl file;
 ///     `result` gains `candidates_examined` / `candidates_accepted`.
+/// v12: `SearchTuning` is gone — its fields are compile-time constants now — so `config.tuning`
+///     and `config.tuning_defaults` are no longer written. A reader that wants to know what a
+///     record ran at reads the commit, not the record.
 /// v4: the OFAT and confirm sweeps were retired once they had settled which knobs matter, so
 ///     `config.ofat_baseline` / `config.ofat_knob` are gone and `config.phase` is now only
 ///     "single" (non-matrix CLI run) or "grid" (matrix sweep).
@@ -245,32 +252,6 @@ struct Args {
     #[arg(long)]
     build_kmer_table: Option<usize>,
 
-    /// Override one `SearchTuning` knob, as `field=value`. Repeatable.
-    ///
-    /// Generic on purpose: `SearchTuning` is the searcher's single home for performance knobs, and
-    /// this flag reaches every field it has — including any added later — without this binary
-    /// needing to know their names. Anything not overridden keeps `SearchTuning::default()`, so an
-    /// unqualified run measures what ships.
-    ///
-    ///   --tune mlp_batch=1 --tune validate_batch=32 --tune retrieval_prefetch_distance=8
-    ///
-    /// An unknown field is an error rather than a no-op; run with `--help-tuning` to list them.
-    #[arg(long = "tune", value_parser = parse_dim, value_name = "FIELD=VALUE")]
-    tune: Vec<(String, String)>,
-
-    /// Print every `SearchTuning` field with its default and exit.
-    #[arg(long)]
-    help_tuning: bool,
-
-    /// Print `SearchTuning::default()` as JSON and exit.
-    ///
-    /// The machine-readable twin of `--help-tuning`, and the reason the driver does not carry its
-    /// own copy of the defaults: a grid that sweeps one knob has to hold the others at the shipped
-    /// value, and a second copy of those values would go stale the day one is re-tuned — silently,
-    /// while still producing plausible tables.
-    #[arg(long)]
-    tuning_defaults: bool,
-
     /// Run a parameter matrix in one process: loads the index once, then sweeps the cell list from
     /// `--grid-file` for each `--matrix-files` entry. Writes one aggregated record per cell to
     /// <output>/<label>.jsonl.
@@ -285,10 +266,10 @@ struct Args {
     /// Matrix mode: the cell list to sweep, as JSONL — one `GridCell` per line. Required by
     /// `--matrix`.
     ///
-    /// The grid is the driver's, not the harness's. Every cell names its k-mer size, its search
-    /// options and any `SearchTuning` overrides, and may carry its own `runs` and `amount`: a
-    /// screening sweep looking for 10% effects does not need the rep count that resolves 4%, and
-    /// paying for it on every cell is most of what makes a wide sweep slow.
+    /// The grid is the driver's, not the harness's. Every cell names its k-mer size and its search
+    /// options, and may carry its own `runs` and `amount`: a screening sweep looking for 10%
+    /// effects does not need the rep count that resolves 4%, and paying for it on every cell is
+    /// most of what makes a wide sweep slow.
     #[arg(long)]
     grid_file: Option<PathBuf>,
 
@@ -438,16 +419,6 @@ struct BenchmarkConfig {
     equate_il: bool,
     tryptic: bool,
     max_matches: usize,
-    /// Every `SearchTuning` field this cell ran at, serialized from the struct itself, and the
-    /// shipped defaults beside it.
-    ///
-    /// A map rather than named columns so that adding a knob to `SearchTuning` needs no change
-    /// here and none in the report: both are read generically. `tuning_defaults` travels in the
-    /// record so a reader can tell "held at the shipped value" from "overridden" without knowing
-    /// what this version's defaults were — which is exactly what goes stale when defaults get
-    /// re-tuned, and what a report comparing two commits would otherwise get wrong.
-    tuning: SearchTuning,
-    tuning_defaults: SearchTuning,
     /// k of the attached k-mer table (0 = no table).
     kmer_k: usize,
     amount_of_peptides: usize,
@@ -462,7 +433,7 @@ struct BenchmarkConfig {
     /// Blocks carry their own rep and query counts, so two of them may measure the same
     /// configuration at different precision. Comparing across them would compare how carefully each
     /// was measured rather than what it measured, which is why the block travels with the record
-    /// instead of being reconstructed from the tuning values.
+    /// instead of being reconstructed from the cell's other coordinates.
     sweep: String,
     /// Distinguishes repeats of one configuration inside a single process ("a" unless set).
     ///
@@ -485,16 +456,16 @@ struct BenchmarkResult {
     cutoff_reached: bool,
     total_memory: u64,
     theoretical_max_memory: u64,
-    /// Nanoseconds spent exclusively inside `search_bounds()` (binary search + k-mer lookup).
+    /// Nanoseconds spent exclusively inside `search_bounds_scalar()` (binary search + k-mer lookup).
     search_bounds_ns: u64,
-    /// Nanoseconds spent iterating over the matched suffix range after `search_bounds()` returns.
+    /// Nanoseconds spent iterating over the matched suffix range after `search_bounds_scalar()` returns.
     match_iter_ns: u64,
     /// Candidate suffixes `iterate_sa_range` examined during the search phase (0 without the
-    /// `metrics` feature). Settles whether tryptic's ~12.5x slowdown is a low acceptance rate
+    /// `measure` feature). Settles whether tryptic's ~12.5x slowdown is a low acceptance rate
     /// (work already minimal) or unbounded exhaustive scanning (needs a scan cap) — see
     /// `candidates_accepted` and `Searcher::candidates_accepted`'s doc comment.
     candidates_examined: u64,
-    /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `metrics`).
+    /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `measure`).
     candidates_accepted: u64,
     /// Nanoseconds for everything between "we have the proteins" and "the client has bytes":
     /// decoding each hit's functional annotations, allocating its accession, and serialising the
@@ -766,9 +737,8 @@ fn run_benchmark(
     let (minflt_before, majflt_before) = page_faults();
 
     // Phase 1: suffix array search (parallel), via the same orchestrator production uses. The
-    // decomposition (tuning.mlp_batch > 1 interleaves that many peptides per rayon task for
-    // memory-level parallelism; 1 = scalar) comes from the searcher's tuning, exactly as it does
-    // on the server.
+    // decomposition — `par_chunks(MLP_BATCH)`, interleaving that many peptides per rayon task for
+    // memory-level parallelism — is the searcher's, exactly as it is on the server.
     let refs: Vec<&[u8]> = peptides.iter().map(|p| p.as_bytes()).collect();
     let search_start = Instant::now();
     let suffix_results = searcher.search_all_matching_suffixes(&refs, max_matches, equate_il, tryptic);
@@ -886,9 +856,10 @@ fn run_benchmark(
 
 /// One line of a `--grid-file`, before its tuning overrides are resolved.
 ///
-/// `deny_unknown_fields` is the same bargain `SearchTuning` makes: a driver that writes a key this
+/// `deny_unknown_fields` is what makes a stale suite file an error: a driver that writes a key this
 /// binary does not know is told so, rather than having it dropped and reporting the shipped
-/// configuration under the swept one's name.
+/// configuration under the swept one's name. A suite still carrying `tune` fails here, which is
+/// the intended way to find out that axis is gone.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GridSpec {
@@ -905,9 +876,6 @@ struct GridSpec {
     equate_il: bool,
     #[serde(default)]
     tryptic: bool,
-    /// `SearchTuning` overrides for this cell; anything absent keeps the shipped default.
-    #[serde(default)]
-    tune: BTreeMap<String, serde_json::Value>,
     /// Reps and queries for this cell. Absent = the invocation's `--runs` / `--amount-of-peptides`.
     #[serde(default)]
     runs: Option<u32>,
@@ -915,9 +883,9 @@ struct GridSpec {
     amount: Option<usize>,
     /// Match cutoff for this cell. Absent = the invocation's `--max-matches`.
     ///
-    /// Unlike every `SearchTuning` field this is NOT a pure performance knob: a cutoff that binds
-    /// truncates the result and sets `cutoff_used`. A suite that sweeps it is trading answers for
-    /// time, and its report has to say so.
+    /// This is NOT a pure performance parameter: a cutoff that binds truncates the result and sets
+    /// `cutoff_used`. A suite that sweeps it is trading answers for time, and its report has to
+    /// say so.
     #[serde(default)]
     max_matches: Option<usize>,
     /// Time the two phases production runs after retrieval — the `ProteinInfo` decode and the JSON
@@ -939,7 +907,7 @@ fn slot_a() -> String {
     "a".to_string()
 }
 
-/// One cell of a matrix sweep, with its tuning fully resolved.
+/// One cell of a matrix sweep, fully resolved.
 ///
 /// `--dry-run` and the real sweep both go through this same resolved form, so the planned cell
 /// list cannot diverge from the one that runs — which is what makes a dry run worth eyeballing
@@ -952,7 +920,6 @@ struct GridCell {
     kmer_k: usize,
     equate_il: bool,
     tryptic: bool,
-    tuning: SearchTuning,
     runs: u32,
     amount: usize,
     sweep: String,
@@ -962,20 +929,11 @@ struct GridCell {
 impl GridCell {
     /// How this cell reads in the dry run and in the per-cell progress line.
     fn describe(&self) -> String {
-        let tuning = serde_json::to_value(self.tuning)
-            .ok()
-            .and_then(|value| {
-                value.as_object().map(|map| {
-                    map.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(" ")
-                })
-            })
-            .unwrap_or_default();
         format!(
-            "kmer={:<2} il={:<5} tr={:<5} {}  [{} runs x {} peptides]{}",
+            "kmer={:<2} il={:<5} tr={:<5}  [{} runs x {} peptides]{}",
             self.kmer_k,
             self.equate_il,
             self.tryptic,
-            tuning,
             self.runs,
             self.amount,
             if self.sweep.is_empty() { String::new() } else { format!("  <{}:{}>", self.sweep, self.grid_slot) }
@@ -993,12 +951,11 @@ fn require_grid_file(args: &Args) -> Result<&Path, Box<dyn Error>> {
         .ok_or_else(|| "--matrix requires --grid-file: the grid is the driver's, not the harness's".into())
 }
 
-/// Reads a `--grid-file` and resolves every cell's tuning against the shipped defaults.
+/// Reads a `--grid-file` into resolved cells.
 ///
-/// Resolution happens here, up front, rather than per cell during the sweep: a typo in the last
+/// Parsing happens here, up front, rather than per cell during the sweep: a typo in the last
 /// line of a grid file should fail before the index is loaded, not four hours into the run.
 fn load_grid_file(path: &Path, args: &Args) -> Result<Grid, Box<dyn Error>> {
-    let base = tuning_from(args)?;
     let mut cells = Vec::new();
 
     for (lineno, line) in BufReader::new(File::open(path)?).lines().enumerate() {
@@ -1007,22 +964,6 @@ fn load_grid_file(path: &Path, args: &Args) -> Result<Grid, Box<dyn Error>> {
             continue;
         }
         let spec: GridSpec = serde_json::from_str(&line)
-            .map_err(|error| format!("{}:{}: {}", path.display(), lineno + 1, error))?;
-
-        // Through the same `field=value` path `--tune` uses, so the grid file and the flag cannot
-        // disagree about what a value means or about which fields exist.
-        let overrides: Vec<(String, String)> = spec
-            .tune
-            .iter()
-            .map(|(field, value)| {
-                let raw = match value {
-                    serde_json::Value::String(text) => text.clone(),
-                    other => other.to_string()
-                };
-                (field.clone(), raw)
-            })
-            .collect();
-        let tuning = apply_tuning(base, &overrides)
             .map_err(|error| format!("{}:{}: {}", path.display(), lineno + 1, error))?;
 
         cells.push((
@@ -1034,7 +975,6 @@ fn load_grid_file(path: &Path, args: &Args) -> Result<Grid, Box<dyn Error>> {
                 kmer_k: spec.kmer_k,
                 equate_il: spec.equate_il,
                 tryptic: spec.tryptic,
-                tuning,
                 runs: spec.runs.unwrap_or(args.runs),
                 amount: spec.amount.unwrap_or(args.amount_of_peptides),
                 sweep: spec.sweep,
@@ -1074,60 +1014,6 @@ fn kmer_sizes(args: &Args, grid: &Grid) -> Vec<usize> {
     sizes.sort_unstable();
     sizes.dedup();
     sizes
-}
-
-/// The `SearchTuning` the CLI asks for: the shipped defaults with any `--tune` overrides applied.
-fn tuning_from(args: &Args) -> Result<SearchTuning, Box<dyn Error>> {
-    apply_tuning(SearchTuning::default(), &args.tune)
-}
-
-/// Applies `field=value` overrides to a `SearchTuning`, through its own serde representation.
-///
-/// Going via JSON rather than a hand-written `match` is what keeps this binary from needing an
-/// update every time a knob is added: `SearchTuning` describes its own fields, so a new one is
-/// settable and recordable the day it exists. `deny_unknown_fields` on the struct turns a
-/// misspelled knob into an error instead of a setting that silently does nothing — which would
-/// otherwise look exactly like a knob that has no effect.
-fn apply_tuning(base: SearchTuning, overrides: &[(String, String)]) -> Result<SearchTuning, Box<dyn Error>> {
-    let mut value = serde_json::to_value(base)?;
-    let map = value.as_object_mut().ok_or("SearchTuning did not serialize to an object")?;
-
-    for (field, raw) in overrides {
-        if !map.contains_key(field) {
-            return Err(format!("unknown tuning field '{}'; known: {}", field, tuning_field_list()).into());
-        }
-        // Typed by what the field already holds, so "16" lands as a number and "true" as a bool
-        // without this code knowing which field is which.
-        let parsed = match map[field] {
-            serde_json::Value::Bool(_) => serde_json::Value::Bool(
-                raw.parse::<bool>().map_err(|_| format!("{}: expected true/false, got '{}'", field, raw))?
-            ),
-            serde_json::Value::Number(_) => serde_json::Value::Number(
-                raw.parse::<u64>().map_err(|_| format!("{}: expected a number, got '{}'", field, raw))?.into()
-            ),
-            _ => serde_json::Value::String(raw.clone())
-        };
-        map.insert(field.clone(), parsed);
-    }
-    Ok(serde_json::from_value(value)?)
-}
-
-/// Comma-separated list of the tuning fields, for error messages.
-fn tuning_field_list() -> String {
-    serde_json::to_value(SearchTuning::default())
-        .ok()
-        .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(", ")))
-        .unwrap_or_default()
-}
-
-/// `--help-tuning`: every knob and its shipped default, read out of the struct itself.
-fn print_tuning_help() -> Result<(), Box<dyn Error>> {
-    let defaults = serde_json::to_value(SearchTuning::default())?;
-    println!("SearchTuning fields (override with --tune FIELD=VALUE):");
-    for (field, value) in defaults.as_object().ok_or("not an object")? {
-        println!("  {:<32} default {}", field, value);
-    }
-    Ok(())
 }
 
 /// The pre-built file for a k-mer size, or None when there is none and the table must be built.
@@ -1223,14 +1109,14 @@ fn run_cell(
     let band = if stats.qps_p50 > 0.0 { (stats.qps_p90 - stats.qps_p10) / 2.0 / stats.qps_p50 * 100.0 } else { 0.0 };
 
     // Representative rep = the one nearest the median throughput; also carries the detailed
-    // per-phase metrics (search_bounds_ns / match_iter_ns / candidate counts) printed below.
+    // per-phase measurements (search_bounds_ns / match_iter_ns / candidate counts) printed below.
     results.sort_by(|a, b| a.throughput_qps.partial_cmp(&b.throughput_qps).unwrap());
     let representative = results.remove(results.len() / 2);
 
     // Acceptance rate settles whether tryptic's slowdown is "already minimal work, just a low
     // hit rate" or "unbounded exhaustive scanning" (see BenchmarkResult::candidates_examined).
-    // Only meaningful with `metrics` — without it both counters are always 0.
-    let accept_note = if cfg!(feature = "metrics") {
+    // Only meaningful with `measure` — without it both counters are always 0.
+    let accept_note = if cfg!(feature = "measure") {
         let (ex, ac) = (representative.candidates_examined, representative.candidates_accepted);
         let rate = if ex > 0 { ac as f64 / ex as f64 * 100.0 } else { 0.0 };
         format!("  |  candidates: {} examined, {} accepted ({:.1}% accept)", ex, ac, rate)
@@ -1279,8 +1165,6 @@ fn run_cell(
             peptide_length_min: spec.p_min,
             peptide_length_max: spec.p_max,
             peptide_source: spec.source.to_string(),
-            tuning: searcher.tuning,
-            tuning_defaults: SearchTuning::default(),
             phase: spec.phase.to_string(),
             sweep: cell.sweep.clone(),
             grid_slot: cell.grid_slot.clone()
@@ -1315,7 +1199,6 @@ fn print_dry_run(args: &Args) -> Result<(), Box<dyn Error>> {
     println!("backend        : {}", sa_server::backend_summary());
     println!("grid           : {}", path.display());
     println!("kmer sizes     : {:?}", kmer_sizes(args, &grid));
-    println!("tuning         : {:?}", tuning_from(args)?);
     println!("runs/config    : {}{}", args.runs, match args.runs_target_band {
         Some(target) => format!(" (max; stops at a ±{:.1}% band after {} reps)", target, args.min_runs),
         None => " (fixed)".to_string()
@@ -1455,7 +1338,7 @@ fn warmup_pipeline(searcher: &ActiveSearcher, args: &Args, count: usize) -> Resu
         }
         remaining -= batch.len();
         batch.par_iter().for_each(|peptide| {
-            let result = searcher.search_matching_suffixes(
+            let result = searcher.search_matching_suffixes_scalar(
                 peptide.trim_end().to_uppercase().as_bytes(),
                 args.max_matches,
                 args.equate_il,
@@ -1620,7 +1503,6 @@ fn run_matrix(
         eprintln!("-- {} : {} cells --", bucket, cells.len());
         for cell in &cells {
             ensure_kmer_table(&mut searcher, &mut tables, cell.kmer_k);
-            searcher.tuning = cell.tuning;
             // Per cell, not per file: cells may take different prefixes of the same stream, and a
             // length range describing lines the cell never queried would misreport the workload.
             let queried = &peptides[..cell.amount];
@@ -1636,17 +1518,6 @@ fn run_matrix(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Before `Args::parse()`, which would otherwise demand an index and an output directory for a
-    // question that needs neither: "what knobs are there?" is asked when setting a sweep up, not
-    // when running one.
-    if std::env::args().any(|arg| arg == "--help-tuning") {
-        return print_tuning_help();
-    }
-    if std::env::args().any(|arg| arg == "--tuning-defaults") {
-        println!("{}", serde_json::to_string(&SearchTuning::default())?);
-        return Ok(());
-    }
-
     let args = Args::parse();
 
     // Validate length range only for random mode
@@ -1772,10 +1643,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (minflt_after_load, majflt_after_load) = page_faults();
     startup.load_minor_faults = minflt_after_load.saturating_sub(minflt_at_start);
     startup.load_major_faults = majflt_after_load.saturating_sub(majflt_at_start);
-
-    // Apply the SearchTuning knobs from the CLI (defaults match SearchTuning::default(), so
-    // this is a no-op unless the caller overrides one of --validate-batch/etc).
-    searcher.tuning = tuning_from(&args)?;
 
     let theoretical_max = if args.no_theoretical_memory {
         eprintln!("Theoretical max memory: skipped (--no-theoretical-memory)");
@@ -1917,8 +1784,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             peptide_length_min: p_min,
             peptide_length_max: p_max,
             peptide_source: peptide_source.clone(),
-            tuning: searcher.tuning,
-            tuning_defaults: SearchTuning::default(),
             phase: "single".to_string(),
             // A single run is one configuration measured once: it belongs to no suite block, and
             // there is nothing for it to be a repeat of.
@@ -1954,9 +1819,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let line = serde_json::to_string(&record)?;
         writeln!(output_file, "{}", line)?;
 
-        // Acceptance rate is only meaningful with `metrics` (both counters are always 0
+        // Acceptance rate is only meaningful with `measure` (both counters are always 0
         // without it) — see BenchmarkResult::candidates_examined for what it settles.
-        let accept_note = if cfg!(feature = "metrics") {
+        let accept_note = if cfg!(feature = "measure") {
             let (ex, ac) = (record.result.candidates_examined, record.result.candidates_accepted);
             let rate = if ex > 0 { ac as f64 / ex as f64 * 100.0 } else { 0.0 };
             format!("  |  candidates: {} examined, {} accepted ({:.1}% accept)", ex, ac, rate)

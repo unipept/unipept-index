@@ -32,9 +32,6 @@ shows up under one of them is a regression this suite has to catch. Four rows pe
 What is deliberately NOT here, and where it went:
 
   * the k-mer tables      -> `run.sh kmer`
-  * the MLP batch curve   -> `run.sh mlp`
-  * `validate_batch`      -> `run.sh validate`
-  * the prefetch distances -> `run.sh prefetch`
 
 Those used to be folded in, which made this suite a 34-row grid that took six times as long and
 re-measured settled questions on every commit. The split is not just cheaper: a regression gate and
@@ -60,9 +57,9 @@ floor doubled between those runs, because it now carries between-invocation spre
 still cleared it. And when an arm that holds strictly more in RAM fails to beat one that holds less,
 treat it as a bug in the arm rather than a fact about the index, because that is what it was.
 
-Held values are not assumed: the run records every `SearchTuning` field and the summary prints back
-what these cells actually ran at. If that line does not read the shipped values, this run was not
-measuring the defaults.
+Held values are not assumed: the run records every coordinate and the summary prints back what
+these cells actually ran at. If that line does not read the production configuration, this run was
+not measuring the defaults.
 """
 
 [defaults]
@@ -85,12 +82,10 @@ warmup = "all:200000"
 # moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
 files = ["mixed", "small", "medium", "large"]
 
-# Production defaults: 6-mer table, MLP batch 16, every SearchTuning field at its shipped value.
-# `strategy = "base"` means exactly that — one tuning point, taken from the binary itself rather
-# than restated here, so this suite cannot drift from `SearchTuning::default()`.
+# Production defaults: 6-mer table, and the search path at the constants it ships with.
+# One measurement per context — the searcher has no runtime settings, so a block IS its contexts.
 [[sweep]]
 name = "defaults"
-strategy = "base"
 # Time what happens AFTER retrieval as well: turning each hit into the `ProteinInfo` the server
 # returns (an fa-compression decode plus an accession String) and serialising the lot to JSON.
 # Only here — it is expensive, and it is the one measurement that says what
@@ -151,7 +146,7 @@ name = "pmap"
 features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
 
 [[arms]]
-# One instrumented arm, which used to be a suite of its own. `metrics` swaps the searcher's
+# One instrumented arm, which used to be a suite of its own. `measure` swaps the searcher's
 # zero-sized counters for real atomics — the only way to get the binary-search/range-scan split and
 # the candidate acceptance rate — and it perturbs what it measures by ~2%. So it is ONE arm, kept
 # out of every throughput table and verdict in this suite, feeding the "inside the search" section
@@ -160,4 +155,4 @@ features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
 # what this grid varies.
 name = "pprot+m"
 features = ["mmap", "preloaded-proteins"]
-metrics = true
+measure = true

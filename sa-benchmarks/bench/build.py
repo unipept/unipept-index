@@ -55,10 +55,10 @@ def build_arms(suite: Suite, repo: Path, bin_dir: Path, echo=print) -> dict[str,
 
 
 def _features(arm: Arm, suite: Suite) -> str:
-    """The feature string for this arm, with `metrics` folded in when either level asks for it."""
+    """The feature string for this arm, with `measure` folded in when either level asks for it."""
     features = list(arm.features)
-    if (suite.metrics or arm.metrics) and "metrics" not in features:
-        features.append("metrics")
+    if (suite.measure or arm.measure) and "measure" not in features:
+        features.append("measure")
     return ",".join(features)
 
 

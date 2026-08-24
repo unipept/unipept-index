@@ -10,6 +10,8 @@ benchmarks/
 scripts/
 docs/
 sa-benchmarks/summary/
+# Generated benchmark reports. They belong with the run that produced them, not in the tree.
+report*.html
 # Machine-specific paths (index dir, peptide files, scratch). profiles/example.toml is the template.
 sa-benchmarks/profiles/local.toml
 __pycache__/

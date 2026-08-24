@@ -18,27 +18,26 @@ sudo ./sa-benchmarks/run.sh all          # every suite, into one report.md
 |---|---|---|
 | `defaults` | What this version does at production defaults, across the length regimes and every storage arm, varying only `equate_il` and `tryptic`. Carries one instrumented arm for the phase split and the candidate acceptance rate. The regression gate. | no |
 | `kmer` | What each k-mer table buys against attaching none, per length regime, with the table's resident cost beside the win. | no |
-| `mlp` | The cross-query MLP batch curve, per length regime — whether batching still finds anything to overlap. | no |
-| `combos` | The three accelerators crossed — k-mer table x `mlp_batch` x `validate_batch` — to test whether their individual optima are simultaneously reachable. | no |
 | `startup` | What each of the three storage configurations costs before it can answer the first query, from cold. | yes |
 | `ram` | How the storage arms scale as the RAM ceiling falls, and where they cross over. | yes |
 | `threads` | Whether thread oversubscription pays, by how much, and what it costs when RAM is ample. | yes |
-| `validate` | What `validate_batch` should be, one knob against a fixed background. | no |
-| `mlp_validate` | `mlp_batch` x `validate_batch` as a plane: do the two batches interact, or can their curves be read separately? | no |
 | `stream` | How throughput depends on the number of peptides in one call — the only suite that varies the query count, which every other one holds fixed. | no |
-| `prefetch` | Both prefetch distances crossed, and whether either is worth keeping as a knob at all. | no |
 | `all` | Every suite in one session, into one `report.md` + `report.json`. | partially — see below |
 
-Every suite is in `all`, including the four knob suites, so one session produces one report. A
-knob's curve only means something against what the same box did on the same commit at the shipped
-settings, and running the tuning half in a separate session compares two machines' moods rather
-than two configurations. Any suite still runs on its own when that is all you need — see the
-re-tuning runbook below.
+Every suite is in `all`, so one session produces one report. A suite's answer only means something
+against what the same box did on the same commit at the shipped settings, and splitting a session
+compares two machines' moods rather than two configurations. Any suite still runs on its own when
+that is all you need.
 
-Three storage arms run in every suite: **preloaded** (everything in owned RAM), **mmap** (everything
-mapped) and **pprot** (mapped except the protein store, which is what retrieval walks). The two
-extremes bracket the behaviour; `pprot` is the configuration that turned out to be worth deploying,
-and a result that holds at both extremes can still fail in the middle.
+Five storage arms run in every suite, and they are a **ladder** rather than independent choices —
+each one preloads everything the one before it does, plus one more structure: **mmap** (everything
+mapped), **pprot** (+ the protein metadata, which is what retrieval walks), **ptext** (+ the protein
+text, which search reads once per residue compared), **pmap** (+ the suffix-to-protein mapping) and
+**preloaded** (everything, the suffix array included).
+
+Read them as rungs, not as rivals: the difference between two adjacent arms IS what that one
+structure is worth. `ptext` and `pmap` tie at the top and `pprot` is a stopping point to walk past,
+not a deployment target — it closes the retrieval gap and none of the search one.
 
 `tryptic` is swept in every suite; `equate_il` only in `defaults`. Both are what the caller asked
 for rather than tuning, but only one of them changes the WORK: the instrumented arm shows tryptic
@@ -48,11 +47,11 @@ hold across tryptic before it is an answer about the default, and `defaults` is 
 caller-visible cost of equate_il is priced. Crossing it everywhere cost 45% of the sweep and changed
 a resolved verdict in 2 of 23 contexts.
 
-`defaults` answers one question at high precision; `kmer`, `mlp` and `tuning` each answer one more,
-at whatever precision fits. That split is deliberate: a regression gate wants few cells resolved
-tightly enough that a 3% move is visible, and a parameter sweep wants many cells at whatever
-precision the budget allows. One grid cannot be both, and when `defaults` tried to be, it was the
-gate that lost — a 34-row matrix re-measuring the k-mer and batch questions on every commit.
+`defaults` answers one question at high precision; `kmer` and `stream` each answer one more, at
+whatever precision fits. That split is deliberate: a regression gate wants few cells resolved
+tightly enough that a 3% move is visible, and a sweep wants many cells at whatever precision the
+budget allows. One grid cannot be both, and when `defaults` tried to be, it was the gate that lost
+— a 34-row matrix re-measuring the k-mer and batch questions on every commit.
 
 `run.sh all` runs each suite in order into one session directory, sharing one built binary per arm.
 Suites it cannot run on this machine are **skipped and reported as skipped**, never silently
@@ -70,9 +69,9 @@ the benchmark server and opened from disk.
 
 **Every suite opens with its answer.** A row of stat tiles states what it found — the best value
 against the shipped one, the gain, and how many of its contexts cleared their own floor — followed
-by one sentence applying the rule in "Re-tuning the defaults" below: a value that wins everywhere is
-proposed as a default, one that wins somewhere is a deployment knob, one that wins nowhere leaves
-its default alone. Then the figure, then the grid it came from, folded.
+by one sentence reading it: a value that wins everywhere past its floor is a candidate, one that
+wins somewhere is a deployment choice, one that wins nowhere changes nothing. Then the figure, then
+the grid it came from, folded.
 
 **One figure per suite, not one per length regime.** The regimes are panels of a single
 small-multiple grid sharing one scale and one legend. They used to be four sibling sections, each
@@ -81,8 +80,7 @@ was the one it made impossible. Knob curves facet the same way, at (regime x con
 carries more than the three storage arms; the old single-axes version drew twenty-four lines, three
 times what the palette can tell apart.
 
-**A plane is drawn twice.** The knob planes (`prefetch`, `mlp_validate`, `combos`) carry a switch
-choosing what a cell says. `throughput` is what the pair measured, on a ramp scaled to that plane;
+**A plane is drawn twice.** A knob plane carries a switch choosing what a cell says. `throughput` is what the pair measured, on a ramp scaled to that plane;
 `vs shipped` is the signed difference against the shipped pair, neutral inside the noise floor. The
 second is the suites' actual finding and the first is what makes it readable: on a suite where
 nothing clears its floor — which is most of them — the diverging view is correct and is a grid of
@@ -315,37 +313,27 @@ parallel across peptides. v12 timed the decode serially while timing search and 
 parallel, which overstated the response share by up to the core count — **any share quoted from a
 v12 session, including the "~12%" that used to sit here, is wrong and needs re-measuring.**
 
-## Re-tuning the defaults
+## Re-tuning
 
-One suite per knob. Run the one whose default is in question — there is no reason to re-measure
-three settled knobs to re-check a fourth:
+There is nothing to sweep. The searcher's performance parameters — the cross-query MLP batch, the
+two-pass validation batch, and both prefetch distances — are compile-time constants in
+`sa-index/src/sa_searcher/tuning.rs`, and that file records which sweep retired each one and what it
+found. Five suites lived here (`mlp`, `validate`, `prefetch`, `mlp_validate`, `combos`), one per
+knob plus their crosses; they went when the knobs did.
 
-```bash
-./sa-benchmarks/run.sh mlp        # mlp_batch: the cross-query batch
-./sa-benchmarks/run.sh validate   # validate_batch, plus the mlp_batch x validate_batch plane
-./sa-benchmarks/run.sh prefetch   # both prefetch distances, crossed
+Re-opening one means restoring the runtime path first: give the searcher a field, thread it to the
+constant's use, and teach this harness to set it. That is deliberately more work than editing a
+number — a parameter no measurement could move is one that costs more to carry than to rebuild — and
+`tuning.rs` argues the case before you spend the time.
 
-./sa-benchmarks/run.sh validate --dry-run                  # cell count and query total, first
-./sa-benchmarks/run.sh validate --runs 1 --amount 1000     # every cell once, to prove the shape
-```
+What the harness still sweeps is everything that is not a searcher setting: the workload
+(`defaults`, `stream`), the index build (`kmer`), and the machine (`startup`, `ram`, `threads`).
 
 Read each one's **resolution** table before its results. These suites interleave a reference cell
 through every process, so drift is measured and removed rather than folded into the numbers, and
 the reference's leftover scatter is the floor on what that process could resolve at all. A residual
 wider than the effects below it means the run answered nothing, which on a shared box is the common
 outcome rather than the rare one.
-
-The report ends with a verdict per knob. Only a value that wins **every** context it was measured in,
-each time by more than that context's own floor, is proposed as a change to
-`SearchTuning::default()`. A value that wins some contexts and loses others is reported as a
-*deployment knob* — something the server should be able to set, not something to bake into the
-default — and a knob that is flat everywhere leaves its default alone.
-
-Nothing about the knobs is written down on the driver side. The grid is resolved through
-`SearchTuning`'s own serde representation, so **a knob added to that struct is sweepable the same
-day**: give it values in a `[[sweep]]` block and it appears in the curves, the interaction table and
-the verdict without a line of Python changing. A misspelled one is an error, not a setting that
-quietly does nothing.
 
 ## Adding a suite
 
@@ -361,17 +349,16 @@ quietly does nothing.
 A suite in `mode = "matrix"` loads the index once per process and sweeps in-process, which at
 full-database scale is the difference between a sweep and a day of index loads. Every such suite is
 built from `[[sweep]]` blocks (see `bench/grid.py`) — the harness carries no grid of its own, so a
-sweep is described in exactly one place. A narrow suite is one block (`defaults`, `kmer`,
-`prefetch`); `validate` is three, and the rule that keeps a wider one affordable is that blocks
+sweep is described in exactly one place. A narrow suite is one block (`defaults`, `kmer`), a
+wider one is several, and the rule that keeps a wider one affordable is that blocks
 **add** rather than multiply:
 
-* one block varying every knob against **one** context — the curves;
-* one block at **one** tuning point against every context — what each context costs;
-* one small block per knob/context pair that has a mechanism behind it — the interactions.
+* one block varying one coordinate against **one** background — the curve;
+* one block at **one** point against every context — what each context costs.
 
-For one knob and its contexts that is a few dozen cells where a cross-product is thousands, and it
-covers strictly more. Widening a block is a line of TOML; narrowing a cross-product after the run
-is not, because the run is already over.
+That is a few dozen cells where a cross-product is thousands, and it covers strictly more. Widening
+a block is a line of TOML; narrowing a cross-product after the run is not, because the run is
+already over.
 
 Two things such a suite gets for free, both of which make lower per-cell rep counts safe:
 
@@ -379,7 +366,7 @@ Two things such a suite gets for free, both of which make lower per-cell rep cou
   measured series: every cell is rescaled by the reference interpolated to its own position, and the
   reference's leftover scatter becomes that process's resolution floor, reported in that suite's
   **resolution** table. Set it on any suite whose process runs more than a handful of cells —
-  `kmer`, `mlp`, `validate` and `prefetch` all do, and on a shared box their processes routinely
+  `kmer` and `stream` both do, and on a shared box their processes routinely
   move by more than the effects they are measuring. Not `defaults`: its two arms are separate
   processes, so its exposure is drift *between* them, which an in-process cadence cannot address.
 * **`runs_target_band`** stops a cell once its own spread is tight enough to read. A fixed rep count
@@ -404,16 +391,16 @@ asserts that a cell which was OOM-killed, one whose cap did not bind, and one th
 appear in the output and stay distinguishable from one another, and that all three renderings
 survive: the page is well-formed, self-contained, and marks those cells.
 
-For `tuning` it also builds a process whose fabricated machine slows by 30% over the run, and puts
-the one real win late in it — so the check passes only if the drift cadence was actually applied,
-not merely recorded. The grid expander is checked separately: that a knob plane absorbs the
-one-at-a-time lines it subsumes rather than re-running them, that two blocks describing the same
-measurement collapse while the same measurement at two precisions does not, and that a misspelled
-context key is an error rather than a silently narrower sweep.
+It also builds a process whose fabricated machine slows by 30% over the run, and puts the one real
+win late in it — so the check passes only if the drift cadence was actually applied, not merely
+recorded. The grid expander is checked separately: that two blocks describing the same measurement
+collapse while the same measurement at two precisions does not, that cells land in the process their
+block named, and that a misspelled context key — or a suite still carrying a `tune` table — is an
+error rather than a silently different sweep.
 
 ## Measurement code and shipping binaries
 
-`metrics` (on `sa-index`) is the only gate for hot-path instrumentation, and nothing that ships
+`measure` (on `sa-index`) is the only gate for hot-path instrumentation, and nothing that ships
 enables it: with the feature off the counters are zero-sized and every write compiles away. CI
 resolves `sa-server`'s and `sa-builder`'s feature graphs on every push to prove it stays that way.
 

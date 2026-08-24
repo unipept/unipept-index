@@ -5,18 +5,17 @@
 //! left-extended twin — which walks an SA range and validates what it finds. Everything a search
 //! needs beyond that lives in a sibling:
 //!
-//! * `scalar` / `batched` — the two search strategies, one peptide at a time versus B interleaved
-//!   for memory-level parallelism. `orchestrate` picks between them.
+//! * `scalar` / `batched` — one peptide at a time versus B interleaved for memory-level
+//!   parallelism. `batched` also owns `search_all_matching_suffixes`, the entry point every
+//!   multi-peptide caller goes through.
 //! * `retrieval` — turning matched suffix positions into proteins.
 //! * `tryptic` — the trypsin-cut filter the candidate scan applies.
-//! * `tuning` — the performance knobs; `results` — what a search returns.
-//! * `metrics` — the counters, which cost nothing unless the `metrics` feature is on.
+//! * `tuning` — the constants the hot paths are fixed at, and what measured them;
+//!   `results` — what a search returns.
+//! * `measure` — the instrumentation, which costs nothing unless the `measure` feature is on.
 
-#[cfg(test)]
-mod backend_agreement;
 mod batched;
-pub(crate) mod metrics;
-mod orchestrate;
+pub(crate) mod measure;
 mod results;
 mod retrieval;
 mod scalar;
@@ -25,20 +24,20 @@ mod test_utils;
 mod tryptic;
 mod tuning;
 
-pub use orchestrate::DEFAULT_MLP_BATCH;
 pub use results::{BoundSearchResult, SearchAllSuffixesResult};
 use sa_mappings::proteins::ProteinsBackend;
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
 use tryptic::TrypticQuery;
-pub(crate) use tuning::MAX_RESULT_PREALLOC;
-pub use tuning::{MAX_VALIDATE_BATCH, SearchTuning};
+pub(crate) use tuning::{
+    MAX_RESULT_PREALLOC, MLP_BATCH, PREFETCH_THRESHOLD, RETRIEVAL_PREFETCH_DISTANCE, VALIDATE_BATCH
+};
 
 use crate::{
     KmerTable,
     array::SuffixArrayBackend,
     sa_searcher::{
         BoundSearch::{Maximum, Minimum},
-        metrics::SearchMetrics
+        measure::SearchMeasurements
     },
     suffix_to_protein_index::SuffixToProteinMappingBackend
 };
@@ -64,12 +63,9 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToPr
     pub proteins: P,
     pub suffix_index_to_protein: STPM,
     pub kmer_table: Option<KmerTable>,
-    /// Batch and prefetch-lookahead sizes for the hot paths. Public so callers (the benchmark)
-    /// can mutate it between configurations, exactly as they already do with `kmer_table`.
-    pub tuning: SearchTuning,
     /// Instrumentation counters, drained through [`Searcher::drain_timing_ns`] and
-    /// [`Searcher::drain_candidate_counts`]. Zero-sized without the `metrics` feature.
-    pub(crate) metrics: SearchMetrics
+    /// [`Searcher::drain_candidate_counts`]. Zero-sized without the `measure` feature.
+    pub(crate) measurements: SearchMeasurements
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -82,15 +78,15 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// The sparseness factor is not passed in — it is read from the suffix array, which records
     /// it in its file header.
     ///
-    /// Starts with no k-mer table and default [`SearchTuning`].
+    /// Starts with no k-mer table. Everything else about how a search runs is a constant; see
+    /// the `tuning` module.
     pub fn new(sa: SA, proteins: P, suffix_index_to_protein: STPM) -> Self {
         Self {
             sa,
             proteins,
             suffix_index_to_protein,
             kmer_table: None,
-            tuning: SearchTuning::default(),
-            metrics: SearchMetrics::new()
+            measurements: SearchMeasurements::new()
         }
     }
 
@@ -316,15 +312,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         matching_suffixes: &mut Vec<i64>,
         max_matches: usize
     ) -> bool {
-        let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
-        let prefetch_threshold = self.tuning.prefetch_threshold;
         let needs_span = !equate_il && !il_locations.is_empty();
 
         let mut examined = 0u64;
         let mut accepted = 0u64;
 
         let hit_max = 'scan: {
-            if range_size < prefetch_threshold {
+            if range_size < PREFETCH_THRESHOLD {
                 for raw in sa_iter {
                     examined += 1;
                     if let Some(v) =
@@ -340,7 +334,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 break 'scan false;
             }
 
-            let mut raw_batch = [0i64; MAX_VALIDATE_BATCH];
+            let mut raw_batch = [0i64; VALIDATE_BATCH];
 
             loop {
                 let mut batch_len = 0usize;
@@ -352,7 +346,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     }
                     raw_batch[batch_len] = s;
                     batch_len += 1;
-                    if batch_len == batch_size {
+                    if batch_len == VALIDATE_BATCH {
                         break;
                     }
                 }
@@ -376,8 +370,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             false
         };
 
-        self.metrics.candidates_examined.add(examined);
-        self.metrics.candidates_accepted.add(accepted);
+        self.measurements.candidates_examined.add(examined);
+        self.measurements.candidates_accepted.add(accepted);
         hit_max
     }
 
@@ -405,15 +399,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         matching_suffixes: &mut Vec<i64>,
         max_matches: usize
     ) -> bool {
-        // Default 64, tuned on x86_64 Zen4/Intel Sapphire Rapids: DRAM latency ~80–100 ns, one
-        // SA entry read per ~2–3 ns at that cache level → 64 entries ≈ 192 ns gap, comfortably
-        // above the latency floor. Runtime-settable because that reasoning does not transfer to
-        // ARM or NVMe-backed mmap; the buffer stays on the stack (a heap Vec here would cost
-        // more than the batching saves), so the fill length is clamped to the array's size.
-        let batch_size = self.tuning.validate_batch.clamp(1, MAX_VALIDATE_BATCH);
-        // Default 32: the minimum range for a prefetch to resolve before use. Below this the
-        // two-pass overhead exceeds the latency-hiding benefit.
-        let prefetch_threshold = self.tuning.prefetch_threshold;
+        // `VALIDATE_BATCH` sizes the on-stack buffer below (a heap Vec here would cost more than
+        // the batching saves) and `PREFETCH_THRESHOLD` decides whether this range is worth
+        // batching at all. Both are fixed; see `tuning` for the sweep that could not move them.
 
         // Resolve the query-invariant half of the tryptic predicate once per peptide rather
         // than once per candidate — this loop runs `max_matches / acceptance_rate` times.
@@ -425,7 +413,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let mut accepted = 0u64;
 
         let hit_max = 'scan: {
-            if range_size < prefetch_threshold {
+            if range_size < PREFETCH_THRESHOLD {
                 for raw in sa_iter {
                     examined += 1;
                     if let Some(v) = self.validate_candidate(
@@ -449,7 +437,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 break 'scan false;
             }
 
-            let mut raw_batch = [0i64; MAX_VALIDATE_BATCH];
+            let mut raw_batch = [0i64; VALIDATE_BATCH];
 
             loop {
                 // --- Pass 1: fill batch and prefetch text positions ---
@@ -461,7 +449,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     }
                     raw_batch[batch_len] = s;
                     batch_len += 1;
-                    if batch_len == batch_size {
+                    if batch_len == VALIDATE_BATCH {
                         break;
                     }
                 }
@@ -494,8 +482,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             false
         };
 
-        self.metrics.candidates_examined.add(examined);
-        self.metrics.candidates_accepted.add(accepted);
+        self.measurements.candidates_examined.add(examined);
+        self.measurements.candidates_accepted.add(accepted);
         hit_max
     }
 }
@@ -510,7 +498,12 @@ mod tests {
     };
     use crate::{
         KmerTable,
-        sa_searcher::test_utils::{example_searcher, repeated_residue_searcher, searcher_over_text}
+        array::{InMemorySA, MmapBackedSA},
+        sa_searcher::test_utils::{
+            Fingerprint, MappedMetaOwnedText, MappedProteins, OwnedMetaMappedText, OwnedProteins, example_searcher,
+            fingerprint, repeated_residue_searcher, searcher_over_text
+        },
+        suffix_to_protein_index::{InMemorySuffixToProteinMapping, MmapBackedSuffixToProteinMapping}
     };
 
     // `compare` is the ordering primitive the whole binary search rests on. Every other test
@@ -546,15 +539,15 @@ mod tests {
         assert_eq!(searcher.compare(b"I", 4, 0, Minimum), (true, 1));
     }
 
-    // The two-pass candidate scan: a range above `prefetch_threshold` (32) with more candidates
-    // than `validate_batch` (64), so the batch loop refills at least once. `equate_il=false` on
+    // The two-pass candidate scan: a range above `PREFETCH_THRESHOLD` (32) with more candidates
+    // than `VALIDATE_BATCH` (64), so the batch loop refills at least once. `equate_il=false` on
     // an I/L-free peptide is what keeps the fast path from swallowing the whole range.
     #[test]
     fn test_iterate_sa_range_two_pass() {
         let n = 70usize;
         let searcher = repeated_residue_searcher('A', n);
 
-        let found = searcher.search_matching_suffixes(b"A", usize::MAX, false, false);
+        let found = searcher.search_matching_suffixes_scalar(b"A", usize::MAX, false, false);
         let expected: Vec<i64> = (0..n as i64).collect();
         assert_eq!(found, SearchAllSuffixesResult::SearchResult(expected));
     }
@@ -571,11 +564,93 @@ mod tests {
         assert!(tabled.kmer_table.is_some(), "table not attached");
         for peptide in [&b"VAA"[..], b"KCR", b"AC", b"A", b"ZZZ"] {
             assert_eq!(
-                tabled.search_matching_suffixes(peptide, usize::MAX, false, false),
-                plain.search_matching_suffixes(peptide, usize::MAX, false, false),
+                tabled.search_matching_suffixes_scalar(peptide, usize::MAX, false, false),
+                plain.search_matching_suffixes_scalar(peptide, usize::MAX, false, false),
                 "with_kmer_table changed the result for {:?}",
                 std::str::from_utf8(peptide).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn every_backend_combination_returns_identical_results() {
+        let expected = fingerprint::<InMemorySA, OwnedProteins, InMemorySuffixToProteinMapping>();
+
+        // An agreement test over a fingerprint that stopped distinguishing anything would pass
+        // forever, so check the reference has both kinds of row before comparing against it.
+        assert!(
+            expected.iter().any(|row| !row.6.is_empty()),
+            "the fixture retrieved no proteins — it can no longer tell the backends apart"
+        );
+        assert!(expected.iter().any(|row| row.4 == "none"), "the fixture has no miss to check");
+
+        // Spelled out rather than generated: sixteen lines that a failure can name, against a macro
+        // whose expansion nothing could read.
+        let combinations: Vec<(&str, Fingerprint)> = vec![
+            (
+                "sa=owned  proteins=owned      mapping=mapped",
+                fingerprint::<InMemorySA, OwnedProteins, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=owned  proteins=owned/map  mapping=owned ",
+                fingerprint::<InMemorySA, OwnedMetaMappedText, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=owned  proteins=owned/map  mapping=mapped",
+                fingerprint::<InMemorySA, OwnedMetaMappedText, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=owned  proteins=map/owned  mapping=owned ",
+                fingerprint::<InMemorySA, MappedMetaOwnedText, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=owned  proteins=map/owned  mapping=mapped",
+                fingerprint::<InMemorySA, MappedMetaOwnedText, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=owned  proteins=mapped     mapping=owned ",
+                fingerprint::<InMemorySA, MappedProteins, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=owned  proteins=mapped     mapping=mapped",
+                fingerprint::<InMemorySA, MappedProteins, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=owned      mapping=owned ",
+                fingerprint::<MmapBackedSA, OwnedProteins, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=owned      mapping=mapped",
+                fingerprint::<MmapBackedSA, OwnedProteins, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=owned/map  mapping=owned ",
+                fingerprint::<MmapBackedSA, OwnedMetaMappedText, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=owned/map  mapping=mapped",
+                fingerprint::<MmapBackedSA, OwnedMetaMappedText, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=map/owned  mapping=owned ",
+                fingerprint::<MmapBackedSA, MappedMetaOwnedText, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=map/owned  mapping=mapped",
+                fingerprint::<MmapBackedSA, MappedMetaOwnedText, MmapBackedSuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=mapped     mapping=owned ",
+                fingerprint::<MmapBackedSA, MappedProteins, InMemorySuffixToProteinMapping>()
+            ),
+            (
+                "sa=mapped proteins=mapped     mapping=mapped",
+                fingerprint::<MmapBackedSA, MappedProteins, MmapBackedSuffixToProteinMapping>()
+            ),
+        ];
+
+        for (name, rows) in combinations {
+            assert_eq!(rows, expected, "{name} disagrees with the fully-owned combination");
         }
     }
 }

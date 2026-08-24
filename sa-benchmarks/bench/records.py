@@ -187,7 +187,7 @@ class Summary:
     rss_gb: float
     startup: dict[str, float] = field(default_factory=dict)
     #: Per-phase timings and candidate counters, filled in by suites that need the breakdown.
-    #: Empty for most suites: without the `metrics` feature these counters are all zero anyway.
+    #: Empty for most suites: without the `measure` feature these counters are all zero anyway.
     phases: dict[str, float] = field(default_factory=dict)
     #: Set when a ceiling was requested but the cell's RSS shows it never bound.
     void_reason: str | None = None

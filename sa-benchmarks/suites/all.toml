@@ -7,18 +7,22 @@ description = "Everything: one session, one report characterising this commit"
 
 # Cheapest and root-free first, so a session that is going to fail on privileges has already
 # produced the throughput numbers by the time it gets there. `defaults` leads because it is the
-# regression gate: if it moved, the rest is context for why — and `kmer` and `mlp` follow it
-# immediately, because they are the two accelerators `defaults` holds fixed, so "what changed"
-# and "which of the two settings it changed for" land next to each other in the report.
+# regression gate: if it moved, the rest is context for why — and `kmer` follows it immediately,
+# because it is the one accelerator `defaults` holds fixed, so "what changed" and "which setting it
+# changed for" land next to each other in the report.
 #
-# The four knob suites run together, after the gate: `kmer` and `mlp` are the two accelerators
-# `defaults` holds fixed, and `validate` and `prefetch` are the remaining SearchTuning fields. One
-# session, one report — a knob's answer is read against what the same box did on the same commit at
-# the shipped settings, and splitting them across sessions means comparing two machines' moods.
+# There were five more suites here — `mlp`, `validate`, `prefetch`, `mlp_validate` and `combos` —
+# one per runtime performance knob, plus their crosses. They went with `SearchTuning` itself: the
+# 660befd7ee run could not separate any value of `validate_batch`, `prefetch_threshold` or
+# `retrieval_prefetch_distance` from noise (0 of 40 and 0 of 80 cells), and `mlp_batch` had no
+# value that won everywhere, so all four became compile-time constants. Nothing the searcher reads
+# is settable at runtime any more, so no suite can sweep one.
+#
+# What is left all measures something that is still a choice: the workload (`defaults`, `stream`),
+# the index build (`kmer`), or the machine (`startup`, `ram`, `threads`).
 order = [
   "defaults",                                   # the gate: what ships, across the four search options
-  "kmer", "mlp", "validate", "prefetch",        # one knob each, against a fixed background
-  "mlp_validate", "combos",                     # crossed: are those knobs separable?
+  "kmer",                                       # the one build-time accelerator
   "stream",                                     # what the CALLER sets: how many peptides in one
                                                 # call. Held fixed everywhere above.
   "startup", "ram", "threads",

@@ -658,9 +658,9 @@ text.tick, text.axis { fill: var(--axisink); font-size: 11px;
   font-family: system-ui, -apple-system, sans-serif; }
 text.axistitle { fill: var(--axisink); font-size: 11px; font-style: italic;
   font-family: system-ui, -apple-system, sans-serif; }
-/* A heatmap names both axes on one line, and a knob name is long: `columns: prefetch_threshold ·
-   rows: retrieval_prefetch_distance` is the widest label on the page. A step down keeps the
-   longest pair inside a 360-wide plane. */
+/* A heatmap names both axes on one line, and a knob name can be long — `columns: prefetch_threshold ·
+   rows: retrieval_prefetch_distance`, the widest pair this ever carried, is the case to size for.
+   A step down keeps a pair that long inside a 360-wide plane. */
 text.axistitle.gridaxis { font-size: 9.5px; }
 text.val { fill: var(--ink); font-size: 11px; font-family: var(--mono); }
 text.cellval { fill: var(--ink); font-size: 11px; font-family: var(--mono); }
