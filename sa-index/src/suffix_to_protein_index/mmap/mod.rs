@@ -120,14 +120,8 @@ mod tests {
                 // relating the two fields catches it. Before that check this loaded cleanly and
                 // `suffix_to_protein(1000)` panicked on `mmap[137..]` of a 41-byte mapping.
                 "bitvec bit_len needing more blocks than the header declares",
-                [
-                    vec![2u8],
-                    10_000u64.to_le_bytes().to_vec(),
-                    1u64.to_le_bytes().to_vec(),
-                    vec![0u8; 8],
-                    vec![0u8; 16]
-                ]
-                .concat()
+                [vec![2u8], 10_000u64.to_le_bytes().to_vec(), 1u64.to_le_bytes().to_vec(), vec![0u8; 8], vec![0u8; 16]]
+                    .concat()
             )
         ];
 

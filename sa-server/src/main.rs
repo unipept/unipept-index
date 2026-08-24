@@ -116,9 +116,7 @@ fn json_response(chunks: Vec<Vec<u8>>) -> Response<Body> {
     drop(chunks);
 
     let mut response = body.into_response();
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response
 }
 

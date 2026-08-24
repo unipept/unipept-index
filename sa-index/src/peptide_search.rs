@@ -335,12 +335,11 @@ pub fn frame_chunks(chunks: &mut Vec<Vec<u8>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // `ProteinsBackend` (for `proteins.text()`) comes in through `use super::*`.
     use sa_mappings::proteins::{InMemoryProteins, Protein};
     use text_compression::InMemoryProteinText;
 
+    use super::*;
     use crate::{
         array::{InMemorySA, OriginalSA},
         suffix_to_protein_index::{BitVecSuffixToProtein, InMemorySuffixToProteinMapping}
@@ -359,11 +358,7 @@ mod tests {
         // Example DB "AI-CLACVAA-AC-KCRLY$", sample rate 1 (so single characters are searchable).
         let text = InMemoryProteinText::from_string("AI-CLACVAA-AC-KCRLY$");
         let encoded = |text: &str| {
-            if annotations {
-                fa_compression::algorithm1::encode(text)
-            } else {
-                vec![]
-            }
+            if annotations { fa_compression::algorithm1::encode(text) } else { vec![] }
         };
         let proteins = InMemoryProteins::new(text, vec![
             Protein {
@@ -562,11 +557,7 @@ mod tests {
 
     #[test]
     fn test_serialize_search_result() {
-        let search_result = SearchResult {
-            sequence: "MSKIAALLPSV",
-            proteins: vec![],
-            cutoff_used: true
-        };
+        let search_result = SearchResult { sequence: "MSKIAALLPSV", proteins: vec![], cutoff_used: true };
 
         let generated_json = serde_json::to_string(&search_result).unwrap();
         let expected_json = "{\"sequence\":\"MSKIAALLPSV\",\"proteins\":[],\"cutoff_used\":true}";
@@ -637,11 +628,7 @@ mod tests {
     /// framing would be invisible in the tests above.
     #[test]
     fn empty_annotations_serialise_as_an_empty_string() {
-        let protein_info = ProteinInfo {
-            taxon: 1,
-            uniprot_accession: "P12345",
-            annotations: &[]
-        };
+        let protein_info = ProteinInfo { taxon: 1, uniprot_accession: "P12345", annotations: &[] };
         assert_eq!(
             serde_json::to_string(&protein_info).unwrap(),
             "{\"taxon\":1,\"uniprot_accession\":\"P12345\",\"functional_annotations\":\"\"}"

@@ -96,12 +96,7 @@ struct FmtSink<'a, 'b> {
 
 impl<'a, 'b> FmtSink<'a, 'b> {
     fn new(formatter: &'a mut fmt::Formatter<'b>) -> Self {
-        Self {
-            formatter,
-            buffer: [0; 512],
-            len: 0,
-            error: None
-        }
+        Self { formatter, buffer: [0; 512], len: 0, error: None }
     }
 
     fn flush(&mut self) {
@@ -329,7 +324,10 @@ impl fmt::Debug for Decoded<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::CharacterSet, super::Decode, *};
+    use super::{
+        super::{CharacterSet, Decode},
+        *
+    };
 
     #[test]
     fn test_decode_empty() {

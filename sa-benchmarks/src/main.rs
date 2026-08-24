@@ -963,24 +963,21 @@ fn load_grid_file(path: &Path, args: &Args) -> Result<Grid, Box<dyn Error>> {
         if line.trim().is_empty() {
             continue;
         }
-        let spec: GridSpec = serde_json::from_str(&line)
-            .map_err(|error| format!("{}:{}: {}", path.display(), lineno + 1, error))?;
+        let spec: GridSpec =
+            serde_json::from_str(&line).map_err(|error| format!("{}:{}: {}", path.display(), lineno + 1, error))?;
 
-        cells.push((
-            spec.file.clone(),
-            GridCell {
-                bucket: spec.bucket,
-                max_matches: spec.max_matches,
-                response: spec.response,
-                kmer_k: spec.kmer_k,
-                equate_il: spec.equate_il,
-                tryptic: spec.tryptic,
-                runs: spec.runs.unwrap_or(args.runs),
-                amount: spec.amount.unwrap_or(args.amount_of_peptides),
-                sweep: spec.sweep,
-                grid_slot: spec.grid_slot
-            }
-        ));
+        cells.push((spec.file.clone(), GridCell {
+            bucket: spec.bucket,
+            max_matches: spec.max_matches,
+            response: spec.response,
+            kmer_k: spec.kmer_k,
+            equate_il: spec.equate_il,
+            tryptic: spec.tryptic,
+            runs: spec.runs.unwrap_or(args.runs),
+            amount: spec.amount.unwrap_or(args.amount_of_peptides),
+            sweep: spec.sweep,
+            grid_slot: spec.grid_slot
+        }));
     }
 
     if cells.is_empty() {
@@ -1473,14 +1470,9 @@ fn run_matrix(
         let peptides: Vec<String> =
             BufReader::new(File::open(pep_path)?).lines().take(wanted).collect::<Result<_, _>>()?;
         if peptides.len() < wanted {
-            return Err(
-                format!("{} has only {} peptides, need {}", pep_path.display(), peptides.len(), wanted).into()
-            );
+            return Err(format!("{} has only {} peptides, need {}", pep_path.display(), peptides.len(), wanted).into());
         }
-        let bucket = cells
-            .iter()
-            .find_map(|cell| cell.bucket.clone())
-            .unwrap_or_else(|| source.clone());
+        let bucket = cells.iter().find_map(|cell| cell.bucket.clone()).unwrap_or_else(|| source.clone());
 
         // Everything the cells of this file share; the per-cell fields are filled in below.
         let base_spec = CellSpec {
@@ -1508,8 +1500,12 @@ fn run_matrix(
             let queried = &peptides[..cell.amount];
             let (p_min, p_max) =
                 queried.iter().fold((usize::MAX, 0usize), |(lo, hi), p| (lo.min(p.len()), hi.max(p.len())));
-            let spec =
-                CellSpec { theoretical_max: theoretical_by_k[&cell.kmer_k], p_min, p_max, ..base_spec };
+            let spec = CellSpec {
+                theoretical_max: theoretical_by_k[&cell.kmer_k],
+                p_min,
+                p_max,
+                ..base_spec
+            };
             run_cell(&searcher, queried, args, spec, cell, &mut output_file)?;
         }
     }

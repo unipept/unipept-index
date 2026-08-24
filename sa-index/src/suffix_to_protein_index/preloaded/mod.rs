@@ -99,14 +99,8 @@ mod tests {
                 // The same crafted header `mmap::tests` rejects, so both readers stay pinned to the
                 // one check that relates `bit_len` to `block_count`.
                 "bitvec bit_len needing more blocks than the header declares",
-                [
-                    vec![2u8],
-                    10_000u64.to_le_bytes().to_vec(),
-                    1u64.to_le_bytes().to_vec(),
-                    vec![0u8; 8],
-                    vec![0u8; 16]
-                ]
-                .concat()
+                [vec![2u8], 10_000u64.to_le_bytes().to_vec(), 1u64.to_le_bytes().to_vec(), vec![0u8; 8], vec![0u8; 16]]
+                    .concat()
             )
         ];
 

@@ -119,10 +119,8 @@ pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, 
     let too_many = || -> Box<dyn Error> { "The bitvec mapping header declares too many blocks".into() };
     let bits_bytes = block_count.checked_mul(8).ok_or_else(too_many)?;
     let counts_bytes = (block_count / 8 + 1).checked_mul(16).ok_or_else(too_many)?;
-    let expected_size = 17usize
-        .checked_add(bits_bytes)
-        .and_then(|n| n.checked_add(counts_bytes))
-        .ok_or_else(too_many)?;
+    let expected_size =
+        17usize.checked_add(bits_bytes).and_then(|n| n.checked_add(counts_bytes)).ok_or_else(too_many)?;
     if mmap.len() < expected_size {
         return Err(format!(
             "The bitvec mapping file is too small to contain the mapping data: expected {} bytes, got {}",
