@@ -82,6 +82,38 @@ impl<'a> From<ProteinRef<'a>> for ProteinInfo<'a> {
     }
 }
 
+/// Normalises one peptide for search, or rejects it.
+///
+/// Uppercases ASCII in the same pass that validates, and returns `None` for any byte the index
+/// cannot contain. Three groups are rejected:
+///
+/// * `-` and `$` — structural characters in the text (the protein separator and the terminator),
+///   never part of a sequence. A query containing either could otherwise match across a protein
+///   boundary, and a trailing `$` is what drives a match to `text.len()`.
+/// * `J` — absent from the index alphabet (`BIT5_TO_CHAR`), so it can never match.
+/// * everything else — digits, punctuation, and every non-ASCII byte. `to_uppercase` is
+///   Unicode-aware, so a character like `é` used to survive normalisation as multi-byte UTF-8
+///   whose every byte is >= 128.
+///
+/// This replaces the `to_uppercase()` both entry points used to call: it walks the same bytes and
+/// makes the same single allocation, without the Unicode table lookups.
+///
+/// Note this does *not* make the checks in `KmerTable::lookup` or `check_tryptic_c_term`
+/// redundant. `search_matching_suffixes_scalar` and `search_all_matching_suffixes` are public and
+/// are called directly (by `sa-benchmarks`, among others), so those paths never pass through here.
+fn normalise_peptide(peptide: &str) -> Option<String> {
+    let trimmed = peptide.trim_end();
+    let mut out = String::with_capacity(trimmed.len());
+    for &b in trimmed.as_bytes() {
+        let upper = b.to_ascii_uppercase();
+        if !upper.is_ascii_uppercase() || upper == b'J' {
+            return None;
+        }
+        out.push(upper as char);
+    }
+    Some(out)
+}
+
 /// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
 ///
 /// # Arguments
@@ -96,8 +128,9 @@ impl<'a> From<ProteinRef<'a>> for ProteinInfo<'a> {
 /// Returns Some if matches are found.
 /// The first argument is true if the cutoff is used, otherwise false
 /// The second argument is a list of all matching proteins for the peptide
-/// Returns None if the peptides does not have any matches, or if the peptide is shorter than the
-/// sparseness factor k used in the index
+/// Returns None if the peptide does not have any matches, if it is shorter than the sparseness
+/// factor k used in the index, or if it contains a character the index cannot hold (see
+/// [`normalise_peptide`]).
 pub fn search_proteins_for_peptide<
     'a,
     SA: SuffixArrayBackend,
@@ -110,7 +143,8 @@ pub fn search_proteins_for_peptide<
     equate_il: bool,
     tryptic: bool
 ) -> Option<(bool, Vec<ProteinRef<'a>>)> {
-    let peptide = peptide.trim_end().to_uppercase();
+    // Rejects anything outside the index alphabet before it reaches the searcher.
+    let peptide = normalise_peptide(peptide)?;
 
     // words that are shorter than the sample rate are not searchable
     if peptide.len() < searcher.sa.sample_rate() as usize {
@@ -196,13 +230,13 @@ where
 {
     let sample_rate = searcher.sa.sample_rate() as usize;
 
-    // Normalise once and keep only searchable peptides (anything shorter than the sample rate
-    // cannot be searched), remembering each peptide's original index so the returned `sequence`
-    // stays verbatim — matching the previous per-peptide behaviour.
+    // Normalise once and keep only searchable peptides — anything shorter than the sample rate
+    // cannot be searched, and anything outside the index alphabet cannot match — remembering each
+    // peptide's original index so the returned `sequence` stays verbatim.
     let prepared: Vec<(usize, String)> = peptides
         .iter()
         .enumerate()
-        .map(|(index, peptide)| (index, peptide.trim_end().to_uppercase()))
+        .filter_map(|(index, peptide)| Some((index, normalise_peptide(peptide)?)))
         .filter(|(_, normalised)| normalised.len() >= sample_rate)
         .collect();
 
@@ -364,6 +398,75 @@ mod tests {
     /// Mixed case (normalisation), whitespace + empty (trim/length filter), a no-match ("ZZZ").
     fn test_peptides() -> Vec<String> {
         ["A", "ai", "CLA", "kcrly", "VAA", "ZZZ", "", "  ", "AC"].iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Every byte the index cannot hold is rejected before it reaches the searcher — including the
+    /// two that used to reach an unchecked index: a non-ASCII character, whose UTF-8 bytes are all
+    /// at least 128 (the `KmerTable::lookup` case), and a trailing `$`, which drives a match to
+    /// `text.len()` (the `check_tryptic_c_term` case).
+    #[test]
+    fn test_normalise_peptide_rejects_everything_outside_the_alphabet() {
+        // Accepted, and uppercased in the same pass.
+        assert_eq!(normalise_peptide("aik").as_deref(), Some("AIK"));
+        assert_eq!(normalise_peptide("CLA  ").as_deref(), Some("CLA"));
+        assert_eq!(normalise_peptide("").as_deref(), Some(""));
+
+        // Structural characters: never part of a sequence.
+        assert!(normalise_peptide("AC$").is_none(), "terminator");
+        assert!(normalise_peptide("AC-AC").is_none(), "separator");
+
+        // Absent from BIT5_TO_CHAR, so it can never match.
+        assert!(normalise_peptide("AJK").is_none(), "J is not in the index alphabet");
+
+        // Non-ASCII: 'é' is 0xC3 0xA9, both >= 128.
+        assert!(normalise_peptide("ACé").is_none(), "non-ASCII");
+        assert!(normalise_peptide("Ω").is_none());
+
+        // Everything else.
+        assert!(normalise_peptide("AC1").is_none(), "digit");
+        assert!(normalise_peptide("AC*").is_none(), "punctuation");
+        assert!(normalise_peptide("A C").is_none(), "interior whitespace");
+    }
+
+    /// A rejected peptide is dropped, not searched — the same treatment the length filter already
+    /// gives a too-short one, so it simply does not appear in the results.
+    ///
+    /// The cases here are chosen so the test can actually fail: `A-A` sits at index 9 of
+    /// "AI-CLACVAA-AC-KCRLY$" and `Y$` at index 18, so both *would* be found if the structural
+    /// characters were searchable. A peptide that merely does not occur would be dropped by the
+    /// no-match path whether or not it was filtered, and would prove nothing.
+    #[test]
+    fn test_rejected_peptides_are_dropped_from_both_paths() {
+        let searcher = test_searcher(true);
+
+        // Control: strip the structural character and each one is findable, so the assertions
+        // below fail for the right reason — rejected, not simply absent.
+        for present in ["AA", "Y", "AC"] {
+            assert!(
+                search_peptide(&searcher, present, 1000, false, false).is_some(),
+                "{present} should be found in the example text"
+            );
+        }
+
+        // Each of these would match the raw text if it reached the searcher.
+        for rejected in ["A-A", "Y$", "AA-AC"] {
+            assert!(
+                search_peptide(&searcher, rejected, 1000, false, false).is_none(),
+                "{rejected} contains a structural character and must be rejected"
+            );
+        }
+
+        // Outside the alphabet for other reasons: unmatchable, but they must not reach the
+        // searcher's unchecked table indices either.
+        for rejected in ["ACé", "AJ", "AC1"] {
+            assert!(search_peptide(&searcher, rejected, 1000, false, false).is_none(), "{rejected}");
+        }
+
+        // The batch path drops exactly the same peptides, and keeps input order for the rest.
+        let peptides: Vec<String> = ["AA", "A-A", "Y", "Y$", "AC", "ACé"].iter().map(|s| s.to_string()).collect();
+        let got = search_all_peptides(&searcher, &peptides, 1000, false, false);
+        let found: Vec<&str> = got.iter().map(|r| r.sequence).collect();
+        assert_eq!(found, vec!["AA", "Y", "AC"], "only the alphabet-clean peptides survive");
     }
 
     #[test]
