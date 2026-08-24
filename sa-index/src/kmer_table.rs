@@ -39,10 +39,15 @@ pub const AMINO_ACID_COUNT: usize = 24;
 /// Values above 7 are almost certainly a misconfiguration.
 pub const MAX_KMER_K: usize = 7;
 
-/// Builds the `ascii_array` lookup table at compile time: maps ASCII byte → 1-based amino acid
+/// Builds the `ascii_array` lookup table at compile time: maps *any* byte → 1-based amino acid
 /// index (0 = not in alphabet). L is mapped to the same slot as I so L→I normalization is free.
-fn build_ascii_array() -> [u8; 128] {
-    let mut array = [0u8; 128];
+///
+/// Sized for the whole `u8` range, not just ASCII, so that indexing it with an arbitrary query
+/// byte is total. A peptide arrives from the network and is only uppercased before it reaches
+/// [`KmerTable::lookup`]; a 128-entry table made every byte >= 128 an out-of-bounds index, one
+/// line before the `char_idx == 0` test that exists to reject exactly those characters.
+fn build_ascii_array() -> [u8; 256] {
+    let mut array = [0u8; 256];
     let mut next_index: u8 = 1;
     for &c in ALPHABET {
         if c == b'L' {
@@ -68,9 +73,9 @@ fn build_ascii_array() -> [u8; 128] {
 pub struct KmerTable {
     /// Length of the k-mer prefix.
     pub k: usize,
-    /// Maps ASCII byte → 1-based amino acid index (0 = not in alphabet).
+    /// Maps any byte → 1-based amino acid index (0 = not in alphabet).
     /// L maps to the same index as I for transparent L→I normalization.
-    ascii_array: [u8; 128],
+    ascii_array: [u8; 256],
     /// Flat `(min_bound, max_bound)` pairs indexed by `kmer_to_index(kmer)`.
     /// Absent k-mers are represented by `min_bound > max_bound`
     /// (sentinel: `(usize::MAX, 0)`).
@@ -253,6 +258,24 @@ mod tests {
         assert!(result.is_some(), "AC should be found");
         let (min, max) = result.unwrap();
         assert!(min <= max);
+    }
+
+    /// A query byte is a raw `u8`, and nothing on the request path filters the alphabet:
+    /// `peptide_search` only uppercases, and `to_uppercase` is Unicode-aware, so a non-ASCII
+    /// character arrives here as multi-byte UTF-8 whose every byte is >= 128. The alphabet table
+    /// must therefore be indexable by all 256 values — it used to be `[u8; 128]`, which made this
+    /// an out-of-bounds index one line *before* the `char_idx == 0` test that rejects such bytes.
+    #[test]
+    fn test_lookup_rejects_bytes_outside_ascii_without_panicking() {
+        let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
+
+        // 'é' (U+00E9) is 0xC3 0xA9 in UTF-8 — what `to_uppercase()` leaves in the query.
+        assert!(table.lookup(&[0xC3, 0xA9]).is_none(), "non-ASCII bytes are not in the alphabet");
+        // The boundary itself, and the top of the range.
+        assert!(table.lookup(&[0x80, 0x80]).is_none());
+        assert!(table.lookup(&[0xFF, 0xFF]).is_none());
+        // A valid residue followed by one that is out of range.
+        assert!(table.lookup(&[b'A', 0xFF]).is_none());
     }
 
     #[test]

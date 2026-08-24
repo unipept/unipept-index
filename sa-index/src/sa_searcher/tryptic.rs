@@ -192,15 +192,22 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// match reaching `text.len()` would have to have consumed the terminator — that is, the
     /// query's own last character would be `$`, which no protein sequence contains.
     ///
-    /// A caller *can* construct such a query, since `$` is in the alphabet. Both backends
-    /// tolerate the resulting `text.get(text.len())`: the preloaded one reads zero padding inside
-    /// the last allocated word, and the mmap one reads inside the page-rounded mapping. Neither
-    /// faults, and the value read cannot make the predicate accept, because such a query ends in
-    /// `$` and so has `last_is_kr == false`. It is nonetheless an unchecked read that happens to
-    /// land somewhere harmless rather than a designed guarantee — worth knowing before changing
-    /// how the text is stored or how far the query alphabet extends.
+    /// A caller *can* construct such a query, since `$` is in the alphabet, so the bound is
+    /// checked rather than assumed. It used to be neither, and the two backends then failed
+    /// differently on the same input: the preloaded one panics whenever index `len` lands in a
+    /// word the bit array never allocated (`5 * len % 64 >= 60`, i.e. `len % 64` in
+    /// {12, 25, 38, 51}, plus `len % 64 == 0`), while the mmap one reads whatever sits inside the
+    /// page-rounded mapping and can return *either* verdict — the first two clauses test `after`
+    /// directly, so a stray separator or terminator byte makes the predicate accept.
+    ///
+    /// One past the last residue is the end of the final protein, so it is reported as a valid
+    /// C-terminal cut, symmetric with [`Searcher::check_start_of_protein`] treating index 0 as a
+    /// protein start.
     #[inline]
     pub(super) fn check_tryptic_c_term(&self, text: &P::Text, match_end: usize, last_is_kr: bool) -> bool {
+        if match_end >= text.len() {
+            return true;
+        }
         let after = text.get(match_end);
         after == TERMINATION_CHARACTER || after == SEPARATION_CHARACTER || (last_is_kr && after != b'P')
     }
@@ -213,6 +220,32 @@ mod tests {
 
     use super::TrypticQuery;
     use crate::sa_searcher::test_utils::{PreloadedSearcher, example_searcher, searcher_over_text};
+
+    /// `match_end == text.len()` is reachable from the server: `$` is in the query alphabet, so a
+    /// query ending in `$` can match through the terminator. The read must be bounded.
+    ///
+    /// The text length is what makes this bite. The preloaded bit array allocates only
+    /// `ceil(5 * len / 64)` words, so reading index `len` fell outside them whenever
+    /// `5 * len % 64 >= 60` — that is `len % 64` in {12, 25, 38, 51} — or whenever `5 * len` was
+    /// an exact multiple of 64 (`len % 64 == 0`). The mmap backend never faulted there at all; it
+    /// read whatever followed inside the page-rounded mapping, so the two backends could return
+    /// opposite verdicts for the same query. Every length below is one of those cases.
+    #[test]
+    fn test_c_term_check_is_bounded_at_end_of_text() {
+        for len in [12usize, 25, 38, 51, 64] {
+            let text = format!("{}$", "A".repeat(len - 1));
+            assert_eq!(text.len(), len);
+
+            let searcher = searcher_over_text(&text, 1);
+            let t = searcher.proteins.text();
+            assert_eq!(t.len(), len, "fixture length must survive the builder");
+
+            // One past the last residue is the end of the final protein: a valid C-terminal cut,
+            // symmetric with `check_start_of_protein(0)`. Neither argument may panic.
+            assert!(searcher.check_tryptic_c_term(t, t.len(), true), "len {len}, last_is_kr");
+            assert!(searcher.check_tryptic_c_term(t, t.len(), false), "len {len}, not kr");
+        }
+    }
 
     // Direct test of the protein-boundary checks used by tryptic filtering.
     // Text "AI-CLACVAA-AC-KCRLY$": separators at 2/10/13, termination at 19.
