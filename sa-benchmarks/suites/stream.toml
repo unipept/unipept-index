@@ -63,7 +63,7 @@ amount = 10000
 [[sweep]]
 name = "stream"
 arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
-kmer = [6]
+kmer = [5]
 equate_il = [true]
 tryptic = [true, false]
 amounts = [10, 100, 1000, 10000]

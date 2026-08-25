@@ -355,7 +355,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Searches every peptide, returning one raw suffix result per input, in order.
     ///
-    /// Peptides are split into [`MLP_BATCH`]-sized chunks, one rayon task each, and each chunk goes
+    /// Peptides are split into `MLP_BATCH`-sized chunks, one rayon task each, and each chunk goes
     /// through `search_matching_suffixes_batched` so its binary searches interleave. The output is
     /// identical to running `search_matching_suffixes_scalar` over the list one peptide at a time — that
     /// is what `test_orchestrated_matches_scalar` asserts, over three suffix-array shapes and

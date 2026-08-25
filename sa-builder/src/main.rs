@@ -1,3 +1,11 @@
+//! The `sa-builder` binary: reads the protein TSV, builds the index, writes it out.
+//!
+//! The crate docs in `lib.rs` cover what an index is and why its files only mean anything as a
+//! set. This file is the writing half of that: [`Output`] stages each section in a temporary
+//! sibling, [`Output::seal`] flushes and syncs it, and [`commit_all`] renames them all into place
+//! once the last one has succeeded — so a build that fails partway leaves the previous index
+//! exactly as it was.
+
 use std::{
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
@@ -135,8 +143,8 @@ fn main() {
 
 /// An index file that only replaces its target once it is complete.
 ///
-/// Writes land in a sibling `.tmp` file and are renamed into place by [`Output::finish`]. Two
-/// separate problems that fixes:
+/// Writes land in a sibling `.tmp` file, which [`Output::seal`] flushes and hands to
+/// [`commit_all`] to rename into place. Two separate problems that fixes:
 ///
 /// * The builder used to `truncate(true)` the real path when it *opened* it, before writing a
 ///   byte. A build that then failed — a malformed input row, a full disk, a kill — had already

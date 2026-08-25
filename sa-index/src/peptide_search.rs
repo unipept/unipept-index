@@ -149,8 +149,9 @@ fn normalise_peptide(peptide: &str) -> Option<String> {
 /// The first argument is true if the cutoff is used, otherwise false
 /// The second argument is a list of all matching proteins for the peptide
 /// Returns None if the peptide does not have any matches, if it is shorter than the sparseness
-/// factor k used in the index, or if it contains a character the index cannot hold (see
-/// [`normalise_peptide`]).
+/// factor k used in the index, or if it contains a character the index cannot hold: the
+/// structural `-` and `$`, `J` (absent from the index alphabet), or anything else outside the
+/// ASCII amino-acid letters. ASCII case is normalised first, so lowercase input is fine.
 pub fn search_proteins_for_peptide<
     'a,
     SA: SuffixArrayBackend,

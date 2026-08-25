@@ -24,7 +24,7 @@ pub enum BoundSearchResult {
 /// A set of exactly `max_matches` matches is therefore `SearchResult`, not `MaxMatches`: it is
 /// complete, and nothing was dropped. Every producer decides this by collecting one match *past*
 /// the cutoff — reaching `max_matches + 1` is what proves the set was truncated — and then hands
-/// the accumulator to [`SearchAllSuffixesResult::truncated`], which drops that extra element.
+/// the accumulator to `SearchAllSuffixesResult::truncated`, which drops that extra element.
 #[derive(Debug)]
 pub enum SearchAllSuffixesResult {
     NoMatches,

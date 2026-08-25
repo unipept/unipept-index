@@ -53,17 +53,20 @@ Read the table this way:
 
 The verdict this suite is currently expected to reproduce, from the last full-database run: with the
 index resident, the 6-mer is inside the noise floor on medium/small and only +4.1% on large, for
-2.85 GB against 0.12 GB. Read on its own that says the 5-mer should ship — and it is NOT what ships.
-The 6-mer is the default, chosen on the capped regime instead, where the table's value is
-working-set size rather than probe count and it reaches +18.4% against no table where a 5-mer
-manages +3.2%. See `ram` for that answer; this suite deliberately does not sweep ceilings, because a
-table comparison under a cap is a different experiment with a root requirement attached.
+2.85 GB against 0.12 GB. That measurement is what the shipped default rests on — `sa-builder
+--kmer-size` defaults to 5, because 24x the memory for a win that small is not a trade worth making
+with the index resident.
 
-So this suite is expected to keep reporting the 6-mer as unresolved or marginal, and that is not a
-contradiction: it measures the resident regime, and the default was not chosen there. What would be
-a real result here is the 6-mer reading WORSE than the 5-mer by more than the floor — that would
-mean the resident cost is no longer merely unprovable but negative, and the choice would have to be
-re-argued.
+Under a ceiling the answer inverts: the table's value there is working-set size rather than probe
+count, and the 6-mer reaches +18.4% against no table where a 5-mer manages +3.2%. See `ram` for that
+answer; this suite deliberately does not sweep ceilings, because a table comparison under a cap is a
+different experiment with a root requirement attached. So the 6-mer is a documented tuning step for
+memory-constrained deployments, not the default.
+
+So this suite is expected to keep reporting the 6-mer as unresolved or marginal against the 5-mer,
+and that agrees with what ships rather than contradicting it. What would be a real result here is
+the 6-mer reading BETTER than the 5-mer by more than the floor in this regime — that would mean the
+resident cost now buys something, and the default would have to be re-argued.
 """
 
 [defaults]

@@ -89,9 +89,10 @@ RAYON_NUM_THREADS=96 ./target/release/sa-server ...
 The gain scales with how much the index overflows RAM, and it *costs* up to 10% when everything
 fits — so set it for constrained deployments and leave it alone otherwise.
 
-**2. Build a 6-mer k-mer table, not a 5-mer.** Under pressure the 6-mer is +18.4% and takes 27.9%
-fewer major faults than no table; a 5-mer is +3.2%, barely better than nothing. It costs 3.06 GB
-against 127 MB, which is why the resident-case measurement rejected it.
+**2. Raise the k-mer table to 6, from the default 5.** Under pressure the 6-mer is +18.4% and
+takes 27.9% fewer major faults than no table; a 5-mer is +3.2%, barely better than nothing. It
+costs 3.06 GB against 127 MB, which is why the resident-case measurement rejected it and why 5 is
+the default — this is the one regime where the 24x is worth paying.
 
 ```bash
 ./target/release/sa-builder ... --output-kmer-table kmer-tables/6mer_table.bin --kmer-size 6
@@ -147,7 +148,7 @@ Two options worth understanding:
 ### Optional: a k-mer bounds table
 
 ```bash
-  --output-kmer-table kmer_table.bin        # --kmer-size defaults to 6
+  --output-kmer-table kmer_table.bin        # --kmer-size defaults to 5
 ```
 
 This precomputes the suffix-array range for every k-mer, so a search starts from those bounds
@@ -155,11 +156,12 @@ instead of binary-searching the whole array. It is an accelerator only — resul
 with and without it — and it helps most on short peptides.
 
 Note it is a *dense* table: it has one entry per possible k-mer, so its size depends only on `k`
-and not on the database. That makes `k` the whole memory decision — roughly 127 MB at
-`--kmer-size 5` against 2.85 GB at the default `6`. The default assumes the mapped deployment,
-where the larger table pays for itself in avoided page faults; see "Choosing a storage backend"
-above. Pass `--kmer-size 5` if the index is guaranteed resident. The table can only be built during
-a full index build, since it is derived from the suffix array before that is written out.
+and not on the database. That makes `k` the whole memory decision — roughly 127 MB at the default
+`--kmer-size 5` against 3.06 GB at `6`, and `7` is the maximum the builder accepts. The default is
+5 because the 6-mer's extra 2.9 GB does not pay for itself with the index resident. Pass
+`--kmer-size 6` only under a memory ceiling, where it does; see "Choosing a storage backend" above.
+The table can only be built during a full index build, since it is derived from the suffix array
+before that is written out.
 
 ## Running the server
 

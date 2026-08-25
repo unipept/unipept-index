@@ -177,7 +177,7 @@ fn build_counts(blocks: &[u64]) -> Vec<Superblock> {
 ///   within a 512-bit superblock cannot exceed 512, and seven of them occupy 63 of a `u64`'s
 ///   bits, so the whole cell is exactly 16 bytes and one cache line holds four of them.
 ///
-/// Hence the constants in [`build_counts`]: `& 0x1FF` masks a 9-bit sub-count, `(w - 1) * 9`
+/// Hence the constants in `build_counts`: `& 0x1FF` masks a 9-bit sub-count, `(w - 1) * 9`
 /// places it, and the loop covers `w = 1..8` because word 0's sub-count is always zero and is not
 /// stored.
 ///

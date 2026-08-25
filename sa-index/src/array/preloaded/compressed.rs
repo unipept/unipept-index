@@ -45,7 +45,7 @@ impl SuffixArrayBackend for CompressedSA {
 }
 
 impl WriteBinary for CompressedSA {
-    /// Goes through [`write_sa_header`] rather than emitting the ten bytes itself, so that this and
+    /// Goes through `write_sa_header` rather than emitting the ten bytes itself, so that this and
     /// [`dump_compressed_suffix_array`] — the two routes to a compressed file — cannot drift apart
     /// in layout or in what they report when a write fails.
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {

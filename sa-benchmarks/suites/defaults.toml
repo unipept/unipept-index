@@ -82,7 +82,7 @@ warmup = "all:200000"
 # moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
 files = ["mixed", "small", "medium", "large"]
 
-# Production defaults: 6-mer table, and the search path at the constants it ships with.
+# Production defaults: 5-mer table, and the search path at the constants it ships with.
 # One measurement per context — the searcher has no runtime settings, so a block IS its contexts.
 [[sweep]]
 name = "defaults"
@@ -92,7 +92,7 @@ name = "defaults"
 # fraction of a real request every other suite's throughput actually describes.
 response = true
 arms = ["preloaded", "mmap", "pprot", "ptext", "pmap", "pprot+m"]
-kmer = [6]
+kmer = [5]
 equate_il = [true, false]
 tryptic = [true, false]
 

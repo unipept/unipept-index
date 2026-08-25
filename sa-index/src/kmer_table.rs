@@ -32,12 +32,15 @@ pub const AMINO_ACID_COUNT: usize = 24;
 
 /// Maximum allowed k for a k-mer table.
 ///
-/// Memory cost is `AMINO_ACID_COUNT^k × 16 bytes`:
-///   k=4 →   ~5 MB (L3-cache friendly, recommended)
-///   k=5 → ~128 MB
-///   k=6 →   ~3 GB
+/// The table is dense, so memory cost is `AMINO_ACID_COUNT^k × 16 bytes` and depends only on k,
+/// never on the database:
+///   k=4 →   ~5 MB
+///   k=5 → ~127 MB (the default `sa-builder` builds)
+///   k=6 →  ~3.06 GB
 ///
-/// Values above 7 are almost certainly a misconfiguration.
+/// `sa-builder --kmer-size` range-checks against this constant, so the assertion below is a
+/// backstop for callers that build a table directly. Values above 7 are almost certainly a
+/// misconfiguration.
 pub const MAX_KMER_K: usize = 7;
 
 /// Builds the `ascii_array` lookup table at compile time: maps *any* byte → 1-based amino acid
@@ -67,10 +70,11 @@ fn build_ascii_array() -> [u8; 256] {
 ///
 /// Stores the inclusive `(min_bound, max_bound)` SA range for every k-character amino acid
 /// prefix. At query time the first `k` characters narrow the binary search window from the
-/// full SA length (~32 iterations) to the k-mer's range (~13 iterations for k=4), reducing
-/// random memory accesses and TLB pressure by ~60 %.
+/// full SA length (~32 iterations) to the k-mer's range (~9 iterations at the default k=5, ~13
+/// at k=4), reducing random memory accesses and TLB pressure.
 ///
-/// Memory: `AMINO_ACID_COUNT^k × 16 bytes` — ~5.3 MB for k=4 (fits in L3 cache).
+/// Memory: `AMINO_ACID_COUNT^k × 16 bytes` — ~127 MB at the default k=5. See [`MAX_KMER_K`] for
+/// the other sizes, and `sa-builder --kmer-size` for which one to pick.
 pub struct KmerTable {
     /// Length of the k-mer prefix.
     pub k: usize,

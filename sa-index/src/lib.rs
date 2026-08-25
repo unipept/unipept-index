@@ -167,7 +167,9 @@
 //! measured it inside the noise floor when resident. At a 167 GB ceiling it is +18.4% and -27.9%
 //! faults versus no table; a 5-mer table is +3.2% and -6.2%, i.e. barely distinguishable from
 //! nothing. The difference is working-set size, not probe count: a 5-mer narrows the search to
-//! ~7 SA pages per query, a 6-mer to ~1.
+//! ~7 SA pages per query, a 6-mer to ~1. This is a ceiling-regime result and it is why
+//! `sa-builder --kmer-size` documents 6 as the tuning step for constrained deployments; the
+//! default stays 5, which is the size the resident measurements support.
 //!
 //! **All of the loss is in the search phase.** Retrieval is flat at ~147 ms per rep across every
 //! ceiling while search goes 135 ms → 1127 ms, so the two-pass prefetch pipeline in
