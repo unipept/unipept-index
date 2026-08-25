@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! The concatenated protein text, packed at 5 bits per residue.
 //!
 //! Every protein sequence in the database is concatenated into one text, separated by `-` and
@@ -26,6 +25,7 @@
 //!
 //! `preloaded` owns the `WriteBinary` implementation that produces the file both backends read,
 //! which is why `sa-builder` needs only that half.
+#![warn(missing_docs)]
 
 pub mod mmap;
 pub mod preloaded;

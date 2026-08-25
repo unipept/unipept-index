@@ -1,27 +1,41 @@
-#![warn(missing_docs)]
 //! A single portable software-prefetch hint.
 //!
-//! The index is far larger than any cache — a full UniProt suffix array runs to hundreds of
-//! megabytes even compressed, and the suffix-to-protein mapping to over a gigabyte — so both
-//! backends spend most of their time waiting on DRAM. Binary search and protein retrieval walk
-//! these structures in an order the hardware prefetcher cannot predict, which is exactly the
-//! case software prefetching exists for: the address of the *next* access is known several
-//! iterations before the value is needed, so the load can be started early and its ~80-100 ns
-//! latency overlapped with useful work.
+//! The index is far larger than any cache — a full UniProt suffix array runs to ~149 GB and the
+//! suffix-to-protein mapping to ~10 GB, out of 223 GB total; see the crate docs of `sa-index` for
+//! the full breakdown — so both backends spend most of their time waiting on DRAM. Binary search
+//! and protein retrieval walk these structures in an order the hardware prefetcher cannot
+//! predict, which is exactly the case software prefetching exists for: the address of the *next*
+//! access is known several iterations before the value is needed, so the load can be started
+//! early and its ~80-100 ns latency overlapped with useful work.
 //!
 //! Callers pair this with two-pass batching (fill a batch and issue hints, then process the
-//! batch) rather than prefetching one element ahead; see `sa_searcher::iterate_sa_range` and
-//! `sa_searcher::retrieval` in `sa-index`.
+//! batch) rather than prefetching one element ahead. Both loops are methods on `sa_searcher`'s
+//! `Searcher`: the private `iterate_sa_range`, and `retrieve_proteins`, which is public but is
+//! written in the private `sa_searcher::retrieval` module.
 //!
-//! This lives in its own crate so that `bitarray`, `text-compression`, `sa-mappings` and
-//! `sa-index` can all issue hints without depending on one another.
+//! This lives in its own crate so that `text-compression`, `sa-mappings` and `sa-index` can all
+//! issue hints without depending on one another.
+#![warn(missing_docs)]
 
 /// Issues a non-blocking hardware prefetch hint for the cache line at `ptr`.
 ///
 /// `ptr` is never dereferenced and need not be valid, aligned, or even mapped: on both supported
 /// architectures this compiles to a hint instruction that the CPU is free to ignore and that
-/// cannot fault. That is what makes the function safe despite taking a raw pointer, and it is why
-/// callers may prefetch one element past the end of a slice without a bounds check.
+/// cannot fault. That is what makes the function safe despite taking a raw pointer.
+///
+/// It does not remove the caller's bounds check. Every call site in the workspace forms its
+/// pointer by indexing — `&self.blocks[word]`, `&self.mmap[off]` — and that panics on an
+/// out-of-range index in safe Rust, before the hint instruction the CPU would have dropped is
+/// ever reached. What fault-freedom buys is that a *useless* hint costs nothing, so each guard
+/// can be a cheap `<` compare that skips the hint rather than a check that has to be exact.
+///
+/// The lookahead position that genuinely may sit past the end is absorbed one level up: the
+/// `prefetch_at`, `prefetch_sa_index` and `prefetch_for_suffix` trait methods each bounds-check
+/// in their own address domain and return silently, so the two-pass loops calling them never
+/// check. Those guards belong at the backend because they are not the same check — an element
+/// index, a byte offset, a 16-byte span and a residue count that indexes a *word* array are four
+/// different domains, and only the backend knows its own address arithmetic. See
+/// `text_compression::ProteinTextBackend::prefetch_at` for that contract.
 ///
 /// On architectures other than x86-64 and aarch64 this is a no-op. The function is always defined
 /// so that callers need no `cfg` guards.
@@ -76,9 +90,9 @@ pub fn prefetch_read<T>(ptr: *const T) {
 mod tests {
     use super::*;
 
-    /// The crate's whole safety claim is that a hint never faults, whatever the pointer. Callers
-    /// depend on this: the two-pass loops prefetch a lookahead index that may sit past the end of
-    /// the data, and skipping the bounds check is the point.
+    /// The crate's whole safety claim is that a hint never faults, whatever the pointer. That is
+    /// what lets a backend guard its hints with a cheap `<` compare and drop the ones that fall
+    /// out of range, rather than having to prove every address is one it could legally read.
     #[test]
     fn prefetching_never_faults() {
         let data: Vec<u64> = (0..64).collect();

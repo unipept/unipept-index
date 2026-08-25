@@ -1,5 +1,3 @@
-#![warn(missing_docs)]
-
 //! Protein metadata: accessions, taxon ids and functional annotations, addressed by index.
 //!
 //! The suffix array resolves a peptide to positions in the concatenated protein text; the
@@ -9,5 +7,6 @@
 //! Like the rest of the index it has two backends, selected by the `mmap` feature and resolved
 //! by naming one of the two structs. Both hand out [`proteins::ProteinRef`], which
 //! borrows rather than copies, so the two differ only in where the bytes live.
+#![warn(missing_docs)]
 
 pub mod proteins;
