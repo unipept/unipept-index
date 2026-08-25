@@ -240,10 +240,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 // neither character. In that case equate_il is moot and the fast path is sound.
                 if (equate_il || il_locations.is_empty()) && !tryptic && skip == 0 {
                     let range_size = max_bound - min_bound;
-                    if range_size >= max_matches {
-                        // The range is larger than the cutoff: collect the first max_matches
-                        // entries directly. The tight collect() loop lets the compiler emit
-                        // efficient (potentially SIMD) code for the Vec fill.
+                    if range_size > max_matches {
+                        // Strictly larger than the cutoff, so the set really is truncated: collect
+                        // the first max_matches entries directly. A range of *exactly* max_matches
+                        // falls through instead — it is a complete set, and reporting it as a
+                        // sample would tell the caller its protein list cannot be trusted.
+                        // The tight collect() loop lets the compiler emit efficient
+                        // (potentially SIMD) code for the Vec fill.
                         let result: Vec<i64> = self.sa.iter_range(min_bound, min_bound + max_matches).collect();
                         self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                         return SearchAllSuffixesResult::MaxMatches(result);
@@ -273,7 +276,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     );
                     self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
-                        return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                        return SearchAllSuffixesResult::truncated(matching_suffixes, max_matches);
                     }
                 }
             }
@@ -320,7 +323,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     );
                     self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
-                        return SearchAllSuffixesResult::MaxMatches(matching_suffixes);
+                        return SearchAllSuffixesResult::truncated(matching_suffixes, max_matches);
                     }
                 }
             }

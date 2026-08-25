@@ -159,11 +159,23 @@ impl ReadBinaryMmap for MmapBackedProteinText {
         let f = File::open(path)?;
         // SAFETY: `Mmap::map` is unsafe because the mapping aliases a file that another process
         // could modify or truncate underneath us; a shrinking file turns subsequent reads into
-        // SIGBUS, and concurrent writes into a data race. Neither applies to an index file: it is
-        // written once by `sa-builder` and is thereafter read-only for the lifetime of the
-        // server. Deployments must not rebuild an index in place under a running process — swap
-        // in a new file and restart instead. This same argument covers every `Mmap::map` in the
-        // workspace.
+        // SIGBUS, and concurrent writes into a data race. An index file is written once by
+        // `sa-builder` and is thereafter read-only for the lifetime of the server, so neither
+        // applies — but "written once" is a property of *how the file is replaced*, not of the
+        // format, and it is easy to break from outside this repo:
+        //
+        // * Safe: `sa-builder` writes every section to a temporary sibling and renames it over the
+        //   destination. A rename only unlinks the old name, so the inode a live mapping holds
+        //   survives and keeps returning the bytes it was opened with. Pinned by
+        //   `sa_mappings::proteins::mmap::tests::replacing_an_index_by_rename_keeps_a_live_mapping_valid`.
+        // * Safe: `mv` a new index over the path, for the same reason.
+        // * **Not safe:** `cp`, `rsync --inplace`, `> file`, or anything else that opens the
+        //   destination with `O_TRUNC`. That truncates the inode the server is still mapping, and
+        //   the next read of a now-absent page faults. Measured, not assumed: doing exactly this
+        //   dies with `signal: 10, SIGBUS: access to undefined memory`.
+        //
+        // So deployments must *replace* an index, never overwrite one in place, and restart the
+        // server afterwards. This same argument covers every `Mmap::map` in the workspace.
         let mmap = Arc::new(unsafe { Mmap::map(&f)? });
 
         #[cfg(unix)]

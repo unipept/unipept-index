@@ -63,12 +63,34 @@ impl WriteBinary for CompressedSA {
 /// Writes a bit-packed suffix array: the shared header at `bits_per_value` bits per value — see
 /// the [module docs](super) for the layout — then the body packed by `bitarray`. The body goes out
 /// in chunks so peak memory stays bounded at index-build scale.
+///
+/// # Errors
+///
+/// Returns an error if any value does not fit in `bits_per_value`. That check is the difference
+/// between a build that fails and one that silently produces a wrong index: `bitarray::set` now
+/// masks an over-wide value to its field, so without this the offending entry would be written
+/// truncated — a plausible-looking but wrong suffix position — and the caller would never learn.
+/// (Before the mask it was worse still: the excess bits spilled into the *preceding* entry,
+/// corrupting a value that was already correct.)
+///
+/// `sa-builder` derives `bits_per_value` from the text length, so it cannot trip this; the check is
+/// for every other caller of a `pub` function.
 pub fn dump_compressed_suffix_array(
     sa: Vec<i64>,
     sparseness_factor: u8,
     bits_per_value: usize,
     writer: &mut impl Write
 ) -> Result<(), Box<dyn Error>> {
+    super::super::check_bits_per_value(bits_per_value)?;
+    let max_representable: i64 = if bits_per_value >= 63 { i64::MAX } else { (1i64 << bits_per_value) - 1 };
+    if let Some((index, &value)) = sa.iter().enumerate().find(|&(_, &v)| v < 0 || v > max_representable) {
+        return Err(format!(
+            "suffix array entry {index} is {value}, which does not fit in {bits_per_value} bits \
+             (representable range 0..={max_representable})"
+        )
+        .into());
+    }
+
     write_sa_header(bits_per_value, sparseness_factor, sa.len(), writer)?;
     data_to_writer(sa, bits_per_value, 8 * 1024, writer)
         .map_err(|_| "Could not write the compressed suffix array to the writer")?;
@@ -138,6 +160,31 @@ pub(super) fn load_compressed(
 
 #[cfg(test)]
 mod tests {
+
+    /// A value too wide for the declared width must fail the write, not be packed truncated.
+    ///
+    /// `bitarray::set` masks the value to its field, so an over-wide entry would otherwise be
+    /// written as a different, plausible-looking suffix position and the caller would never learn.
+    #[test]
+    fn a_value_wider_than_the_declared_width_is_rejected() {
+        // 2^10 - 1 is the widest value 10 bits can hold.
+        let mut buf = Vec::new();
+        assert!(
+            dump_compressed_suffix_array(vec![0, 5, 1023], 1, 10, &mut buf).is_ok(),
+            "values inside the width must be written"
+        );
+
+        let mut buf = Vec::new();
+        let err =
+            dump_compressed_suffix_array(vec![0, 5, 1024], 1, 10, &mut buf).expect_err("1024 does not fit in 10 bits");
+        let msg = err.to_string();
+        assert!(msg.contains("entry 2"), "the error should name the offending entry: {msg}");
+        assert!(msg.contains("10 bits"), "the error should name the width: {msg}");
+
+        // A negative entry cannot be represented either.
+        let mut buf = Vec::new();
+        assert!(dump_compressed_suffix_array(vec![0, -1, 3], 1, 10, &mut buf).is_err());
+    }
     use super::{
         super::test_utils::{FailingReader, FailingWriter},
         *

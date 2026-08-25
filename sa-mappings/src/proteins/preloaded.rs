@@ -62,20 +62,39 @@ impl InMemoryProteins<InMemoryProteinText> {
     ///
     /// # Errors
     ///
-    /// Malformed UTF-8 or an unparseable taxon id. Note that a mid-file I/O error currently ends
-    /// the loop and returns the proteins read so far rather than failing, and a row with fewer
-    /// than four fields panics — both tracked as known issues.
+    /// A read error, a row with fewer than four fields, malformed UTF-8, or an unparseable taxon
+    /// id. Every one of them names the file and line, because the input is a multi-hundred-megabyte
+    /// TSV and "invalid digit found in string" on its own is not something anyone can act on.
+    ///
+    /// Two of these used to be worse than an error. A row with fewer than four fields panicked on
+    /// an `unwrap` with no message at all; and a mid-file read error ended the loop *successfully*,
+    /// returning the rows read so far — so a truncated read produced a silently partial database,
+    /// and every protein after the failure simply did not exist as far as the index was concerned.
     pub fn load_from_tsv(file: &str) -> Result<Self, Box<dyn Error>> {
         let mut input_string = String::new();
         let mut proteins: Vec<Protein> = Vec::new();
-        let file = File::open(file)?;
+        let path = file;
+        let file = File::open(path).map_err(|err| format!("could not open {path}: {err}"))?;
         let mut lines = ByteLines::new(BufReader::new(file));
-        while let Some(Ok(line)) = lines.next() {
+        let mut line_number = 0usize;
+
+        while let Some(line) = lines.next() {
+            line_number += 1;
+            let line = line.map_err(|err| format!("{path}:{line_number}: could not read line: {err}"))?;
+
             let mut fields = line.split(|b| *b == b'\t');
-            let uniprot_id = from_utf8(fields.next().unwrap())?;
-            let taxon_id = from_utf8(fields.next().unwrap())?.parse()?;
-            let sequence = from_utf8(fields.next().unwrap())?;
-            let functional_annotations: Vec<u8> = encode(from_utf8(fields.next().unwrap())?);
+            let uniprot_id = from_utf8(next_field(&mut fields, "uniprot_id", path, line_number)?)
+                .map_err(|err| format!("{path}:{line_number}: uniprot_id is not valid UTF-8: {err}"))?;
+            let taxon_field = from_utf8(next_field(&mut fields, "taxon_id", path, line_number)?)
+                .map_err(|err| format!("{path}:{line_number}: taxon_id is not valid UTF-8: {err}"))?;
+            let taxon_id = taxon_field
+                .parse()
+                .map_err(|err| format!("{path}:{line_number}: taxon_id {taxon_field:?} is not a number: {err}"))?;
+            let sequence = from_utf8(next_field(&mut fields, "sequence", path, line_number)?)
+                .map_err(|err| format!("{path}:{line_number}: sequence is not valid UTF-8: {err}"))?;
+            let annotations = from_utf8(next_field(&mut fields, "annotations", path, line_number)?)
+                .map_err(|err| format!("{path}:{line_number}: annotations are not valid UTF-8: {err}"))?;
+            let functional_annotations: Vec<u8> = encode(annotations);
             input_string.push_str(&sequence.to_uppercase());
             input_string.push(SEPARATION_CHARACTER.into());
             proteins.push(Protein {
@@ -90,6 +109,24 @@ impl InMemoryProteins<InMemoryProteinText> {
         let text = InMemoryProteinText::from_string(&input_string);
         Ok(Self { text, proteins })
     }
+}
+
+/// Takes the next tab-separated field, or reports which one the row was missing.
+///
+/// The rows come from a generated UniProt export, so a short row means the export is wrong or
+/// truncated — worth saying out loud rather than unwrapping.
+fn next_field<'a>(
+    fields: &mut impl Iterator<Item = &'a [u8]>,
+    name: &str,
+    path: &str,
+    line_number: usize
+) -> Result<&'a [u8], String> {
+    fields.next().ok_or_else(|| {
+        format!(
+            "{path}:{line_number}: row is missing the {name} field (expected uniprot_id, taxon_id, \
+             sequence and annotations, separated by tabs)"
+        )
+    })
 }
 
 impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T> {
@@ -467,6 +504,60 @@ mod size_limit_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// Writes a TSV with the given rows into a fresh temp dir and returns its path.
+    fn tsv_with(rows: &[&str]) -> (tempdir::TempDir, String) {
+        let dir = tempdir::TempDir::new("tsv_errors").unwrap();
+        let path = dir.path().join("proteins.tsv");
+        std::fs::write(&path, format!("{}\n", rows.join("\n"))).unwrap();
+        let as_string = path.to_str().unwrap().to_string();
+        (dir, as_string)
+    }
+
+    /// A malformed row must name the file, the line and the missing field — not panic.
+    ///
+    /// The input is a multi-hundred-megabyte generated TSV, so "which line" is the whole of the
+    /// useful information. This used to be `fields.next().unwrap()`, i.e. a panic with no message.
+    #[test]
+    fn a_short_row_reports_where_and_what_is_missing() {
+        let (_dir, path) = tsv_with(&[
+            "P00001\t9606\tMLPGL\tGO:0001234",
+            "P00002\t9606\tMLPGL" // missing the annotations field
+        ]);
+
+        let msg = match InMemoryProteins::<InMemoryProteinText>::load_from_tsv(&path) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("a row with three fields should be rejected")
+        };
+        assert!(msg.contains(":2:"), "the error should name the line: {msg}");
+        assert!(msg.contains("annotations"), "the error should name the missing field: {msg}");
+    }
+
+    /// An unparseable taxon id says which value failed, and where.
+    #[test]
+    fn a_bad_taxon_id_reports_the_value() {
+        let (_dir, path) = tsv_with(&["P00001\t9606\tMLPGL\tGO:0001234", "P00002\tnot-a-number\tMLPGL\tGO:0001234"]);
+
+        let msg = match InMemoryProteins::<InMemoryProteinText>::load_from_tsv(&path) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("a non-numeric taxon id should be rejected")
+        };
+        assert!(msg.contains(":2:"), "the error should name the line: {msg}");
+        assert!(msg.contains("not-a-number"), "the error should quote the offending value: {msg}");
+    }
+
+    /// A well-formed file still loads, so the checks above reject for the right reason.
+    #[test]
+    fn a_well_formed_tsv_still_loads() {
+        let (_dir, path) = tsv_with(&["P00001\t9606\tMLPGL\tGO:0001234", "P00002\t562\tKCRLY\tEC:1.1.1.-"]);
+
+        let loaded =
+            InMemoryProteins::<InMemoryProteinText>::load_from_tsv(&path).expect("a well-formed file must load");
+        assert_eq!(loaded.proteins.len(), 2);
+        assert_eq!(loaded.proteins[0].uniprot_id, "P00001");
+        assert_eq!(loaded.proteins[1].taxon_id, 562);
+    }
+
     use tempdir::TempDir;
     use text_compression::ProteinTextBackend as _;
 

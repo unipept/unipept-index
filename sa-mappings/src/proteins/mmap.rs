@@ -399,6 +399,45 @@ impl LoadIndex for super::InMemoryProteins<MmapBackedProteinText> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The property every `Mmap::map` in the workspace depends on: replacing an index file by
+    /// *rename* leaves a live mapping intact.
+    ///
+    /// `sa-builder` writes each section to a temporary sibling and renames it over the destination,
+    /// so a rebuild never truncates a path a running server may have mapped. A rename only unlinks
+    /// the old name; the inode survives for as long as anything still holds it open, which is what
+    /// makes the mapping safe to keep reading.
+    ///
+    /// The contrast was measured rather than assumed: truncating the same file *in place* under a
+    /// live mapping and then reading it dies with `signal: 10, SIGBUS: access to undefined memory`.
+    /// That is the hazard the SAFETY comment describes, and it is exactly one `cp` away — see the
+    /// note there.
+    #[test]
+    fn replacing_an_index_by_rename_keeps_a_live_mapping_valid() {
+        use std::io::Write;
+
+        let dir = TempDir::new("rename_probe").unwrap();
+        let live = dir.path().join("index.bin");
+        std::fs::write(&live, vec![0xAAu8; 4096]).unwrap();
+
+        let f = File::open(&live).unwrap();
+        let mapped = unsafe { memmap2::Mmap::map(&f) }.unwrap();
+        assert_eq!(mapped[0], 0xAA);
+
+        // What the builder now does: write a sibling, rename it over the destination.
+        let tmp = dir.path().join("index.bin.tmp");
+        let mut t = File::create(&tmp).unwrap();
+        t.write_all(&vec![0xBBu8; 8192]).unwrap();
+        t.sync_all().unwrap();
+        drop(t);
+        std::fs::rename(&tmp, &live).unwrap();
+
+        // The mapping must still see the *old* bytes, at the old length, with no fault.
+        assert_eq!(mapped.len(), 4096, "mapping length changed under us");
+        let sum: u64 = mapped.iter().map(|&b| b as u64).sum();
+        assert_eq!(sum, 0xAA * 4096, "mapping content changed under us");
+    }
+
     use std::{fs::File, path::PathBuf};
 
     use tempdir::TempDir;

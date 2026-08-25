@@ -484,6 +484,60 @@ mod tests {
         assert_eq!(found, vec!["AA", "Y", "AC"], "only the alphabet-clean peptides survive");
     }
 
+    /// `cutoff_used` must mean "matches were dropped", not "the cutoff was reached".
+    ///
+    /// Every cutoff test used `>=`, so a complete set of exactly `cutoff` matches came back flagged
+    /// as a truncated sample. That flag is what an API consumer reads to decide whether a protein
+    /// list is exhaustive, so it was a user-visible wrong answer on a healthy index — and the
+    /// smaller the client's `cutoff`, the more often it landed on the boundary.
+    ///
+    /// The counts are discovered rather than hard-coded, so the test states the property instead of
+    /// restating the fixture.
+    #[test]
+    fn cutoff_used_marks_only_genuinely_truncated_results() {
+        let searcher = test_searcher(true);
+
+        for peptide in ["A", "C", "V", "AC", "KCRLY"] {
+            // Ground truth: the complete result, found with a cutoff nothing can reach.
+            let Some(full) = search_peptide(&searcher, peptide, 1_000_000, false, false) else {
+                continue;
+            };
+            let total = full.proteins.len();
+            assert!(total > 0, "{peptide}: fixture peptide should match");
+            assert!(!full.cutoff_used, "{peptide}: a cutoff far above the match count is not truncation");
+
+            // Exactly the match count: everything is returned, so nothing was dropped.
+            let at = search_peptide(&searcher, peptide, total, false, false).unwrap();
+            assert_eq!(at.proteins.len(), total, "{peptide}: cutoff == total must still return everything");
+            assert!(!at.cutoff_used, "{peptide}: a complete set of exactly `cutoff` is not truncated");
+
+            // One below: a match really was dropped.
+            if total > 1 {
+                let below = search_peptide(&searcher, peptide, total - 1, false, false).unwrap();
+                assert_eq!(below.proteins.len(), total - 1, "{peptide}: cutoff must cap the result");
+                assert!(below.cutoff_used, "{peptide}: dropping a match must be reported");
+            }
+
+            // The batched path drives the same flag and must agree at every boundary — this is the
+            // kind of one-element difference the two searchers drift apart on.
+            let one = [peptide.to_string()];
+            for cutoff in [total.saturating_sub(1).max(1), total, total + 1] {
+                let batched = search_all_peptides(&searcher, &one, cutoff, false, false);
+                let scalar = search_peptide(&searcher, peptide, cutoff, false, false).unwrap();
+                assert_eq!(batched.len(), 1, "{peptide}: expected one result at cutoff {cutoff}");
+                assert_eq!(
+                    batched[0].cutoff_used, scalar.cutoff_used,
+                    "{peptide}: batched and scalar disagree on cutoff_used at cutoff {cutoff}"
+                );
+                assert_eq!(
+                    batched[0].proteins.len(),
+                    scalar.proteins.len(),
+                    "{peptide}: batched and scalar returned different counts at cutoff {cutoff}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_search_all_peptides_matches_scalar_reference() {
         let searcher = test_searcher(true);

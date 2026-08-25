@@ -237,7 +237,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 // has no I/L to begin with.
                 if (equate_il || il_locs[i].is_empty()) && !tryptic && skip == 0 {
                     let range_size = max_bound - min_bound;
-                    if range_size >= max_matches {
+                    // Strictly larger: a range of exactly max_matches is a complete set. Kept in
+                    // step with `scalar.rs`, which makes the same distinction the same way.
+                    if range_size > max_matches {
                         let result: Vec<i64> = self.sa.iter_range(min_bound, min_bound + max_matches).collect();
                         done[i] = Some(SearchAllSuffixesResult::MaxMatches(result));
                     } else {
@@ -265,7 +267,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         max_matches
                     );
                     if hit_max {
-                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(&mut matching[i])));
+                        done[i] =
+                            Some(SearchAllSuffixesResult::truncated(std::mem::take(&mut matching[i]), max_matches));
                     }
                 }
             }
@@ -329,7 +332,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         max_matches
                     );
                     if hit_max {
-                        done[i] = Some(SearchAllSuffixesResult::MaxMatches(std::mem::take(&mut matching[i])));
+                        done[i] =
+                            Some(SearchAllSuffixesResult::truncated(std::mem::take(&mut matching[i]), max_matches));
                     }
                 }
                 self.measurements.match_iter_ns.add(t_iter.elapsed_ns());

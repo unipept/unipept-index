@@ -12,13 +12,41 @@ pub enum BoundSearchResult {
 }
 
 /// Enum representing the matching suffixes after searching a peptide in the suffix array
-/// Both the MaxMatches and SearchResult indicate found suffixes, but MaxMatches is used when the
-/// cutoff is reached.
+///
+/// Both `MaxMatches` and `SearchResult` indicate found suffixes. The distinction is exact and
+/// user-visible — it becomes `cutoff_used` in the response, which a caller reads to decide whether
+/// a protein list is exhaustive:
+///
+/// * `SearchResult` — every match is here. The set is complete.
+/// * `MaxMatches` — there were **strictly more** than `max_matches` matches, and this is a sample
+///   of exactly `max_matches` of them.
+///
+/// A set of exactly `max_matches` matches is therefore `SearchResult`, not `MaxMatches`: it is
+/// complete, and nothing was dropped. Every producer decides this by collecting one match *past*
+/// the cutoff — reaching `max_matches + 1` is what proves the set was truncated — and then hands
+/// the accumulator to [`SearchAllSuffixesResult::truncated`], which drops that extra element.
 #[derive(Debug)]
 pub enum SearchAllSuffixesResult {
     NoMatches,
     MaxMatches(Vec<i64>),
     SearchResult(Vec<i64>)
+}
+
+impl SearchAllSuffixesResult {
+    /// Builds the truncated-sample result from an accumulator that ran one past the cutoff.
+    ///
+    /// Shared by the scalar and batched searchers rather than duplicated, because the two must
+    /// return identical results for identical input and this is exactly the kind of one-element
+    /// detail that drifts apart.
+    pub(crate) fn truncated(mut suffixes: Vec<i64>, max_matches: usize) -> Self {
+        debug_assert!(
+            suffixes.len() > max_matches,
+            "truncated() called with {} matches, which does not exceed the cutoff of {max_matches}",
+            suffixes.len()
+        );
+        suffixes.truncate(max_matches);
+        Self::MaxMatches(suffixes)
+    }
 }
 
 /// Custom implementation of partialEq for SearchAllSuffixesResult

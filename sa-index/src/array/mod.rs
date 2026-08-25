@@ -91,6 +91,24 @@ pub(super) fn check_bits_per_value(bits_per_value: usize) -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Rejects a sample rate of zero, for both readers.
+///
+/// The sample rate is the second header byte, and it is the minimum length a peptide must have to
+/// be searchable at all: `peptide_search` drops everything shorter. At zero that filter admits the
+/// empty peptide, and — more to the point — an index built with `--sparseness-factor 0` answers
+/// *nothing*, because every search is measured against a stride of zero.
+///
+/// `sa-builder` no longer emits it (the flag is range-checked at parse time), but an index built
+/// before that, or one hand-edited, still loads — and did so silently, reporting a plausible entry
+/// count and then matching no peptide at all, with no diagnostic at either end. Checked here so
+/// both readers agree, for the same reason as the width above.
+pub(super) fn check_sample_rate(sample_rate: u8) -> Result<(), Box<dyn Error>> {
+    if sample_rate == 0 {
+        return Err("The SA header declares a sample rate of 0; no peptide can match such an index".into());
+    }
+    Ok(())
+}
+
 /// Common interface implemented by every SA storage backend.
 ///
 /// - [`OriginalSA`] and [`CompressedSA`] — owned memory, one packing each.

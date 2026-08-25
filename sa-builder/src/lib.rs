@@ -19,8 +19,13 @@ pub struct Arguments {
     #[arg(long)]
     pub output_mapping: String,
     /// The sparseness_factor used on the suffix array (default value 1, which means every value in
-    /// the SA is used)
-    #[arg(short, long, default_value_t = 1)]
+    /// the SA is used).
+    ///
+    /// Range-checked, because zero is accepted by every arithmetic step that follows and produces a
+    /// well-formed index that matches nothing: `0.is_multiple_of(MAX_SPARSENESS)` is true, so the
+    /// sample rate written into the header is `0 / MAX_SPARSENESS == 0`, and a stride of zero means
+    /// no peptide is ever long enough to search. The build reports success.
+    #[arg(short, long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..))]
     pub sparseness_factor: u8,
     /// The algorithm used to construct the suffix array (default value LibSais)
     #[arg(short('a'), long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]

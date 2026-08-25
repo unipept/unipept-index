@@ -12,6 +12,82 @@
 //! difference between them: `BitArray` takes its width as a const generic parameter,
 //! `DynBitArray` as a constructor argument.
 
+/// One width's worth of the "overwriting replaces" property, for [`bitarray_test_suite`].
+///
+/// A separate macro rather than a loop because `BitArray` takes its width as a *const generic*, so
+/// the constructor needs a literal. Widths are therefore enumerated at the call site.
+macro_rules! assert_overwrite_replaces {
+    ($new:ident, $bits:literal) => {{
+        let bits: usize = $bits;
+        let max = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+        // 40 values reaches a word boundary at every width in the list.
+        let mut ba = $new!(40, $bits);
+
+        // Fill with all-ones, then overwrite each index with a distinct pattern. Any bit left
+        // over from the first pass shows up as a wrong read.
+        for i in 0..40 {
+            ba.set(i, max);
+        }
+        for i in 0..40 {
+            ba.set(i, (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) & max);
+        }
+        for i in 0..40 {
+            let want = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) & max;
+            assert_eq!(ba.get(i), want, "bits={bits} index={i}: stale bits after overwrite");
+        }
+
+        // And back to zero, where every leftover bit is visible.
+        for i in 0..40 {
+            ba.set(i, 0);
+        }
+        for i in 0..40 {
+            assert_eq!(ba.get(i), 0, "bits={bits} index={i}: not cleared");
+        }
+    }};
+}
+
+/// One width's worth of the "an over-range value stays in its field" property.
+macro_rules! assert_over_range_is_contained {
+    ($new:ident, $bits:literal) => {{
+        let bits: usize = $bits;
+        let max = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+        let mut ba = $new!(8, $bits);
+
+        // Neighbours start at zero, so any bit that spills into them is visible. Filling with
+        // `max` instead would hide the bug entirely: the spilled bits are ones, and ORing ones
+        // into a field that is already all ones changes nothing.
+        ba.set(4, u64::MAX); // deliberately far too wide for the field
+
+        assert_eq!(ba.get(4), max, "bits={bits}: an over-range value should be truncated to the field");
+        for i in 0..8 {
+            if i == 4 {
+                continue;
+            }
+            assert_eq!(ba.get(i), 0, "bits={bits}: index {i} disturbed by an over-range write at 4");
+        }
+    }};
+}
+
+/// One width's worth of the degenerate-length behaviour.
+macro_rules! assert_degenerate_lengths {
+    ($new:ident, $bits:literal) => {{
+        let bits: usize = $bits;
+        let max = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+
+        let empty = $new!(0, $bits);
+        assert_eq!(empty.len(), 0, "bits={bits}: empty length");
+        assert!(empty.is_empty(), "bits={bits}: empty is_empty");
+
+        let mut one = $new!(1, $bits);
+        assert_eq!(one.len(), 1, "bits={bits}: single length");
+        assert_eq!(one.get(0), 0, "bits={bits}: single starts zeroed");
+        one.set(0, max);
+        assert_eq!(one.get(0), max, "bits={bits}: single round trip");
+        one.set(0, 0);
+        assert_eq!(one.get(0), 0, "bits={bits}: single clear");
+    }};
+}
+
 /// Generates the full behavioural test suite against a `$new!(capacity, BITS)` constructor macro.
 macro_rules! bitarray_test_suite {
     ($new:ident) => {
@@ -35,6 +111,55 @@ macro_rules! bitarray_test_suite {
                 assert_eq!(ba.get(1), 0b1100001001010010011000010100110111001001);
                 assert_eq!(ba.get(2), 0b1111001101001101101101101011101001010001);
                 assert_eq!(ba.get(3), 0b0000100010010001010001001110101110011100);
+            }
+
+            /// Overwriting an index must replace the value, not OR the new one over the old.
+            ///
+            /// The straddling branch cleared `MASK >> start_block_offset` bits of the first word,
+            /// which for a field starting near the top of a word is zero — so it cleared nothing
+            /// and the previous value stayed underneath the new one. The parity test suite never
+            /// wrote an index twice, which is why both implementations carried this identically.
+            ///
+            /// The widths below are chosen to cover fields that divide 64 evenly, fields that do
+            /// not, and both ends of the range.
+            #[test]
+            fn overwriting_an_index_replaces_the_value() {
+                assert_overwrite_replaces!($new, 1);
+                assert_overwrite_replaces!($new, 3);
+                assert_overwrite_replaces!($new, 5);
+                assert_overwrite_replaces!($new, 8);
+                assert_overwrite_replaces!($new, 17);
+                assert_overwrite_replaces!($new, 28);
+                assert_overwrite_replaces!($new, 32);
+                assert_overwrite_replaces!($new, 40);
+                assert_overwrite_replaces!($new, 63);
+                assert_overwrite_replaces!($new, 64);
+            }
+
+            /// A value wider than the field must not disturb its neighbours.
+            ///
+            /// `set` ORs the value into place, so an unmasked over-range value spilled its high
+            /// bits into the adjacent entry — corrupting a value the caller never wrote to.
+            #[test]
+            fn an_over_range_value_cannot_touch_its_neighbours() {
+                assert_over_range_is_contained!($new, 1);
+                assert_over_range_is_contained!($new, 3);
+                assert_over_range_is_contained!($new, 5);
+                assert_over_range_is_contained!($new, 17);
+                assert_over_range_is_contained!($new, 28);
+                assert_over_range_is_contained!($new, 40);
+                assert_over_range_is_contained!($new, 63);
+            }
+
+            /// The degenerate lengths, which the rest of the suite never builds.
+            #[test]
+            fn zero_and_one_element_arrays_behave() {
+                assert_degenerate_lengths!($new, 1);
+                assert_degenerate_lengths!($new, 5);
+                assert_degenerate_lengths!($new, 17);
+                assert_degenerate_lengths!($new, 32);
+                assert_degenerate_lengths!($new, 63);
+                assert_degenerate_lengths!($new, 64);
             }
 
             #[test]

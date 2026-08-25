@@ -115,6 +115,7 @@ impl ReadBinary for InMemorySA {
 
         reader.read_exact(&mut buf1).map_err(|_| "Could not read the sample rate from the binary file")?;
         let sample_rate = buf1[0];
+        super::check_sample_rate(sample_rate)?;
 
         let mut buf8 = [0u8; 8];
         reader
@@ -322,6 +323,44 @@ mod tests {
             // reason rather than rejecting everything.
             let ok = InMemorySA::read_binary(&mut Cursor::new(full.clone())).expect("intact file must load");
             assert_backend_holds(&ok, &sa, 1, bits.unwrap_or(64));
+        }
+    }
+
+    /// A sample rate of zero must be refused by *both* readers.
+    ///
+    /// It is the producer half of a pair: `sa-builder --sparseness-factor 0` used to be accepted,
+    /// wrote `0` here, and produced an index that loaded cleanly and then matched no peptide at
+    /// all, because the sample rate is the minimum searchable peptide length. The flag is
+    /// range-checked now, but an index built before that still loads, so the readers reject it too.
+    #[test]
+    fn both_readers_reject_a_sample_rate_of_zero() {
+        use text_compression::ReadBinaryMmap;
+
+        use crate::array::{MmapBackedSA, mmap::test_utils::write_to_tempfile};
+
+        for bits in [None, Some(29)] {
+            let sa = match bits {
+                None => sample_sa(20),
+                Some(b) => fit_to_width(&sample_sa(20), b)
+            };
+            let mut bytes = to_file_bytes(&sa, 1, bits);
+            bytes[1] = 0; // the sample-rate byte
+
+            assert!(
+                InMemorySA::read_binary(&mut Cursor::new(bytes.clone())).is_err(),
+                "preloaded accepted a sample rate of 0 at bits={bits:?}"
+            );
+            let tmp = write_to_tempfile(&bytes);
+            assert!(
+                MmapBackedSA::read_binary_mmap(tmp.path()).is_err(),
+                "mmap accepted a sample rate of 0 at bits={bits:?}"
+            );
+
+            // A rate of 1 is the ordinary case and must still load, so the check above is specific.
+            bytes[1] = 1;
+            assert!(InMemorySA::read_binary(&mut Cursor::new(bytes.clone())).is_ok());
+            let tmp = write_to_tempfile(&bytes);
+            assert!(MmapBackedSA::read_binary_mmap(tmp.path()).is_ok());
         }
     }
 

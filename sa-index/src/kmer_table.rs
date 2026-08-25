@@ -79,7 +79,16 @@ pub struct KmerTable {
     /// Flat `(min_bound, max_bound)` pairs indexed by `kmer_to_index(kmer)`.
     /// Absent k-mers are represented by `min_bound > max_bound`
     /// (sentinel: `(usize::MAX, 0)`).
-    bounds: Vec<(usize, usize)>
+    bounds: Vec<(usize, usize)>,
+    /// The largest `max_bound` any present k-mer carries, or 0 for a table with no entries.
+    ///
+    /// Not part of the on-disk format — it is accumulated while reading, which the loader was
+    /// already iterating anyway, so an existing `kmer_table.bin` still loads unchanged. It exists
+    /// so [`Searcher::with_kmer_table`](crate::sa_searcher::Searcher::with_kmer_table) can reject a
+    /// table built against a *different* suffix array: the searcher feeds these bounds straight
+    /// into the binary search, so a table from a larger index sends `get` past the end of a smaller
+    /// one — a panic on the preloaded backend, and a fabricated suffix position on the mmap one.
+    highest_bound: usize
 }
 
 impl KmerTable {
@@ -146,7 +155,9 @@ impl KmerTable {
         let bounds: Vec<(usize, usize)> =
             atomic_bounds.into_iter().map(|(min, max)| (min.into_inner(), max.into_inner())).collect();
 
-        Self { k, ascii_array, bounds }
+        let highest_bound = bounds.iter().filter(|(min, max)| min <= max).map(|(_, max)| *max).max().unwrap_or(0);
+
+        Self { k, ascii_array, bounds, highest_bound }
     }
 
     /// Maps a byte slice to its flat table index.
@@ -163,6 +174,13 @@ impl KmerTable {
             idx = idx * AMINO_ACID_COUNT + (char_idx as usize - 1);
         }
         Some(idx)
+    }
+
+    /// The largest SA index any k-mer in this table points at.
+    ///
+    /// A table is only valid for the suffix array it was built from; see the field docs.
+    pub fn highest_bound(&self) -> usize {
+        self.highest_bound
     }
 
     /// Looks up the inclusive `(min_bound, max_bound)` SA range for a k-mer prefix.
@@ -216,16 +234,24 @@ impl ReadBinary for KmerTable {
         }
 
         let table_size = AMINO_ACID_COUNT.pow(k as u32);
-        let mut bounds = Vec::with_capacity(table_size);
+        let mut bounds = Vec::new();
+        bounds
+            .try_reserve_exact(table_size)
+            .map_err(|_| format!("The k-mer table header declares k={k}, whose table cannot be allocated"))?;
         let mut buf16 = [0u8; 16];
+        let mut highest_bound = 0usize;
         for _ in 0..table_size {
             reader.read_exact(&mut buf16)?;
             let min = u64::from_le_bytes(buf16[..8].try_into()?) as usize;
             let max = u64::from_le_bytes(buf16[8..].try_into()?) as usize;
+            // Absent k-mers carry the `(usize::MAX, 0)` sentinel, so they never raise the maximum.
+            if min <= max {
+                highest_bound = highest_bound.max(max);
+            }
             bounds.push((min, max));
         }
 
-        Ok(Self { k, ascii_array: build_ascii_array(), bounds })
+        Ok(Self { k, ascii_array: build_ascii_array(), bounds, highest_bound })
     }
 }
 
@@ -249,6 +275,55 @@ mod tests {
         let text = InMemoryProteinText::from_string(input);
         let sa = InMemorySA::Original(OriginalSA(sa_values, 1));
         KmerTable::build_from_sa(&sa, &text, k)
+    }
+
+    /// A table built from one suffix array must be refused by a searcher holding a different one.
+    ///
+    /// Nothing in the file format identifies the build, so a rebuilt `sa.bin` with a stale
+    /// `kmer_table.bin` used to start cleanly and then fail mid-query — a panic on the preloaded
+    /// backend, a fabricated suffix position on the mmap one.
+    #[test]
+    fn a_table_from_a_different_index_is_rejected() {
+        use text_compression::InMemoryProteinText;
+
+        use crate::{
+            array::{InMemorySA, OriginalSA},
+            sa_searcher::Searcher,
+            suffix_to_protein_index::{InMemorySuffixToProteinMapping, preloaded::BitVecSuffixToProtein}
+        };
+
+        // A table whose bounds reach index 4, built over a 5-entry array.
+        let big_text = InMemoryProteinText::from_string("ACAC$");
+        let big_sa = InMemorySA::Original(OriginalSA(vec![4, 2, 0, 3, 1], 1));
+        let table = KmerTable::build_from_sa(&big_sa, &big_text, 2);
+        assert!(table.highest_bound() > 0, "fixture table should point somewhere");
+
+        // A searcher over a strictly smaller array cannot use it.
+        let small_text = InMemoryProteinText::from_string("AC$");
+        let small_sa = InMemorySA::Original(OriginalSA(vec![2, 0, 1], 1));
+        let stp = BitVecSuffixToProtein::new(&small_text);
+        let proteins = sa_mappings::proteins::InMemoryProteins::new(small_text, vec![sa_mappings::proteins::Protein {
+            uniprot_id: "P0".to_string(),
+            taxon_id: 1,
+            functional_annotations: vec![]
+        }]);
+        let searcher = Searcher::new(small_sa, proteins, InMemorySuffixToProteinMapping::BitVec(stp));
+
+        let err = searcher.try_with_kmer_table(table).err().expect("a mismatched table must be rejected");
+        assert!(err.contains("different index"), "unexpected error: {err}");
+
+        // And the matching pair is accepted, so the check is specific.
+        let text = InMemoryProteinText::from_string("ACAC$");
+        let sa = InMemorySA::Original(OriginalSA(vec![4, 2, 0, 3, 1], 1));
+        let good = KmerTable::build_from_sa(&sa, &text, 2);
+        let stp = BitVecSuffixToProtein::new(&text);
+        let proteins = sa_mappings::proteins::InMemoryProteins::new(text, vec![sa_mappings::proteins::Protein {
+            uniprot_id: "P0".to_string(),
+            taxon_id: 1,
+            functional_annotations: vec![]
+        }]);
+        let searcher = Searcher::new(sa, proteins, InMemorySuffixToProteinMapping::BitVec(stp));
+        assert!(searcher.try_with_kmer_table(good).is_ok(), "the matching table must be accepted");
     }
 
     #[test]

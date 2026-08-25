@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 use std::ptr::null_mut;
 
-use crate::bitpacking::{BITS_PER_CHAR, bitpack_text_8, bitpack_text_16, bitpack_text_32};
+use crate::bitpacking::{BITS_PER_CHAR, bitpack_text_16, bitpack_text_32};
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 pub mod bitpacking;
@@ -24,20 +24,26 @@ pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'st
 
     let required_bits = libsais_sparseness * BITS_PER_CHAR;
     if required_bits <= 8 {
-        // bitpacked values fit in uint8_t
-        let packed_text = if libsais_sparseness == 1 { text } else { bitpack_text_8(text, libsais_sparseness) };
+        // A sparseness of 1 needs no packing at all: the raw text is already one byte per residue,
+        // and libsais treats it as an arbitrary byte alphabet. This is the only way to reach the
+        // 8-bit branch — `required_bits <= 8` means `libsais_sparseness == 1` at 5 bits per
+        // character — which is why there is no 8-bit packer.
+        debug_assert_eq!(libsais_sparseness, 1, "the 8-bit branch is only reachable at sparseness 1");
+        let packed_text = text;
 
         sa = vec![0; packed_text.len()];
         exit_code =
             unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
     } else if required_bits <= 16 {
         // bitpacked values fit in uint16_t
-        let packed_text = bitpack_text_16(text, libsais_sparseness);
+        let packed_text =
+            bitpack_text_16(text, libsais_sparseness).map_err(|_| "text holds a byte outside the protein alphabet")?;
         sa = vec![0; packed_text.len()];
         exit_code =
             unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
     } else {
-        let packed_text = bitpack_text_32(text, libsais_sparseness);
+        let packed_text =
+            bitpack_text_32(text, libsais_sparseness).map_err(|_| "text holds a byte outside the protein alphabet")?;
         sa = vec![0; packed_text.len()];
         let k = 1 << (libsais_sparseness * BITS_PER_CHAR);
         exit_code =

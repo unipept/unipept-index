@@ -91,9 +91,32 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     }
 
     /// Attaches a pre-built k-mer bounds table to this searcher.
-    pub fn with_kmer_table(mut self, table: KmerTable) -> Self {
+    pub fn with_kmer_table(self, table: KmerTable) -> Self {
+        self.try_with_kmer_table(table).unwrap_or_else(|err| panic!("{err}"))
+    }
+
+    /// Attaches a k-mer table, rejecting one that was not built from this suffix array.
+    ///
+    /// A table records SA index ranges, and the searcher feeds them straight into the binary search
+    /// as bounds. A table from a *different* build therefore points past the end of a smaller array:
+    /// the preloaded backend panics on the first such lookup and the mmap one reads past its data
+    /// region and returns a fabricated suffix position, which then indexes the suffix-to-protein
+    /// map. Two different wrong behaviours, both arriving mid-query rather than at startup.
+    ///
+    /// Mixing builds cannot be detected in general — `sa-builder` writes no build identifier — but
+    /// this one mismatch is both the likeliest (rebuild the index, forget the table) and cheap to
+    /// catch, since the bound is accumulated while the table is read.
+    pub fn try_with_kmer_table(mut self, table: KmerTable) -> Result<Self, String> {
+        if table.highest_bound() >= self.sa.len() {
+            return Err(format!(
+                "the k-mer table points at suffix-array index {} but the array holds {} entries; \
+                 it was built from a different index",
+                table.highest_bound(),
+                self.sa.len()
+            ));
+        }
         self.kmer_table = Some(table);
-        self
+        Ok(self)
     }
 
     /// Builds and attaches a k-mer table with the given `k` using the already-loaded index data.
@@ -326,7 +349,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches {
+                        if matching_suffixes.len() > max_matches {
                             break 'scan true;
                         }
                     }
@@ -361,7 +384,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches {
+                        if matching_suffixes.len() > max_matches {
                             break 'scan true;
                         }
                     }
@@ -429,7 +452,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     ) {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches {
+                        if matching_suffixes.len() > max_matches {
                             break 'scan true;
                         }
                     }
@@ -473,7 +496,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     ) {
                         accepted += 1;
                         matching_suffixes.push(v);
-                        if matching_suffixes.len() >= max_matches {
+                        if matching_suffixes.len() > max_matches {
                             break 'scan true;
                         }
                     }

@@ -110,6 +110,12 @@ impl<const BITS: usize> BitArray<BITS> {
 
     /// Writes `value` at `index`. Only the low `BITS` bits of `value` are stored.
     pub fn set(&mut self, index: usize, value: u64) {
+        // Masked, because the write below ORs `value` into place: a value wider than the field
+        // would otherwise spill its high bits into the *neighbouring* entry rather than being
+        // rejected or truncated. Callers pass values derived from file headers and suffix arrays,
+        // where a width mismatch is a real possibility, so the containment happens here.
+        let value = value & Self::MASK;
+
         let start_block = index * BITS / 64;
         let start_block_offset = index * BITS % 64;
 
@@ -122,7 +128,13 @@ impl<const BITS: usize> BitArray<BITS> {
         let end_block = (index + 1) * BITS / 64;
         let end_block_offset = (index + 1) * BITS % 64;
 
-        self.data[start_block] &= !(Self::MASK >> start_block_offset);
+        // The straddling half of the value occupies the low `64 - start_block_offset` bits of this
+        // word, which is *not* what `Self::MASK >> start_block_offset` describes — for a field of 5
+        // bits starting at offset 62 that expression is zero, so the old clear cleared nothing and
+        // overwriting an index left the previous value's bits ORed underneath the new one.
+        // `u64::MAX >> start_block_offset` is the correct set of bits, and cannot shift by 64
+        // because a straddling field always starts past offset 0.
+        self.data[start_block] &= !(u64::MAX >> start_block_offset);
         self.data[start_block] |= value >> end_block_offset;
 
         self.data[end_block] &= !(Self::MASK << (64 - end_block_offset));
