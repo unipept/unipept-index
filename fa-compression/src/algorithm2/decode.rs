@@ -5,14 +5,40 @@ use super::CompressionTable;
 
 /// Decodes a byte slice using a compression table and returns the corresponding string.
 ///
+/// Each group of 3 bytes is read as a little-endian index into `compression_table`, and the
+/// annotations it names are joined with `;`.
+///
 /// # Arguments
 ///
-/// * `input` - The byte slice to decode.
-/// * `compression_table` - The compression table used for decoding.
+/// * `input` - The byte slice to decode. Must be the output of [`encode`](super::encode) against
+///   **this same table**; the bytes carry no way to check that.
+/// * `compression_table` - The compression table used for decoding. **Consumed**: the table is
+///   taken by value, so decoding twice against the same table needs two tables.
 ///
 /// # Returns
 ///
 /// The decoded string.
+///
+/// # Panics
+///
+/// If any 3-byte group names an index the table does not have. There is no validation step and no
+/// error return: decoding with a table that is not the one used to encode either panics or, worse,
+/// silently yields the wrong annotations.
+///
+/// # A trailing partial group is dropped
+///
+/// Input is read in exact 3-byte chunks, so a length that is not a multiple of 3 has its final 1 or
+/// 2 bytes **silently ignored** rather than reported.
+///
+/// ```
+/// use fa_compression::algorithm2::{CompressionTable, decode};
+///
+/// let mut table = CompressionTable::new();
+/// table.add_entry("IPR:IPR000001".to_string());
+///
+/// // The stray 4th byte is discarded.
+/// assert_eq!(decode(&[0, 0, 0, 0], table), "IPR:IPR000001");
+/// ```
 ///
 /// # Examples
 ///

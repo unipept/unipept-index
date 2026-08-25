@@ -4,14 +4,40 @@ use super::CompressionTable;
 
 /// Encodes the input string using the provided compression table.
 ///
+/// Each `;`-separated annotation is looked up in the table and written as the low 3 bytes of its
+/// index, little-endian.
+///
 /// # Arguments
 ///
 /// * `input` - The input string to encode.
-/// * `compression_table` - The compression table used for encoding.
+/// * `compression_table` - The compression table used for encoding. **Consumed**: the table is
+///   taken by value, so encoding twice against the same table needs two tables.
 ///
 /// # Returns
 ///
 /// A compressed byte vector representing the encoded annotations.
+///
+/// # Annotations missing from the table are dropped
+///
+/// An annotation with no table entry is **silently skipped** — it does not error, and it leaves no
+/// trace in the output, so the decoded string will be shorter than the one encoded. The table must
+/// cover every annotation you intend to keep.
+///
+/// ```
+/// use fa_compression::algorithm2::{CompressionTable, encode};
+///
+/// let mut table = CompressionTable::new();
+/// table.add_entry("IPR:IPR000001".to_string());
+///
+/// // "GO:0000001" is not in the table, so it vanishes.
+/// let encoded = encode("IPR:IPR000001;GO:0000001", table);
+/// assert_eq!(encoded, vec![0, 0, 0]);
+/// ```
+///
+/// # Index space
+///
+/// Only 3 of the index's bytes are stored, so an entry beyond `2^24` cannot be represented and
+/// would be encoded as a truncated, wrong index.
 ///
 /// # Examples
 ///

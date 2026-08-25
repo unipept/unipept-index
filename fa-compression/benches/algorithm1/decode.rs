@@ -3,7 +3,7 @@ use fa_compression::algorithm1::{decode, decoded, encode};
 
 use super::util::generate_annotation;
 
-/// Generate a random number of encoded annotations.
+/// Generate `count` random annotations, encoded.
 fn generate_encoded_annotations(count: usize) -> Vec<u8> {
     let mut random = rand::thread_rng();
 
@@ -19,8 +19,9 @@ fn generate_encoded_annotations(count: usize) -> Vec<u8> {
 
 /// The size a real protein's annotation set actually is.
 ///
-/// Measured over `data/proteins.tsv`: the decoded text averages ~143 characters, with a median of
-/// 117 and a p90 of 221 — roughly 10 annotations, not the 100 the case above uses. The big case is
+/// Measured over a full Unipept protein dump (the `proteins.tsv` the index is built from, which is
+/// not in this repo): the decoded text averages ~143 characters, with a median of 117 and a p90 of
+/// 221 — roughly 10 annotations, not the 100 that `decode_algorithm1` below uses. The big case is
 /// worth keeping (it is where per-call overhead disappears and the inner loop is all that is left),
 /// but the server decodes one of these per protein hit and the small one is what it pays.
 const TYPICAL_ANNOTATION_COUNT: usize = 10;

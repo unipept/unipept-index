@@ -212,9 +212,15 @@ fn open_annotation<S: Sink>(sink: &mut S, section: usize, separator_owed: &mut b
 
 /// Decodes a byte array into a string representation of annotations.
 ///
-/// The input byte array is decoded by splitting each byte into two characters.
-/// The decoded annotations are then reconstructed by appending the appropriate prefix
-/// (e.g., "EC:", "GO:", "IPR:IPR") to each annotation.
+/// Each byte holds two characters, and each of the three `,`-separated sections gets its prefix
+/// (`EC:`, `GO:`, `IPR:IPR`) put back in front of every annotation it contains. Malformed input
+/// never panics; see the module docs for what the odd cases decode to.
+///
+/// This allocates the returned `String`. Two alternatives avoid that:
+///
+/// * [`decode_into`] appends to a buffer you already have.
+/// * [`decoded`] decodes lazily into a formatter, so a serialiser never materialises the string at
+///   all.
 ///
 /// # Arguments
 ///
@@ -244,7 +250,7 @@ pub fn decode(input: &[u8]) -> String {
 /// Decodes a byte array into annotations, **appending** them to `out`.
 ///
 /// The allocation-free variant of [`decode`] for callers that have a buffer to reuse. Nothing is
-/// cleared first, and nothing is written for empty input.
+/// cleared first, and nothing is written for empty input. See [`decoded`] to skip the buffer too.
 ///
 /// # Arguments
 ///
