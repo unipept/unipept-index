@@ -15,8 +15,7 @@ with `-` between and `$` at the end, which is the layout the suffix array is bui
 
 ## Two backends
 
-Like the rest of the index, the crate is built in one of several configurations, selected by
-features. `proteins::Proteins` is a type alias that resolves to whichever is active:
+Both are always compiled. A caller picks a backend by naming its type:
 
 * `InMemoryProteins` — accessions and encoded annotations held in owned memory. Always available,
   because it also owns the `WriteBinary` implementation that `sa-builder` uses to produce
@@ -36,18 +35,17 @@ the hottest and the biggest structures in the index respectively, so the best st
 not the best storage for the other — and both structs above are generic over their text backend so
 the two can be chosen independently.
 
-| build | metadata | text |
+| pairing | metadata | text |
 |---|---|---|
-| *(no features)* | owned | owned |
-| `mmap` | mapped | mapped |
-| `mmap,preloaded-text` | mapped | owned |
-| `mmap,preloaded-proteins` | owned | mapped |
-| `mmap,preloaded-text,preloaded-proteins` | owned | owned |
+| `InMemoryProteins<InMemoryProteinText>` | owned | owned |
+| `MmapBackedProteins<MmapBackedProteinText>` | mapped | mapped |
+| `MmapBackedProteins<InMemoryProteinText>` | mapped | owned |
+| `InMemoryProteins<MmapBackedProteinText>` | owned | mapped |
 
-All four load from the same file — the readers live in `src/proteins/mmap.rs`, sharing one header
-parser and one metadata parser so the combinations cannot drift apart. `preloaded-text` is the
-interesting one: it keeps the multi-gigabyte metadata table mapped while the ~190 MB text that
-search reads once per character compared sits in owned RAM.
+All four load from the same file, and every reader that needs the mapping lives in
+`src/proteins/mmap.rs`, sharing one header parser so the combinations cannot drift apart on how
+they bound it. The third row is the interesting one: it keeps the multi-gigabyte metadata table
+mapped while the ~190 MB text that search reads once per character compared sits in owned RAM.
 
 ## Example
 

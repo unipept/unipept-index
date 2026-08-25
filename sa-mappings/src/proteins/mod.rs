@@ -46,8 +46,6 @@ pub static SEPARATION_CHARACTER: u8 = b'-';
 /// Must not appear in any sequence.
 pub static TERMINATION_CHARACTER: u8 = b'$';
 
-// ── ProteinsBackend trait ─────────────────────────────────────────────────────
-
 /// Common interface for all proteins backends.
 ///
 /// The associated type `Text` is the backend's own generic parameter, so the metadata storage and
@@ -64,11 +62,13 @@ pub trait ProteinsBackend: Send + Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Returns the metadata for protein `index`.
+    /// Returns the metadata for protein `index`, which must be less than [`Self::len`].
     ///
-    /// # Panics
-    ///
-    /// If `index` is out of range.
+    /// What a larger index does is backend-specific and neither backend guarantees a panic:
+    /// [`InMemoryProteins`] indexes a `Vec` and panics, while [`MmapBackedProteins`] may decode an
+    /// entry-sized window of whatever follows the entry table and return fabricated metadata. See
+    /// [`MmapBackedProteins::get`] for why that is not checked there. Callers must bound the index
+    /// themselves rather than relying on either behaviour.
     fn get(&self, index: usize) -> ProteinRef<'_>;
 
     /// Reads every OS page in the backing store into the page cache, and returns the number of

@@ -23,20 +23,17 @@ use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
 use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
-// ── InMemoryProteins ──────────────────────────────────────────────────────────
-
 /// All protein metadata held in owned memory, plus the concatenated text.
 ///
 /// `T` is the text backend. At [`InMemoryProteinText`] metadata and text are both owned; it may
 /// instead be instantiated at `MmapBackedProteinText` to keep the metadata in RAM while the text
 /// stays mapped. The two axes are independent.
 ///
-/// That pairing is not about size — the metadata is the *smaller* section by five times, 8.29 GB
-/// against a 43.34 GB text on the 2025-04 index. It is about access shape. Retrieval reads one
-/// metadata record per hit, at an index the suffix array hands it, so the reads are random across
-/// the whole section and each one is a page the kernel cannot predict. The text is read in short
-/// contiguous runs — a peptide's worth of residues from wherever the candidate starts — so a
-/// mapped text reuses the page it just faulted and a mapped metadata table does not.
+/// That pairing is about access shape rather than size. Retrieval reads one metadata record per
+/// hit, at an index the suffix array hands it, so the reads are random across the whole section
+/// and each one is a page the kernel cannot predict. The text is read in short contiguous runs —
+/// a peptide's worth of residues from wherever the candidate starts — so a mapped text reuses the
+/// page it just faulted and a mapped metadata table does not.
 pub struct InMemoryProteins<T> {
     /// The concatenated protein text the suffix array is built over.
     pub text: T,
@@ -53,8 +50,6 @@ impl<T> InMemoryProteins<T> {
 }
 
 impl InMemoryProteins<InMemoryProteinText> {
-    // ── TSV loader ────────────────────────────────────────────────────────────
-
     /// Builds an index from a UniProt TSV: `uniprot_id\ttaxon_id\tsequence\tannotations`.
     ///
     /// Sequences are upper-cased and concatenated with [`SEPARATION_CHARACTER`] between them and
@@ -170,9 +165,9 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T
     }
 
     /// Warms the text, which may still be mapped even though the metadata is owned — that is
-    /// exactly the `mmap + preloaded-proteins` build. The `Vec<Protein>` itself is anonymous
+    /// exactly `InMemoryProteins<MmapBackedProteinText>`. The `Vec<Protein>` itself is anonymous
     /// memory and has nothing to fault, so it contributes nothing; without this delegation the
-    /// whole text section went unwarmed in that build, since no other structure can reach it.
+    /// whole text section went unwarmed in that pairing, since no other structure can reach it.
     fn touch_all_pages(&self) -> u64 {
         self.text.touch_all_pages()
     }

@@ -8,9 +8,11 @@
 //!
 //! This module also owns every loader that needs the mapping — including the one producing an
 //! *owned* metadata table alongside a mapped text, which lives here rather than in `preloaded`
-//! because it is the mapping that has to be opened and kept alive. The three of them share
-//! `layout` for the header and `preloaded`'s `read_metadata_section` for the entries, so the
-//! storage combinations cannot drift apart in how they read the same file.
+//! because it is the mapping that has to be opened and kept alive. All three share `layout` for
+//! the header, so the storage combinations cannot drift apart in how they bound the file. Only
+//! that one copying loader parses entries up front, and it does so with `preloaded`'s
+//! `read_metadata_section` rather than a second copy; the two `MmapBackedProteins` loaders parse
+//! no entries at all, decoding each one lazily in `get`.
 
 use std::{error::Error, path::Path, sync::Arc};
 
@@ -19,8 +21,6 @@ use memmap2::Mmap;
 use text_compression::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, bit_array_byte_size};
 
 use super::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
-
-// ── MmapBackedProteins ────────────────────────────────────────────────────────
 
 /// Protein table borrowed from a memory mapping.
 ///
@@ -138,12 +138,19 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
     ///
     /// # Panics
     ///
-    /// Three ways, all of them on a *deliberately edited* file rather than on bad input:
+    /// Two ways, both of them on a *deliberately edited* file rather than on bad input:
     ///
-    /// * `index` is out of range. Only `debug_assert`ed, so a release build panics on the slice
-    ///   below instead of erroring.
     /// * the entry's `uid_offset` / `fa_offset` point outside their blob.
     /// * the accession bytes are not valid UTF-8.
+    ///
+    /// An out-of-range `index` is a caller bug, and this is *not* where it gets caught. The
+    /// `debug_assert` below only checks that the entry lies inside the mapping, which an index
+    /// just past `protein_count` still does — its offset lands in the UID blob. The entry is then
+    /// decoded from whatever bytes happen to be there, so the result is fabricated metadata rather
+    /// than a panic; only an index far enough past the end to leave the mapping entirely trips
+    /// either the assert or the slice. The preloaded sibling does panic on the same index, so the
+    /// two backends disagree here and callers must not rely on either. `load_from_tsv` in
+    /// [`super::preloaded`] rejects the input that used to produce such an index.
     ///
     /// # Why this is not checked here
     ///
@@ -167,7 +174,10 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
     fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;
         let entry_off = self.fixed_table_offset + index * eo::ENTRY_SIZE;
-        debug_assert!(entry_off + eo::ENTRY_SIZE <= self.mmap.len(), "protein index {index} out of range");
+        debug_assert!(
+            entry_off + eo::ENTRY_SIZE <= self.mmap.len(),
+            "protein entry for index {index} lies outside the mapping"
+        );
         let entry = &self.mmap[entry_off..entry_off + eo::ENTRY_SIZE];
 
         let taxon_id = u32::from_le_bytes(entry[eo::TAXON_ID].try_into().unwrap());
@@ -187,8 +197,6 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
         }
     }
 }
-
-// ── Loading ───────────────────────────────────────────────────────────────────
 
 /// Where each section of `proteins.bin` starts, once the header has been validated.
 ///
@@ -213,8 +221,9 @@ struct Layout {
 /// *all* the checking before any loader builds a text or copies metadata, which is what keeps the
 /// guarantee that a truncated file errors rather than panicking.
 ///
-/// The checking still stops at `fa_data_offset`; see `truncated_files_error_rather_than_panicking`
-/// for what is not validated beyond it.
+/// All four sections are bounded against the file length, the annotation blob included. What is
+/// *not* checked here is any individual entry's offsets — see the note on [`MmapBackedProteins::get`]
+/// for why that is deliberate.
 fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
     let mmap_len = mmap.len();
     if mmap_len < 8 {
@@ -367,8 +376,6 @@ impl ReadBinaryMmap for super::InMemoryProteins<MmapBackedProteinText> {
     }
 }
 
-// ── LoadIndex ─────────────────────────────────────────────────────────────────
-
 // Three of the four pairings load through the mapping, and this is where that fact is recorded.
 // `proteins.bin` holds the text and the metadata in one file, so it has to be *mapped* whenever
 // either section is mapped — not merely when the metadata is. The odd one out is the last impl
@@ -392,8 +399,6 @@ impl LoadIndex for super::InMemoryProteins<MmapBackedProteinText> {
         Self::read_binary_mmap(path)
     }
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -551,9 +556,11 @@ mod tests {
     ///
     /// * the writer's field order in `preloaded` against the reader's `entry_offsets` here, which
     ///   are two separate statements of the same 16-byte layout;
-    /// * the four text × metadata pairings against each other. They share `layout` and
-    ///   `read_metadata_section`, but each assembles the pieces itself, and a wrong offset in one
-    ///   would otherwise surface only as wrong answers from a differently-built server.
+    /// * the four text × metadata pairings against each other. All share `layout`, and the two
+    ///   with owned metadata also share `read_metadata_section`, but each assembles the pieces
+    ///   itself — and the mapped-metadata pairings decode entries in `get` instead, against no
+    ///   shared parser at all. A wrong offset in one would otherwise surface only as wrong
+    ///   answers from a differently-built server.
     #[test]
     fn matches_the_preloaded_backend_field_for_field() {
         let tmp_dir = TempDir::new("test_mmap_parity").unwrap();
@@ -581,7 +588,7 @@ mod tests {
     ///
     /// Getting this wrong is silent: the pages fault in, nothing ever reads them again, and the
     /// only symptoms are startup time and page-cache pressure — ~190 MB of it at UniProt scale.
-    /// That would quietly cancel the benefit `preloaded-text` exists to deliver.
+    /// That would quietly cancel the point of holding the text in owned memory at all.
     #[test]
     fn warm_range_skips_the_text_only_when_the_text_is_owned() {
         let tmp_dir = TempDir::new("test_mmap_warm_from").unwrap();
@@ -598,7 +605,7 @@ mod tests {
     /// Owned metadata over a mapped text is the one pairing where nothing else can reach the text
     /// pages: `MmapBackedProteins` sweeps its own mapping and would cover them, but this pairing
     /// does not have that mapping. It inherited the trait's no-op sweep until it was given one,
-    /// which left the whole text section unwarmed in the `mmap + preloaded-proteins` build.
+    /// which left the whole text section unwarmed in that pairing.
     ///
     /// Residency is not observable from inside the process without `mincore`, so what this pins is
     /// the bound: the sweep slices the mapping by a range it computes from the header, so a wrong
@@ -632,16 +639,15 @@ mod tests {
         ]
     }
 
-    /// `read_binary_mmap` parses an untrusted header. Truncation anywhere up to the end of the
-    /// UID blob must error rather than panic or read out of bounds; none of its length checks had
-    /// coverage before.
+    /// `read_binary_mmap` parses an untrusted header. Truncation at *any* length must error rather
+    /// than panic or read out of bounds; none of its length checks had coverage before.
     ///
-    /// The sweep deliberately stops at `fa_data_offset`. Beyond that the reader validates
-    /// nothing: it parses `fa_bytes_total` from the header but never checks
-    /// `fa_data_offset + fa_bytes_total <= mmap.len()`, so a file truncated inside the FA blob
-    /// loads happily and only fails later, as an out-of-bounds slice inside `get` — in a request
-    /// handler. That is a known issue, reported rather than fixed in this pass; when it is fixed,
-    /// extend this sweep to `full.len()` and it should stay green.
+    /// The sweep runs to `full.len()`, which it could not always do. `layout` bounded the entry
+    /// table and the UID blob but never parsed `fa_bytes_total`, so a file cut inside the
+    /// annotation blob mapped cleanly and only failed later, as an out-of-bounds slice inside
+    /// `get` — in a request handler. It now bounds that section too, so the last stretch of cuts
+    /// is the part of this sweep that would regress if the check were dropped again; the assert
+    /// below keeps the fixture's FA blob non-empty so that stretch is never empty.
     #[test]
     fn truncated_files_error_rather_than_panicking() {
         let tmp_dir = TempDir::new("test_mmap_truncated").unwrap();
@@ -656,7 +662,7 @@ mod tests {
         let fa_data_offset = meta_offset + 24 + protein_count * 16 + uid_bytes_total;
         assert!(fa_data_offset < full.len(), "fixture should have a non-empty FA blob");
 
-        for cut in 0..fa_data_offset {
+        for cut in 0..full.len() {
             let path = tmp_dir.path().join(format!("truncated_{cut}.bin"));
             std::fs::write(&path, &full[..cut]).unwrap();
             for (what, load_is_err) in mmap_loaders() {
