@@ -1,11 +1,10 @@
 //! Fixtures for the preloaded mapping tests, on top of the backend-agnostic ones in
 //! [`suffix_to_protein_index::test_utils`](crate::suffix_to_protein_index::test_utils).
 
+use binary_traits::{ReadBinary, WriteBinary};
+
 use super::InMemorySuffixToProteinMapping;
-use crate::{
-    ReadBinary, WriteBinary,
-    suffix_to_protein_index::test_utils::{assert_sample_lookups, to_binary}
-};
+use crate::suffix_to_protein_index::test_utils::{assert_sample_lookups, to_binary};
 
 /// Asserts the tag byte `mapping` writes, and that `read_binary` picks the variant it names.
 /// Expects a mapping built from [`sample_text`](crate::suffix_to_protein_index::test_utils::sample_text).

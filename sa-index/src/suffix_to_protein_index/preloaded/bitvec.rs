@@ -3,11 +3,12 @@ use std::{
     io::{Read, Write}
 };
 
+use binary_traits::WriteBinary;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
 use super::super::SuffixToProteinMappingBackend;
-use crate::{Nullable, WriteBinary};
+use crate::Nullable;
 
 /// One 16-byte rank cell, covering 512 bits (8 words). Laid out exactly as the file stores it, so
 /// reading and writing are copies rather than conversions.

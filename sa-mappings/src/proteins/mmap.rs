@@ -14,11 +14,9 @@
 
 use std::{error::Error, path::Path, sync::Arc};
 
+use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap};
 use memmap2::Mmap;
-use text_compression::{
-    InMemoryProteinText, LoadIndex, MmapBackedProteinText, ProteinTextBackend, ReadBinary, ReadBinaryMmap,
-    bit_array_byte_size
-};
+use text_compression::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, bit_array_byte_size};
 
 use super::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
 
@@ -440,8 +438,9 @@ mod tests {
 
     use std::{fs::File, path::PathBuf};
 
+    use binary_traits::{ReadBinaryMmap, WriteBinary};
     use tempdir::TempDir;
-    use text_compression::{ProteinTextBackend as _, ReadBinaryMmap, WriteBinary, bit_array_byte_size};
+    use text_compression::{ProteinTextBackend as _, bit_array_byte_size};
 
     use super::{InMemoryProteinText, MmapBackedProteinText, MmapBackedProteins};
     use crate::proteins::{
@@ -675,7 +674,7 @@ mod tests {
     /// file with "failed to fill whole buffer", so the two disagreed.
     #[test]
     fn truncation_inside_the_annotation_blob_is_rejected_by_both_backends() {
-        use text_compression::ReadBinary;
+        use binary_traits::ReadBinary;
 
         let tmp_dir = TempDir::new("test_fa_truncation").unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);

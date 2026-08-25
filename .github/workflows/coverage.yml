@@ -7,6 +7,11 @@ jobs:
     name: Codecov
     runs-on: ubuntu-latest
 
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. Coverage measures
+    # the toolchain the workspace ships from.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

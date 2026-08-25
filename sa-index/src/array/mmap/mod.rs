@@ -1,7 +1,13 @@
+//! The suffix array read straight out of a memory mapping, in either packing.
+//!
+//! Only the reading half lives here. The files are written by the `preloaded` types' `WriteBinary`
+//! implementations — see there for the format, and `super::write_sa_header` for the 10-byte header
+//! both packings share. A reader here must stay in step with those two.
+
 use std::{error::Error, fs::File, path::Path};
 
+use binary_traits::{LoadIndex, ReadBinaryMmap};
 use memmap2::Mmap;
-use text_compression::{LoadIndex, ReadBinaryMmap};
 
 #[cfg(test)]
 pub(super) mod test_utils;

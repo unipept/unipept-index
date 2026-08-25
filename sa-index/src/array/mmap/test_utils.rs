@@ -6,8 +6,8 @@
 
 use std::io::Write;
 
+use binary_traits::ReadBinaryMmap;
 use tempfile::NamedTempFile;
-use text_compression::ReadBinaryMmap;
 
 use super::MmapBackedSA;
 use crate::array::{

@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, Read, Write}
 };
 
-use text_compression::WriteBinary;
+use binary_traits::WriteBinary;
 
 use super::super::{SuffixArrayBackend, write_sa_header};
 

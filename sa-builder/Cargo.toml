@@ -9,6 +9,7 @@ edition = "2021"
 tempfile = "3"
 
 [dependencies]
+binary-traits = { path = "../binary-traits" }
 clap = { version = "4.4.8", features = ["derive"] }
 libsais64-rs = { path = "../libsais64-rs" }
 libdivsufsort-rs = "0.1.0"

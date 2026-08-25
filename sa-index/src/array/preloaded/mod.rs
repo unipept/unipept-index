@@ -5,8 +5,8 @@
 //! the single place that decides whether a file holds a 64-bit or a compressed array.
 use std::{error::Error, io::BufRead};
 
+use binary_traits::{LoadIndex, ReadBinary, WriteBinary};
 use bitarray::DynBitArrayRangeIter;
-use text_compression::{LoadIndex, ReadBinary, WriteBinary};
 
 pub mod compressed;
 pub mod original;
@@ -135,7 +135,7 @@ impl ReadBinary for InMemorySA {
 
 impl LoadIndex for InMemorySA {
     fn load(path: &std::path::Path) -> Result<Self, Box<dyn Error>> {
-        text_compression::load_owned(path)
+        binary_traits::load_owned(path)
     }
 }
 
@@ -149,7 +149,7 @@ impl WriteBinary for InMemorySA {
 mod tests {
     use std::io::Cursor;
 
-    use text_compression::ReadBinary;
+    use binary_traits::ReadBinary;
 
     use super::{
         super::test_utils::{
@@ -269,7 +269,7 @@ mod tests {
     /// shift. Both cases panicked at lookup rather than erroring at load, on both backends.
     #[test]
     fn both_readers_reject_an_impossible_width() {
-        use text_compression::ReadBinaryMmap;
+        use binary_traits::ReadBinaryMmap;
 
         use crate::array::{MmapBackedSA, mmap::test_utils::write_to_tempfile};
 
@@ -296,7 +296,7 @@ mod tests {
     /// real data — inside a request handler, since this is a server startup path.
     #[test]
     fn both_readers_reject_a_truncated_body() {
-        use text_compression::ReadBinaryMmap;
+        use binary_traits::ReadBinaryMmap;
 
         use crate::array::{MmapBackedSA, mmap::test_utils::write_to_tempfile};
 
@@ -334,7 +334,7 @@ mod tests {
     /// range-checked now, but an index built before that still loads, so the readers reject it too.
     #[test]
     fn both_readers_reject_a_sample_rate_of_zero() {
-        use text_compression::ReadBinaryMmap;
+        use binary_traits::ReadBinaryMmap;
 
         use crate::array::{MmapBackedSA, mmap::test_utils::write_to_tempfile};
 

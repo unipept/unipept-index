@@ -27,8 +27,6 @@
 //! `preloaded` owns the `WriteBinary` implementation that produces the file both backends read,
 //! which is why `sa-builder` needs only that half.
 
-pub use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap, WriteBinary, load_owned};
-
 pub mod mmap;
 pub mod preloaded;
 #[cfg(test)]

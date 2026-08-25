@@ -7,6 +7,11 @@ jobs:
     name: Run Clippy
     runs-on: ubuntu-latest
 
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. Clippy gates the
+    # workspace on the toolchain it ships from, and nightly's lint set is not stable's.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,32 +38,18 @@ jobs:
     name: Check formatting
     runs-on: ubuntu-latest
 
-    # Pinned, not floating. rustfmt's output changes between nightlies, so `@nightly` meant this
-    # job could start failing on a commit that touched nothing — which is exactly what happened:
-    # the tree was formatted with one nightly, a later one disagreed about seven files, and the
-    # gate went red for everyone until someone reformatted.
+    # The only job that runs on rust-toolchain.toml's pinned nightly, and it does so by *not*
+    # setting RUSTUP_TOOLCHAIN: rustup reads the pin straight out of that file and installs it,
+    # components included. Nightly is required because .rustfmt.toml sets `unstable_features`
+    # together with `imports_granularity`, `group_imports`, `normalize_comments` and
+    # `normalize_doc_attributes`; stable rustfmt warns about those and then formats against the
+    # rest, producing a different tree from the one the repo targets.
     #
-    # Bumping this is a deliberate two-step: change the date here, run `cargo +<date> fmt --all`,
-    # and commit the reformat together with the bump so the gate never goes red in between. Add
-    # the reformat's hash to .git-blame-ignore-revs while you are there.
-    env:
-      # nightly-2026-03-11 == rustc 1.96.0-nightly (0c68443b0 2026-03-10); the toolchain the tree
-      # is currently formatted with.
-      RUSTFMT_TOOLCHAIN: nightly-2026-03-11
-
+    # The pin lives in rust-toolchain.toml alone, so a local `cargo fmt` and this gate cannot
+    # disagree about the nightly. Bump it there, never here.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Nightly is REQUIRED here: .rustfmt.toml sets `unstable_features = true` together with
-      # `imports_granularity`, `group_imports`, `normalize_comments` and
-      # `normalize_doc_attributes`. Stable rustfmt silently ignores those options and would
-      # therefore accept (and produce) a different formatting than the one the repo targets.
-      - name: Install pinned nightly Rust with rustfmt
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUSTFMT_TOOLCHAIN }}
-          components: rustfmt
-
       - name: Check formatting
-        run: cargo +${{ env.RUSTFMT_TOOLCHAIN }} fmt --all --check
+        run: cargo fmt --all --check

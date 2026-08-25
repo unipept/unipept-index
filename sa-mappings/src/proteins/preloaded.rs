@@ -16,10 +16,10 @@ use std::{
     str::from_utf8
 };
 
+use binary_traits::{LoadIndex, ReadBinary, WriteBinary};
 use bytelines::ByteLines;
 use fa_compression::algorithm1::encode;
 use text_compression::{InMemoryProteinText, ProteinTextBackend};
-pub use text_compression::{LoadIndex, ReadBinary, WriteBinary};
 
 use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
@@ -398,7 +398,7 @@ fn slice_of<'a>(
 /// Reads the whole file into owned memory.
 ///
 /// The bound admits only [`InMemoryProteinText`] in practice: the mmap text implements
-/// [`ReadBinaryMmap`](text_compression::ReadBinaryMmap) instead, since it needs a path to map
+/// [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap) instead, since it needs a path to map
 /// rather than a stream to consume. The combination "mapped text, owned metadata" therefore lives
 /// in the mmap module, which has the mapping to hand.
 impl<T: ReadBinary> ReadBinary for InMemoryProteins<T> {
@@ -416,7 +416,7 @@ impl<T: ReadBinary> ReadBinary for InMemoryProteins<T> {
 /// `InMemoryProteins<MmapBackedProteinText>` must map the file even though its metadata is owned.
 impl LoadIndex for InMemoryProteins<InMemoryProteinText> {
     fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
-        text_compression::load_owned(path)
+        binary_traits::load_owned(path)
     }
 }
 

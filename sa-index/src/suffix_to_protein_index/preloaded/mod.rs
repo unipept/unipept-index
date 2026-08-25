@@ -6,7 +6,7 @@
 
 use std::{error::Error, path::Path};
 
-use crate::{LoadIndex, ReadBinary};
+use binary_traits::{LoadIndex, ReadBinary};
 
 pub mod bitvec;
 pub mod dense;
@@ -65,23 +65,21 @@ impl ReadBinary for InMemorySuffixToProteinMapping {
 
 impl LoadIndex for InMemorySuffixToProteinMapping {
     fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
-        text_compression::load_owned(path)
+        binary_traits::load_owned(path)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use binary_traits::ReadBinary;
     use text_compression::ProteinTextBackend;
 
-    use crate::{
-        ReadBinary,
-        suffix_to_protein_index::{
-            preloaded::{
-                BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein,
-                test_utils::assert_dump_and_load
-            },
-            test_utils::sample_text
-        }
+    use crate::suffix_to_protein_index::{
+        preloaded::{
+            BitVecSuffixToProtein, DenseSuffixToProtein, InMemorySuffixToProteinMapping, SparseSuffixToProtein,
+            test_utils::assert_dump_and_load
+        },
+        test_utils::sample_text
     };
 
     // The mappings below are built through `from_text_parts`, the constructor `sa-builder` uses.

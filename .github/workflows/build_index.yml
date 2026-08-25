@@ -16,6 +16,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The index binaries
+    # released from this job are built by stable, as they were before that file existed.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       # Check out the most recent version of the repository with submodules
       - name: Check out repository

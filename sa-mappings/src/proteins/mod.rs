@@ -29,9 +29,7 @@ pub(crate) mod test_fixtures;
 use fa_compression::algorithm1::decode;
 pub use mmap::MmapBackedProteins;
 pub use preloaded::InMemoryProteins;
-// The I/O traits callers need, re-exported so they do not have to depend on `binary-traits`
-// directly. `text-compression` re-exports them from there for the same reason.
-pub use text_compression::{LoadIndex, ProteinTextBackend, ReadBinary, ReadBinaryMmap, WriteBinary};
+pub use text_compression::ProteinTextBackend;
 
 /// Byte placed between consecutive protein sequences in the concatenated text.
 ///

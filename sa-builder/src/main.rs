@@ -5,10 +5,11 @@ use std::{
     time::{SystemTime, SystemTimeError, UNIX_EPOCH}
 };
 
+use binary_traits::WriteBinary;
 use clap::Parser;
 use sa_builder::{Arguments, SuffixToProteinMappingStyle, build_ssa};
 use sa_index::{
-    KmerTable, WriteBinary,
+    KmerTable,
     array::{dump_compressed_suffix_array, dump_suffix_array},
     suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
 };

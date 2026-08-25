@@ -4,11 +4,12 @@
 //! expected answers live here once instead of in every variant's test module. Fixtures that need
 //! a mapped file are in [`mmap::test_utils`](super::mmap::test_utils) instead.
 
+use binary_traits::WriteBinary;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
 use super::SuffixToProteinMappingBackend;
-use crate::{Nullable, WriteBinary};
+use crate::Nullable;
 
 /// Three proteins — `ACG`, `CG` and `AAA` — separated and terminated, 11 bytes in total. Positions
 /// 3, 6 and 10 hold a separator or the terminator and so belong to no protein.

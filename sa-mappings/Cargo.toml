@@ -9,6 +9,7 @@ edition = "2021"
 tempdir = "0.3.7"
 
 [dependencies]
+binary-traits = { path = "../binary-traits" }
 fa-compression = { path = "../fa-compression" }
 prefetch = { path = "../prefetch" }
 bytelines = "2.5.0"

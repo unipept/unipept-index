@@ -3,11 +3,12 @@ use std::{
     io::{Read, Write}
 };
 
+use binary_traits::WriteBinary;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
 use super::super::SuffixToProteinMappingBackend;
-use crate::{Nullable, WriteBinary};
+use crate::Nullable;
 
 /// Mapping that uses O(m) memory with m the number of proteins, but retrieval of the protein is
 /// O(log m)

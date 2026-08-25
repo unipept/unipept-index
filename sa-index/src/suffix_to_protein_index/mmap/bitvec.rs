@@ -102,7 +102,7 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
 ///   to cover it would let an in-range position index past the bits region. That is the same check
 ///   `preloaded::bitvec::read_bitvec_mapping` makes, and must stay in step with it: without it a
 ///   crafted header loads cleanly and panics inside a request handler instead, which is what
-///   [`ReadBinaryMmap`](text_compression::ReadBinaryMmap)'s contract forbids.
+///   [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap)'s contract forbids.
 pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 17 {
         return Err("The bitvec mapping file is too small to contain the header".into());

@@ -7,8 +7,9 @@
 
 use std::{io::Write, path::Path, process::Command};
 
+use binary_traits::LoadIndex;
 use sa_index::{
-    LoadIndex, Nullable,
+    Nullable,
     array::{InMemorySA, MmapBackedSA, SuffixArrayBackend},
     suffix_to_protein_index::{
         InMemorySuffixToProteinMapping, MmapBackedSuffixToProteinMapping, SuffixToProteinMappingBackend

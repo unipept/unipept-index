@@ -6,9 +6,8 @@
 
 use std::{error::Error, path::Path};
 
+use binary_traits::{LoadIndex, ReadBinaryMmap};
 use memmap2::Mmap;
-
-use crate::{LoadIndex, ReadBinaryMmap};
 
 pub mod bitvec;
 pub mod dense;
@@ -70,16 +69,15 @@ impl LoadIndex for MmapBackedSuffixToProteinMapping {
 
 #[cfg(test)]
 mod tests {
+    use binary_traits::ReadBinaryMmap;
+
     use super::{
         MmapBackedSuffixToProteinMapping,
         test_utils::{assert_hints_are_harmless, assert_load_mmap, write_to_tempfile}
     };
-    use crate::{
-        ReadBinaryMmap,
-        suffix_to_protein_index::{
-            preloaded::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein},
-            test_utils::sample_text
-        }
+    use crate::suffix_to_protein_index::{
+        preloaded::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein},
+        test_utils::sample_text
     };
 
     /// A truncated mapping file must be refused by *all three* representations, on both backends.
@@ -90,10 +88,9 @@ mod tests {
     /// three to behave the same way, and now they do.
     #[test]
     fn every_mmap_representation_rejects_a_truncated_body() {
-        use crate::{
-            ReadBinary,
-            suffix_to_protein_index::{InMemorySuffixToProteinMapping, test_utils::to_binary}
-        };
+        use binary_traits::ReadBinary;
+
+        use crate::suffix_to_protein_index::{InMemorySuffixToProteinMapping, test_utils::to_binary};
 
         let text = sample_text();
         let cases: [(&str, Vec<u8>); 3] = [
@@ -141,7 +138,9 @@ mod tests {
     /// opposite of the `Err` the mmap readers return for the same nine bytes.
     #[test]
     fn an_implausible_count_is_an_error_not_an_abort() {
-        use crate::{ReadBinary, suffix_to_protein_index::InMemorySuffixToProteinMapping};
+        use binary_traits::ReadBinary;
+
+        use crate::suffix_to_protein_index::InMemorySuffixToProteinMapping;
 
         for tag in [0u8, 1u8] {
             let mut bytes = vec![tag];

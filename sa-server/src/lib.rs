@@ -10,7 +10,8 @@
 
 use std::{error::Error, path::Path};
 
-use sa_index::{KmerTable, LoadIndex};
+use binary_traits::LoadIndex;
+use sa_index::KmerTable;
 
 pub mod backends;
 

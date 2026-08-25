@@ -12,6 +12,11 @@ jobs:
     name: Check + test
     runs-on: ubuntu-latest
 
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The workspace ships
+    # from stable, so that is what compiles and runs the tests here.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -46,6 +51,12 @@ jobs:
     # else.
     name: sa-server backend aliases
     runs-on: ubuntu-latest
+
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The workspace ships
+    # from stable, so that is what compiles and runs the tests here.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,6 +94,12 @@ jobs:
     # `measure` is anywhere in it.
     name: measure is off in shipping builds
     runs-on: ubuntu-latest
+
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The workspace ships
+    # from stable, so that is what compiles and runs the tests here.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       - uses: actions/checkout@v4
         with:

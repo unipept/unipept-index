@@ -33,7 +33,7 @@
 //! entries may straddle words — written by [`dump_compressed_suffix_array`]. Both emit the header
 //! through the same private helper, so the two packings cannot drift apart.
 //!
-//! Readers: [`InMemorySA::read_binary`](text_compression::ReadBinary::read_binary), which
+//! Readers: [`InMemorySA::read_binary`](binary_traits::ReadBinary::read_binary), which
 //! dispatches on the first byte, and `MmapBackedSA::read_binary_mmap`.
 
 use std::{error::Error, io::Write};
@@ -76,7 +76,7 @@ pub(super) fn write_sa_header(
 /// debug, a wrapped value in release — and zero is separately useless: it makes the declared body
 /// zero-length, so the file passes every size check and every lookup then reads off the end.
 /// Neither reader used to check, and both duly panicked at the first `get` on a crafted header
-/// instead of erroring at load, which is what [`ReadBinaryMmap`](text_compression::ReadBinaryMmap)
+/// instead of erroring at load, which is what [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap)
 /// forbids.
 ///
 /// Both call this, so the two agree on what a loadable file is; a width one accepted and the other

@@ -4,8 +4,8 @@
 //! failing reader and writer that only the streaming backend has error paths for live in
 //! [`preloaded::test_utils`](super::preloaded::test_utils).
 
+use binary_traits::WriteBinary;
 use bitarray::DynBitArray;
-use text_compression::WriteBinary;
 
 use super::{CompressedSA, SuffixArrayBackend};
 

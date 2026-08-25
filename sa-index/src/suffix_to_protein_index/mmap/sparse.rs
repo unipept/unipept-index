@@ -51,7 +51,7 @@ impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
 /// lookup below can index the mapping without re-checking. It used to be validated only as far as
 /// the 9-byte header, which meant a file whose body was short — a build killed part-way, a partial
 /// copy, a full disk — loaded cleanly and then panicked on the first lookup, inside a request
-/// handler. That is what [`ReadBinaryMmap`](text_compression::ReadBinaryMmap)'s contract forbids,
+/// handler. That is what [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap)'s contract forbids,
 /// and what the bitvec reader next door already did correctly.
 ///
 /// This also bounds `touch_all_pages`, whose sweep is `data_offset .. data_offset + count * 8`:

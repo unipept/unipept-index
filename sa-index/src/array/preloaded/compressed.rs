@@ -3,8 +3,8 @@ use std::{
     io::{BufRead, Write}
 };
 
+use binary_traits::WriteBinary;
 use bitarray::{Binary, DynBitArray, data_to_writer};
-use text_compression::WriteBinary;
 
 use super::super::{SuffixArrayBackend, write_sa_header};
 

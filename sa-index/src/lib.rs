@@ -185,8 +185,6 @@
 //! 6-mers, the expected number of queries sharing a prefix is under one, so there is no page reuse
 //! for sorting to expose. Locality needs reuse, and this workload has none.
 
-pub use text_compression::{LoadIndex, ReadBinary, ReadBinaryMmap, WriteBinary};
-
 pub mod array;
 pub mod kmer_table;
 pub mod peptide_search;

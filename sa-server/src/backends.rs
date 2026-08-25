@@ -146,7 +146,7 @@ mod tests {
     /// rather than at the call site in `lib.rs`.
     #[test]
     fn every_active_backend_can_be_loaded() {
-        fn assert_loadable<T: sa_index::LoadIndex>() {}
+        fn assert_loadable<T: binary_traits::LoadIndex>() {}
         assert_loadable::<ActiveSa>();
         assert_loadable::<ActiveProteins>();
         assert_loadable::<ActiveMapping>();

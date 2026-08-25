@@ -20,9 +20,10 @@ use std::{
     ops::{Deref, DerefMut}
 };
 
+use binary_traits::{LoadIndex, WriteBinary};
 use sa_mappings::proteins::{InMemoryProteins, MmapBackedProteins, Protein, ProteinsBackend};
 use tempfile::NamedTempFile;
-use text_compression::{InMemoryProteinText, LoadIndex, MmapBackedProteinText, WriteBinary};
+use text_compression::{InMemoryProteinText, MmapBackedProteinText};
 
 use crate::{
     KmerTable,

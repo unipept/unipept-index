@@ -229,7 +229,7 @@ silently ignores.
 | `text-compression` | the concatenated protein text, packed at 5 bits per residue |
 | `bitarray` | dense arrays of fixed-width values |
 | `fa-compression` | encoding for functional annotations |
-| `binary-traits` | the read/write/load traits every on-disk structure implements |
+| `binary-traits` | the read/write/load traits every on-disk structure is written and read through |
 | `prefetch` | one portable software-prefetch hint |
 | `libsais64-rs` | bindings to the suffix-array construction library |
 | `sa-benchmarks` | measurement harness (see below) |

@@ -5,16 +5,14 @@
 //! preloaded mapping serialised to a temporary file — the same path `sa-builder` writes and
 //! `sa-server` reads.
 
+use binary_traits::{ReadBinaryMmap, WriteBinary};
 use tempfile::NamedTempFile;
 use text_compression::ProteinTextBackend;
 
 use super::MmapBackedSuffixToProteinMapping;
-use crate::{
-    ReadBinaryMmap, WriteBinary,
-    suffix_to_protein_index::{
-        SuffixToProteinMappingBackend,
-        test_utils::{assert_sample_lookups, sample_text, to_binary}
-    }
+use crate::suffix_to_protein_index::{
+    SuffixToProteinMappingBackend,
+    test_utils::{assert_sample_lookups, sample_text, to_binary}
 };
 
 /// Writes a serialised mapping to a temporary file. The caller keeps the returned guard alive for

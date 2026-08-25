@@ -17,10 +17,11 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering}
 };
 
+use binary_traits::{LoadIndex, ReadBinary, WriteBinary};
 use rayon::prelude::*;
 use text_compression::ProteinTextBackend;
 
-use crate::{LoadIndex, ReadBinary, WriteBinary, array::SuffixArrayBackend};
+use crate::array::SuffixArrayBackend;
 
 /// Amino acid alphabet used for k-mer indexing (no J; L is treated as I).
 /// Index in this slice + 1 gives the 1-based `ascii_array` value for each character.
@@ -258,7 +259,7 @@ impl ReadBinary for KmerTable {
 /// Only ever the owned route: the table is small relative to the index and has no mmap variant.
 impl LoadIndex for KmerTable {
     fn load(path: &std::path::Path) -> Result<Self, Box<dyn Error>> {
-        text_compression::load_owned(path)
+        binary_traits::load_owned(path)
     }
 }
 
@@ -433,7 +434,7 @@ mod tests {
     fn test_roundtrip_serialization() {
         use std::io::{BufReader, BufWriter};
 
-        use crate::{ReadBinary, WriteBinary};
+        use binary_traits::{ReadBinary, WriteBinary};
 
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
         let k = table.k;
@@ -459,7 +460,7 @@ mod tests {
     fn loads_from_a_file() {
         use std::io::Write;
 
-        use crate::{LoadIndex, WriteBinary};
+        use binary_traits::{LoadIndex, WriteBinary};
 
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
         let expected = table.lookup(b"AC");
@@ -478,7 +479,7 @@ mod tests {
 
     #[test]
     fn loading_a_missing_file_errors() {
-        use crate::LoadIndex;
+        use binary_traits::LoadIndex;
 
         assert!(KmerTable::load(std::path::Path::new("/nonexistent/kmer_table.bin")).is_err());
     }
