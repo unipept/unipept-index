@@ -18,12 +18,16 @@ use std::io::{BufRead, Result, Write};
 
 use crate::binary::{self, Binary};
 
-// ── BitArray<const BITS> ──────────────────────────────────────────────────────
-
 /// A bit array whose bits-per-value is fixed at compile time.
 ///
 /// Values are packed most-significant-bit first within each little-endian `u64`, and may straddle
-/// a word boundary. `BITS` must be in `1..=64`; `BITS == 0` fails to compile at `MASK`.
+/// a word boundary. `BITS` must be in `1..=64`.
+///
+/// `BitArray::<0>` is not rejected at construction — it builds, and reports `len()` and
+/// `bits_per_value()` — but [`get`](Self::get), [`set`](Self::set) and
+/// [`iter_range`](Self::iter_range) instantiate the private `MASK` constant, whose
+/// `u64::MAX >> 64` fails to compile. So a zero width is a compile error the first time the array
+/// is *used*, not the first time it is built.
 pub struct BitArray<const BITS: usize> {
     data: Vec<u64>,
     len: usize
@@ -35,9 +39,9 @@ impl<const BITS: usize> BitArray<BITS> {
 
     /// Allocates room for `capacity` values, all zero.
     ///
-    /// The huge-page advice is issued here, on the still-untouched allocation, and not by the
-    /// caller once it has filled it: see [`crate::hugepages`] for why that ordering is the whole
-    /// point.
+    /// The huge-page advice is issued here, between reserving the allocation and zeroing it, and
+    /// not by the caller once it has filled it: see [`crate::hugepages`] for why that ordering is
+    /// the whole point.
     pub fn with_capacity(capacity: usize) -> Self {
         Self::try_with_capacity(capacity)
             .expect("BitArray::with_capacity: capacity * BITS does not fit, or allocation failed")
@@ -53,10 +57,15 @@ impl<const BITS: usize> BitArray<BITS> {
         let words = capacity.checked_mul(BITS)?.div_ceil(64);
         let mut data: Vec<u64> = Vec::new();
         data.try_reserve_exact(words).ok()?;
+        // Between the reservation and the `resize` that writes it, and not after: `resize` zeroes
+        // every word, which faults the whole buffer in. Advice issued after that arrives at a
+        // region that is already populated with 4 KB pages, where it buys nothing but khugepaged
+        // eligibility. Here it still governs the faults `resize` is about to take. See
+        // [`crate::hugepages`]. `resize` cannot reallocate, since the capacity is already reserved,
+        // so the advice stays with the allocation it was issued for.
+        crate::hugepages::advise_capacity(&data);
         data.resize(words, 0);
-        let array = Self { data, len: capacity };
-        array.advise_hugepages();
-        Some(array)
+        Some(Self { data, len: capacity })
     }
 
     /// Number of backing words the array currently holds.
@@ -70,17 +79,6 @@ impl<const BITS: usize> BitArray<BITS> {
     /// Number of 64-bit words `len()` values at `BITS` bits occupy.
     pub fn required_words(&self) -> usize {
         (self.len * BITS).div_ceil(64)
-    }
-
-    /// Requests transparent huge pages over the backing data (no-op off Linux).
-    ///
-    /// [`Self::with_capacity`] already does this, which covers every buffer this crate allocates.
-    /// It stays public for a caller that builds the backing store some other way, and is
-    /// idempotent. Calling it on a buffer that is already populated is close to useless — again,
-    /// see [`crate::hugepages`].
-    #[inline]
-    pub fn advise_hugepages(&self) {
-        crate::hugepages::advise(&self.data);
     }
 
     /// Returns the value at `index`.
@@ -188,8 +186,11 @@ impl<const BITS: usize> Binary for BitArray<BITS> {
     }
 }
 
-// ── BitArrayRangeIter<const BITS> ─────────────────────────────────────────────
-
+/// Iterator over a range of values, returned by [`BitArray::iter_range`].
+///
+/// Carries the current and next backing words, so consecutive values that share a word cost no
+/// reload and a straddling value already has its second word to hand. Yields `i64` rather than
+/// `u64` because the suffix array — the caller this exists for — stores signed positions.
 pub struct BitArrayRangeIter<'a, const BITS: usize> {
     data: &'a [u64],
     current_word: u64,
@@ -261,8 +262,6 @@ impl<const BITS: usize> Iterator for BitArrayRangeIter<'_, BITS> {
 }
 
 impl<const BITS: usize> ExactSizeIterator for BitArrayRangeIter<'_, BITS> {}
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 /// Constructor shim for the shared suite: the width is a const generic here.
 #[cfg(test)]

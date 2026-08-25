@@ -1,12 +1,52 @@
+//! Reading and writing a bit array's backing words as raw little-endian `u64`s.
+//!
+//! Deliberately headerless: the width and the value count live in the *containing* structure's
+//! header, which the caller reads and writes itself. See [`Binary`] for what that leaves the
+//! caller responsible for.
+
 use std::io::{BufRead, Read, Result, Write};
 
-/// Trait for reading and writing a struct as packed binary data.
+/// Reads and writes a bit array's backing words as packed binary data.
+///
+/// The payload is words only — no length, no width, no marker. Everything needed to interpret it
+/// lives in a header the caller owns, which is what makes a bit array embeddable in a larger file
+/// alongside other sections.
+///
+/// # This is not `binary_traits::ReadBinary`
+///
+/// The workspace has a second pair of traits with the same method names, in `binary-traits`, for
+/// whole index structures. They are not interchangeable, and the contracts are opposite where it
+/// matters most: `binary_traits::ReadBinary` consumes *exactly* the bytes its writer produced, so
+/// several structures chain over one stream, whereas [`read_binary`](Self::read_binary) below
+/// consumes the reader to EOF. A structure implements that trait; its bit array implements this
+/// one, usually from inside that implementation.
 pub trait Binary {
+    /// Writes every backing word as little-endian bytes, and nothing else.
+    ///
+    /// The output is `word_len() * 8` bytes. A caller embedding this in a larger file must have
+    /// written whatever header is needed to interpret it — at minimum the width and the value
+    /// count, neither of which is recoverable from the payload.
     fn write_binary<W: Write>(&self, writer: &mut W) -> Result<()>;
+
+    /// Refills the backing store from `reader`, **consuming it to EOF**.
+    ///
+    /// Two consequences, both of which every caller in this workspace has had to handle:
+    ///
+    /// * *It reads to the end of the stream.* Since the payload carries no length, there is
+    ///   nothing to stop at. A bit array is therefore either the last section of its file — as in
+    ///   the compressed suffix array — or the caller must hand over a bounded reader, as
+    ///   `text-compression` does with `Read::take` when the protein metadata follows the text in
+    ///   the same file. Passing an unbounded reader for a non-final section silently swallows the
+    ///   sections after it.
+    /// * *It validates nothing.* The store ends up holding however many words the reader happened
+    ///   to yield, which says nothing about the count the caller's header declared. A truncated
+    ///   file therefore loads cleanly and panics later, on the first lookup past the real data,
+    ///   unless the caller compares `word_len()` against `required_words()` afterwards. Both
+    ///   implementations expose that pair for exactly this check.
+    ///
+    /// Errors only on an I/O error from `reader`; a short stream is not one.
     fn read_binary<R: BufRead>(&mut self, reader: R) -> Result<()>;
 }
-
-// ── Shared helpers ────────────────────────────────────────────────────────────
 
 /// Writes each `u64` word as little-endian bytes.
 pub(crate) fn write_words<W: Write>(data: &[u64], writer: &mut W) -> Result<()> {
@@ -46,8 +86,6 @@ pub(crate) fn read_words_into<R: BufRead>(data: &mut Vec<u64>, mut reader: R) ->
     Ok(())
 }
 
-// ── fill_buffer ───────────────────────────────────────────────────────────────
-
 /// Fills `buffer` as fully as possible from `input`.
 ///
 /// Returns `(finished, bytes_read)` where `finished` is true when the reader
@@ -63,8 +101,6 @@ pub(crate) fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> Resul
         }
     }
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

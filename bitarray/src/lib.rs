@@ -16,19 +16,30 @@
 //! width from 1 to 64. Which to use:
 //!
 //! * **[`BitArray<BITS>`] when the width is a property of the data.** The protein text is always
-//!   5 bits per residue, so `text-compression` uses `BitArray<5>`. See [`constant`] for why this
-//!   is measurably faster.
+//!   5 bits per residue, so `text-compression` uses `BitArray<5>`. See [`constant`] for the
+//!   const-folding this buys — a mechanism, not a measurement: nothing in the workspace benchmarks
+//!   the two implementations against each other.
 //! * **[`DynBitArray`] when the width comes from a file header.** The compressed suffix array
 //!   chooses its width from the text length at build time and records it in the file, so the
 //!   reader cannot know it until runtime.
+//!
+//! # The rest of the crate
+//!
+//! * [`Binary`] serialises a bit array's backing words — headerless, and read to EOF; the contract
+//!   is worth reading before embedding one in a larger file.
+//! * [`data_to_writer`] packs and writes a `Vec<i64>` in chunks, so building a file does not need
+//!   a second full copy of the index in memory.
+//! * [`hugepages`] explains why both constructors advise transparent huge pages *before* they
+//!   touch the allocation, and why doing it afterwards would be pointless.
+#![warn(missing_docs)]
 
 #[cfg(test)]
 #[macro_use]
 mod test_suite;
 
 mod binary;
-mod constant;
-mod dynamic;
+pub mod constant;
+pub mod dynamic;
 pub mod hugepages;
 
 use std::{
@@ -40,8 +51,6 @@ pub use binary::Binary;
 pub use constant::{BitArray, BitArrayRangeIter};
 pub use dynamic::{DynBitArray, DynBitArrayRangeIter};
 
-// ── data_to_writer ────────────────────────────────────────────────────────────
-
 /// Writes packed bit data to a writer in chunks, minimising peak memory.
 ///
 /// Builds and serialises `max_capacity` values at a time instead of packing the whole of `data`
@@ -52,8 +61,9 @@ pub use dynamic::{DynBitArray, DynBitArrayRangeIter};
 ///
 /// Each chunk is written as a whole number of `u64` words, so for the chunks to concatenate into
 /// one continuous bit stream every chunk must occupy a whole number of words — that is,
-/// `max_capacity * bits_per_value` must be a multiple of 64. Both callers pass `8 * 1024`, which
-/// satisfies this for every width. See the note on the chunk size below.
+/// `max_capacity * bits_per_value` must be a multiple of 64. The one caller in the workspace —
+/// `sa_index::array::preloaded::compressed::dump_compressed_suffix_array` — passes `8 * 1024`,
+/// which satisfies this for every width. See the note on the chunk size below.
 pub fn data_to_writer(
     data: Vec<i64>,
     bits_per_value: usize,
@@ -65,11 +75,12 @@ pub fn data_to_writer(
     // CAUTION: this is *not* the invariant the chunking actually needs. A chunk only lands on a
     // word boundary when `capacity * bits_per_value % 64 == 0`, i.e. when `capacity` is a
     // multiple of `64 / gcd`, not of `gcd`. For `bits_per_value = 5` the gcd is 1 and this line
-    // rounds to nothing at all; the code is correct today only because both callers pass
+    // rounds to nothing at all; the code is correct today only because the single caller passes
     // `8 * 1024`, which is a multiple of 64 and therefore satisfies the real invariant for every
     // width. A `max_capacity` of, say, 100 would silently emit a partly-filled trailing word per
-    // chunk and corrupt the stream. Tracked as a known issue; not changed here because doing so
-    // would alter the bytes this function emits.
+    // chunk and corrupt the stream — and the `debug_assert` below only catches it in debug builds.
+    // Tracked as a known issue; not changed here because doing so would alter the bytes this
+    // function emits.
     let gcd = gcd(bits_per_value, 64);
     let capacity = max(gcd, max_capacity / gcd * gcd);
     debug_assert!(
@@ -116,8 +127,6 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
     }
     a
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

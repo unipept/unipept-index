@@ -13,8 +13,6 @@ use std::io::{BufRead, Result, Write};
 
 use crate::binary::{self, Binary};
 
-// ── DynBitArray ───────────────────────────────────────────────────────────────
-
 /// A bit array whose bits-per-value is determined at runtime.
 ///
 /// Values are packed most-significant-bit first within each little-endian `u64`, and may straddle
@@ -31,9 +29,9 @@ impl DynBitArray {
     ///
     /// `bits_per_value` is expected to be in `1..=64`.
     ///
-    /// The huge-page advice is issued here, on the still-untouched allocation, and not by the
-    /// caller once it has filled it: see [`crate::hugepages`] for why that ordering is the whole
-    /// point.
+    /// The huge-page advice is issued here, between reserving the allocation and zeroing it, and
+    /// not by the caller once it has filled it: see [`crate::hugepages`] for why that ordering is
+    /// the whole point.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
         Self::try_with_capacity(capacity, bits_per_value)
             .expect("DynBitArray::with_capacity: capacity * bits_per_value does not fit, or allocation failed")
@@ -52,15 +50,20 @@ impl DynBitArray {
         let words = capacity.checked_mul(bits_per_value)?.div_ceil(64);
         let mut data: Vec<u64> = Vec::new();
         data.try_reserve_exact(words).ok()?;
+        // Between the reservation and the `resize` that writes it, and not after: `resize` zeroes
+        // every word, which faults the whole buffer in. Advice issued after that arrives at a
+        // region that is already populated with 4 KB pages, where it buys nothing but khugepaged
+        // eligibility. Here it still governs the faults `resize` is about to take. See
+        // [`crate::hugepages`]. `resize` cannot reallocate, since the capacity is already reserved,
+        // so the advice stays with the allocation it was issued for.
+        crate::hugepages::advise_capacity(&data);
         data.resize(words, 0);
-        let array = Self {
+        Some(Self {
             data,
             mask: if bits_per_value == 64 { u64::MAX } else { (1 << bits_per_value) - 1 },
             len: capacity,
             bits_per_value
-        };
-        array.advise_hugepages();
-        Some(array)
+        })
     }
 
     /// Number of backing words the array currently holds.
@@ -80,17 +83,16 @@ impl DynBitArray {
         (self.len * self.bits_per_value).div_ceil(64)
     }
 
-    /// Requests transparent huge pages over the backing data (no-op off Linux).
+    /// Returns the value at `index`.
     ///
-    /// [`Self::with_capacity`] already does this, which covers every buffer this crate allocates.
-    /// It stays public for a caller that builds the backing store some other way, and is
-    /// idempotent. Calling it on a buffer that is already populated is close to useless — again,
-    /// see [`crate::hugepages`].
-    #[inline]
-    pub fn advise_hugepages(&self) {
-        crate::hugepages::advise(&self.data);
-    }
-
+    /// `#[inline]` for the same reason as [`BitArray::get`](crate::BitArray::get): every caller is
+    /// in another crate and the workspace sets no `[profile.release]`, so there is no cross-crate
+    /// LTO to fall back on. Unlike the const-generic type, the shift amounts and the mask are
+    /// runtime values here, so inlining is all there is to win.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is out of bounds, via the underlying slice index.
     #[inline]
     pub fn get(&self, index: usize) -> u64 {
         let start_block = index * self.bits_per_value / 64;
@@ -109,6 +111,11 @@ impl DynBitArray {
         (a | b) & self.mask
     }
 
+    /// Writes `value` at `index`. Only the low `bits_per_value` bits of `value` are stored.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is out of bounds, via the underlying slice index.
     pub fn set(&mut self, index: usize, value: u64) {
         // Masked, because the write below ORs `value` into place: a value wider than the field
         // would otherwise spill its high bits into the *neighbouring* entry rather than being
@@ -185,8 +192,11 @@ impl Binary for DynBitArray {
     }
 }
 
-// ── DynBitArrayRangeIter ──────────────────────────────────────────────────────
-
+/// Iterator over a range of values, returned by [`DynBitArray::iter_range`].
+///
+/// The runtime-width counterpart of [`BitArrayRangeIter`](crate::BitArrayRangeIter), and carries
+/// the same current/next word pair; the width and mask travel with it as fields rather than as
+/// constants. Yields `i64` because the suffix array stores signed positions.
 pub struct DynBitArrayRangeIter<'a> {
     data: &'a [u64],
     bits_per_value: usize,
@@ -269,8 +279,6 @@ impl Iterator for DynBitArrayRangeIter<'_> {
 }
 
 impl ExactSizeIterator for DynBitArrayRangeIter<'_> {}
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 /// Constructor shim for the shared suite: the width is a runtime argument here.
 #[cfg(test)]
