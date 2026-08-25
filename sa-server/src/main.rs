@@ -1,3 +1,18 @@
+//! The `sa-server` binary: loads a prebuilt index and serves peptide searches over HTTP.
+//!
+//! One route, `POST /search`, taking [`InputData`] and returning an array of search results. The
+//! request and response fields are tabulated in the repository README, which is where a caller
+//! looks; this file documents why the server is put together the way it is.
+//!
+//! **This is not how search reaches Unipept.** The API site calls `sa_index::peptide_search`
+//! directly rather than proxying this binary, so this server is not the untrusted boundary and
+//! hardening it protects nothing in production — the limits belong in the caller that exposes
+//! those functions to the network. See the note on resource limits in `sa_index::peptide_search`.
+//!
+//! Which storage backend each index structure uses is a compile-time choice; see
+//! [`sa_server::backends`]. Startup logs the combination because nothing else at runtime reveals
+//! it.
+
 use std::{error::Error, sync::Arc};
 
 use axum::{
@@ -15,8 +30,10 @@ use serde::Deserialize;
 
 /// Serve peptide searches over a prebuilt suffix-array index.
 ///
-/// All three index files come from one `sa-builder` run and must match; mixing builds produces
-/// wrong answers rather than errors.
+/// All four files come from one `sa-builder` run and only mean anything as a set: the suffix array
+/// indexes positions in the text stored in `proteins.bin`, and the mapping resolves those same
+/// positions back to entries in it. Each file is loaded and validated on its own, so a mismatched
+/// set gets past loading; `Searcher::try_new` is what refuses to start on one.
 #[derive(Parser, Debug)]
 pub struct Arguments {
     /// Path to the binary proteins file (proteins.bin) holding the protein table and text.
@@ -28,32 +45,36 @@ pub struct Arguments {
     /// Path to the prebuilt suffix-to-protein mapping binary file.
     #[arg(long)]
     mapping_file: String,
-    /// Address to bind the HTTP server to.
-    #[arg(long, default_value = "0.0.0.0:3000")]
-    address: String,
     /// Optional path to a pre-built k-mer bounds table file (produced by sa-builder
     /// --output-kmer-table). When provided, the binary search starts from precomputed bounds
     /// instead of the whole array, which is a large saving on short peptides.
     #[arg(long)]
-    kmer_table_file: Option<String>
+    kmer_table_file: Option<String>,
+    /// Address to bind the HTTP server to.
+    #[arg(long, default_value = "0.0.0.0:3000")]
+    address: String
 }
 
-/// Function used by serde to place a default value in the cutoff field of the input
+/// The `cutoff` a request that omits the field gets.
+///
+/// Serde has no way to express a literal default, so the value lives in a function. It is the
+/// historical Unipept limit rather than a property of the index — a short peptide can match
+/// millions of proteins, and a caller that wants all of them asks for them explicitly.
 fn default_cutoff() -> usize {
     10000
 }
 
-/// Struct representing the input arguments accepted by the endpoints
+/// The body of a `POST /search` request.
 ///
-/// # Arguments
-/// * `peptides` - List of peptides we want to process
-/// * `cutoff` - The maximum amount of matches to process, default value 10000
-/// * `equate_il` - True if we want to equalize I and L during search
-/// * `clean_taxa` - True if we only want to use proteins marked as "valid"
+/// Every field but `peptides` is optional and defaults to the pre-existing behaviour, so an older
+/// caller that sends only a peptide list keeps getting the same answers.
 #[derive(Debug, Deserialize)]
 struct InputData {
+    /// The peptides to search for. Each one is answered independently, in the order given.
     peptides: Vec<String>,
-    #[serde(default = "default_cutoff")] // default value is 10000
+    /// Stop collecting matches for a peptide after this many; the result then reports
+    /// `cutoff_used`. Defaults to [`default_cutoff`].
+    #[serde(default = "default_cutoff")]
     cutoff: usize,
     /// Treat I and L as interchangeable. Defaults to false: the caller decides, because the
     /// answer differs and mass spectrometry cannot always distinguish the two.
@@ -73,15 +94,12 @@ async fn main() {
     }
 }
 
-/// Endpoint executed for peptide matching, without any analysis
+/// `POST /search`: matches every peptide in the request against the index.
 ///
-/// # Arguments
-/// * `state(searcher)` - The searcher object provided by the server
-/// * `data` - InputData object provided by the user with the peptides to be searched and the config
-///
-/// # Returns
-///
-/// Returns the search results from the index as a JSON
+/// Search only — no taxonomic or functional analysis is done here, and the results come back in
+/// request order. The searcher is shared behind an `Arc` because it is read-only once loaded and
+/// far too large to clone; `search_all_peptides_json` fans the peptides out over rayon internally,
+/// so concurrency does not come from axum handing out one handler task per request.
 ///
 /// # Why this is not `Json<Vec<SearchResult>>`
 ///
@@ -120,18 +138,17 @@ fn json_response(chunks: Vec<Vec<u8>>) -> Response<Body> {
     response
 }
 
-/// Starts the server with the provided commandline arguments
+/// Loads the index, then serves until the process is killed.
 ///
-/// # Arguments
-/// * `args` - The provided commandline arguments
-///
-/// # Returns
-///
-/// Returns ()
+/// Loading is eager and strictly ordered: every file is read and the set is checked for
+/// consistency *before* the listener is bound, so a bad invocation fails at startup with a message
+/// instead of binding a port and failing per request. Each step is announced on stderr because on
+/// the full database this takes minutes, and silence during it is indistinguishable from a hang.
 ///
 /// # Errors
 ///
-/// Returns any error occurring during the startup or uptime of the server
+/// Any failure loading the index, any mismatch between the files, and any error from binding or
+/// serving. All of them reach `main`, which prints and exits non-zero.
 async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let Arguments {
         database_file,
@@ -179,7 +196,10 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
 
     let searcher = Arc::new(searcher);
 
-    // build our application with a route
+    // 5 MB of peptides, well above axum's 2 MB default: a realistic batch is tens of thousands of
+    // short strings, and the response is orders of magnitude larger than the request that asked for
+    // it anyway. This bounds what one request can buffer, not what it can cost — see the note on
+    // resource limits in the crate docs.
     let app = Router::new()
         .route("/search", post(search))
         .layer(DefaultBodyLimit::max(5 * 10_usize.pow(6)))

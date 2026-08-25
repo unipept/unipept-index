@@ -7,6 +7,11 @@
 //!
 //! See [`backends`] for what the storage features select and why, and
 //! [`backends::backend_summary`] for reporting it at startup.
+//!
+//! Nothing here relates the files to each other. Each loader only proves its own file is
+//! well-formed; that the four came from the same `sa-builder` run is checked once they meet, by
+//! `Searcher::try_new` and `Searcher::try_with_kmer_table`.
+#![warn(missing_docs)]
 
 use std::{error::Error, path::Path};
 
