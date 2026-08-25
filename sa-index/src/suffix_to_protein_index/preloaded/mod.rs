@@ -47,6 +47,7 @@ pub enum InMemorySuffixToProteinMapping {
 delegate_suffix_to_protein_mapping!(InMemorySuffixToProteinMapping {
     fn suffix_to_protein(&self, suffix: i64) -> u32;
     fn prefetch_for_suffix(&self, suffix: i64);
+    fn implied_text_len(&self) -> Option<usize>;
 });
 
 impl ReadBinary for InMemorySuffixToProteinMapping {

@@ -24,6 +24,11 @@ impl SuffixToProteinMappingBackend for DenseSuffixToProtein {
     }
 
     #[inline]
+    fn implied_text_len(&self) -> Option<usize> {
+        Some(self.mapping.len())
+    }
+
+    #[inline]
     fn prefetch_for_suffix(&self, suffix: i64) {
         let idx = suffix as usize;
         if idx < self.mapping.len() {

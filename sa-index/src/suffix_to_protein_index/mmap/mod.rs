@@ -30,6 +30,7 @@ pub enum MmapBackedSuffixToProteinMapping {
 delegate_suffix_to_protein_mapping!(MmapBackedSuffixToProteinMapping {
     fn suffix_to_protein(&self, suffix: i64) -> u32;
     fn prefetch_for_suffix(&self, suffix: i64);
+    fn implied_text_len(&self) -> Option<usize>;
     fn touch_all_pages(&self) -> u64;
 });
 

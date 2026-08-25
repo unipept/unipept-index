@@ -277,6 +277,61 @@ mod tests {
         KmerTable::build_from_sa(&sa, &text, k)
     }
 
+    /// Three structures from different builds must be refused, not silently mixed.
+    ///
+    /// Each file is well-formed on its own, so every loader used to succeed and the server started
+    /// and reported itself ready — with protein indices resolved against the wrong text. No build
+    /// identifier exists in the format to compare, so the check uses two relationships that hold
+    /// implicitly and exactly.
+    #[test]
+    fn structures_from_different_builds_are_rejected() {
+        use sa_mappings::proteins::{InMemoryProteins, Protein};
+        use text_compression::InMemoryProteinText;
+
+        use crate::{
+            array::{InMemorySA, OriginalSA},
+            sa_searcher::Searcher,
+            suffix_to_protein_index::{InMemorySuffixToProteinMapping, preloaded::BitVecSuffixToProtein}
+        };
+
+        let protein = |id: &str| Protein {
+            uniprot_id: id.to_string(),
+            taxon_id: 1,
+            functional_annotations: vec![]
+        };
+
+        // A matching set loads: text of 5, sample rate 1, so the SA holds 5 entries.
+        let text = InMemoryProteinText::from_string("ACAC$");
+        let stp = BitVecSuffixToProtein::new(&text);
+        let proteins = InMemoryProteins::new(text, vec![protein("P0")]);
+        let sa = InMemorySA::Original(OriginalSA(vec![4, 2, 0, 3, 1], 1));
+        assert!(
+            Searcher::try_new(sa, proteins, InMemorySuffixToProteinMapping::BitVec(stp)).is_ok(),
+            "a matching set must be accepted"
+        );
+
+        // A suffix array from a longer text: right shape, wrong build.
+        let text = InMemoryProteinText::from_string("ACAC$");
+        let stp = BitVecSuffixToProtein::new(&text);
+        let proteins = InMemoryProteins::new(text, vec![protein("P0")]);
+        let wrong_sa = InMemorySA::Original(OriginalSA(vec![6, 4, 2, 0, 5, 3, 1], 1));
+        let err = Searcher::try_new(wrong_sa, proteins, InMemorySuffixToProteinMapping::BitVec(stp))
+            .err()
+            .expect("a suffix array of the wrong length must be rejected");
+        assert!(err.contains("different builds"), "unexpected error: {err}");
+
+        // A mapping built for a longer text, with a matching suffix array.
+        let text = InMemoryProteinText::from_string("ACAC$");
+        let other = InMemoryProteinText::from_string("ACACACAC$");
+        let stp = BitVecSuffixToProtein::new(&other);
+        let proteins = InMemoryProteins::new(text, vec![protein("P0")]);
+        let sa = InMemorySA::Original(OriginalSA(vec![4, 2, 0, 3, 1], 1));
+        let err = Searcher::try_new(sa, proteins, InMemorySuffixToProteinMapping::BitVec(stp))
+            .err()
+            .expect("a mapping built for another text must be rejected");
+        assert!(err.contains("different builds"), "unexpected error: {err}");
+    }
+
     /// A table built from one suffix array must be refused by a searcher holding a different one.
     ///
     /// Nothing in the file format identifies the build, so a rebuilt `sa.bin` with a stale

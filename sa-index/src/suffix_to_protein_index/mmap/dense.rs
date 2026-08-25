@@ -23,6 +23,11 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
     }
 
     #[inline]
+    fn implied_text_len(&self) -> Option<usize> {
+        Some(self.count)
+    }
+
+    #[inline]
     fn prefetch_for_suffix(&self, suffix: i64) {
         let off = self.data_offset + suffix as usize * 4;
         if off < self.mmap.len() {

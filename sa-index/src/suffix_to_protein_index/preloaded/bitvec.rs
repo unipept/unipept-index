@@ -80,6 +80,11 @@ impl SuffixToProteinMappingBackend for BitVecSuffixToProtein {
     }
 
     #[inline]
+    fn implied_text_len(&self) -> Option<usize> {
+        Some(self.bit_len as usize)
+    }
+
+    #[inline]
     fn prefetch_for_suffix(&self, suffix: i64) {
         let position = suffix as usize;
         let word_index = position / 64;

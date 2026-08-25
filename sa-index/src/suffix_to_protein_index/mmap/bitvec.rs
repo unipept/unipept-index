@@ -67,6 +67,11 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
     }
 
     #[inline]
+    fn implied_text_len(&self) -> Option<usize> {
+        Some(self.bit_len as usize)
+    }
+
+    #[inline]
     fn prefetch_for_suffix(&self, suffix: i64) {
         let pos = suffix as usize;
         let bit_off = self.bits_offset + (pos / 64) * 8;

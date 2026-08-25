@@ -81,13 +81,59 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Starts with no k-mer table. Everything else about how a search runs is a constant; see
     /// the `tuning` module.
     pub fn new(sa: SA, proteins: P, suffix_index_to_protein: STPM) -> Self {
-        Self {
+        Self::try_new(sa, proteins, suffix_index_to_protein).unwrap_or_else(|err| panic!("{err}"))
+    }
+
+    /// Builds a searcher, rejecting three structures that did not come from the same index build.
+    ///
+    /// The three files are loaded independently, each well-formed on its own, and nothing used to
+    /// relate them: point `--mapping-file` at an older build and every load succeeds, the server
+    /// reports itself ready, and the answers are silently wrong — protein indices resolved against
+    /// the wrong text.
+    ///
+    /// There is no build identifier in the format to compare, and adding one would invalidate every
+    /// existing index. Two relationships already hold implicitly, though, and both are exact:
+    ///
+    /// * the suffix array samples the text, so it holds `ceil(text_len / sample_rate)` entries;
+    /// * a dense or bitvec mapping records one entry (or bit) per text position, so its length *is*
+    ///   the text length. Sparse records protein starts and cannot be compared, so it is skipped
+    ///   rather than guessed at.
+    ///
+    /// A different database changes the text length, which moves both. That does not prove three
+    /// files share a build — two different databases could coincide in length — but it catches the
+    /// realistic mistake, at no cost and without touching the format.
+    pub fn try_new(sa: SA, proteins: P, suffix_index_to_protein: STPM) -> Result<Self, String> {
+        let text_len = proteins.text().len();
+        let sample_rate = sa.sample_rate() as usize;
+
+        if sample_rate == 0 {
+            return Err("the suffix array declares a sample rate of 0".to_string());
+        }
+
+        let expected = text_len.div_ceil(sample_rate);
+        if sa.len() != expected {
+            return Err(format!(
+                "the suffix array holds {} entries, but the protein text is {text_len} characters at a \
+                 sample rate of {sample_rate}, which needs {expected}; these files are from different builds",
+                sa.len()
+            ));
+        }
+
+        if matches!(suffix_index_to_protein.implied_text_len(), Some(n) if n != text_len) {
+            let mapping_len = suffix_index_to_protein.implied_text_len().unwrap_or(text_len);
+            return Err(format!(
+                "the suffix-to-protein mapping was built for a text of {mapping_len} characters, but the \
+                 protein text is {text_len}; these files are from different builds"
+            ));
+        }
+
+        Ok(Self {
             sa,
             proteins,
             suffix_index_to_protein,
             kmer_table: None,
             measurements: SearchMeasurements::new()
-        }
+        })
     }
 
     /// Attaches a pre-built k-mer bounds table to this searcher.
@@ -168,6 +214,19 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 // The index has L replaced by I, so normalize both sides before ordering.
                 bound_satisfied =
                     condition_check(Self::normalize_li(search_string[i_search]), Self::normalize_li(text.get(i_text)));
+            } else {
+                // The *suffix* ran out first, so it is a proper prefix of the query and therefore
+                // sorts below it. Both bounds have to agree on that: `Minimum` wants
+                // `query <= suffix`, which is false, and `Maximum` wants `query >= suffix`, which
+                // is true. Leaving this case to fall through gave `false` for both, so the two
+                // bounds drew opposite conclusions about the same pair.
+                //
+                // It is not reachable today — a query can only outlive the text by containing `$`
+                // at a non-final position, and the maximum pass is gated on the query being a full
+                // prefix of some suffix, which forces `$` to be last. Those are mutually exclusive
+                // while the text holds exactly one `$`. Written out anyway, so the correctness of
+                // the bound search stops depending on that coincidence.
+                bound_satisfied = matches!(bound, Maximum);
             }
         }
 

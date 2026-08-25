@@ -81,4 +81,16 @@ pub trait SuffixToProteinMappingBackend: Send + Sync {
     fn touch_all_pages(&self) -> u64 {
         0
     }
+
+    /// The text length this mapping was built for, when the representation records it.
+    ///
+    /// Used to check that the three index files came from the same `sa-builder` run — see
+    /// [`Searcher::try_new`](crate::sa_searcher::Searcher::try_new). Dense stores one entry per
+    /// text position and BitVec one bit, so both know the length exactly. Sparse stores protein
+    /// start positions, which says nothing about the text length, so it keeps the `None` default:
+    /// a mapping that cannot be compared is not the same as one that disagrees.
+    #[inline]
+    fn implied_text_len(&self) -> Option<usize> {
+        None
+    }
 }

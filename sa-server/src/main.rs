@@ -164,14 +164,17 @@ async fn start_server(args: Arguments) -> Result<(), Box<dyn Error>> {
     let mapping = load_mapping_file(&mapping_file)?;
     eprintln!("Successfully loaded the suffix-to-protein mapping!");
 
-    let mut searcher = Searcher::new(suffix_array, proteins, mapping);
+    // Refuse to start on a mismatched set rather than serving wrong answers from one. The three
+    // files are loaded independently and each is well-formed on its own, so nothing before this
+    // point would have noticed.
+    let mut searcher = Searcher::try_new(suffix_array, proteins, mapping)?;
 
     if let Some(ref path) = kmer_table_file {
         eprintln!();
         eprintln!("Started loading the k-mer table...");
         let table = load_kmer_table_file(path)?;
         eprintln!("Successfully loaded the k-mer table! (k={})", table.k);
-        searcher = searcher.with_kmer_table(table);
+        searcher = searcher.try_with_kmer_table(table)?;
     }
 
     let searcher = Arc::new(searcher);

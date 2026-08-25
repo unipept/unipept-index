@@ -92,6 +92,25 @@ impl InMemoryProteins<InMemoryProteinText> {
                 .map_err(|err| format!("{path}:{line_number}: taxon_id {taxon_field:?} is not a number: {err}"))?;
             let sequence = from_utf8(next_field(&mut fields, "sequence", path, line_number)?)
                 .map_err(|err| format!("{path}:{line_number}: sequence is not valid UTF-8: {err}"))?;
+
+            // `SEPARATION_CHARACTER` and `TERMINATION_CHARACTER` are documented as "must not appear
+            // in any sequence", and this is where that becomes true rather than hoped for. Both are
+            // inside the 5-bit alphabet, so a sequence containing one used to be accepted and
+            // concatenated verbatim — producing a text with *more* protein boundaries than there
+            // are proteins. Every protein id after the offending row then shifts by one, and the
+            // last one resolves past the end of the table: fabricated metadata on the mmap backend,
+            // a panic on the preloaded one. Silently, from one stray byte in the input.
+            if let Some(offset) = sequence.bytes().position(|b| b == SEPARATION_CHARACTER || b == TERMINATION_CHARACTER)
+            {
+                let byte = sequence.as_bytes()[offset] as char;
+                return Err(format!(
+                    "{path}:{line_number}: sequence contains {byte:?} at offset {offset}; the separator \
+                     ({:?}) and terminator ({:?}) delimit proteins in the concatenated text and must not \
+                     appear inside a sequence",
+                    SEPARATION_CHARACTER as char, TERMINATION_CHARACTER as char
+                )
+                .into());
+            }
             let annotations = from_utf8(next_field(&mut fields, "annotations", path, line_number)?)
                 .map_err(|err| format!("{path}:{line_number}: annotations are not valid UTF-8: {err}"))?;
             let functional_annotations: Vec<u8> = encode(annotations);
@@ -512,6 +531,35 @@ mod tests {
         std::fs::write(&path, format!("{}\n", rows.join("\n"))).unwrap();
         let as_string = path.to_str().unwrap().to_string();
         (dir, as_string)
+    }
+
+    /// A sequence containing the separator or terminator must be rejected at load.
+    ///
+    /// Both bytes are inside the 5-bit alphabet, so this used to be accepted and concatenated
+    /// verbatim: three proteins whose middle sequence held a `-` produced the text
+    /// `"AAA-CC-DD-EEE$"` — four boundaries for three proteins. Every id after the offending row
+    /// shifts, and the last resolves past the end of the protein table, which is the out-of-range
+    /// index that returns fabricated metadata on the mmap backend and panics on the preloaded one.
+    #[test]
+    fn a_sequence_containing_a_delimiter_is_rejected() {
+        for (label, rows) in [
+            ("separator", vec!["P0\t1\tAAA\tGO:0001234", "P1\t2\tCC-DD\tGO:0001234", "P2\t3\tEEE\tGO:0001234"]),
+            ("terminator", vec!["P0\t1\tAAA\tGO:0001234", "P1\t2\tCC$DD\tGO:0001234"])
+        ] {
+            let (_dir, path) = tsv_with(&rows);
+            let msg = match InMemoryProteins::<InMemoryProteinText>::load_from_tsv(&path) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("{label} inside a sequence should be rejected")
+            };
+            assert!(msg.contains(":2:"), "{label}: the error should name the line: {msg}");
+            assert!(msg.contains("offset 2"), "{label}: the error should name the offset: {msg}");
+        }
+
+        // Sequences of ordinary residues still load, so the check is specific.
+        let (_dir, path) = tsv_with(&["P0\t1\tAAA\tGO:0001234", "P1\t2\tCCDD\tGO:0001234"]);
+        let loaded = InMemoryProteins::<InMemoryProteinText>::load_from_tsv(&path).expect("clean rows must load");
+        let text: String = (0..loaded.text().len()).map(|i| loaded.text().get(i) as char).collect();
+        assert_eq!(text, "AAA-CCDD$", "one boundary per protein, plus the terminator");
     }
 
     /// A malformed row must name the file, the line and the missing field — not panic.

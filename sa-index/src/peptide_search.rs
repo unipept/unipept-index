@@ -343,10 +343,24 @@ pub fn json_chunk(result: &SearchResult<'_>) -> Vec<u8> {
 /// the very first one with `[` and appending `]`. That is exactly `serde_json`'s own compact
 /// framing — `[` , element , `,` , element , `]`, no whitespace — and an empty collection becomes
 /// `[]`.
+///
+/// # Panics
+///
+/// Every chunk must be [`json_chunk`] output — non-empty and comma-prefixed. Both functions are
+/// `pub`, and the precondition used to be neither stated nor checked, which made a violation
+/// silent rather than loud: a chunk of `b"x"` came back as `"[]"`, the caller's byte overwritten
+/// and the result quietly wrong. An empty first chunk panicked with an index-out-of-bounds and no
+/// explanation. Checking turns both into one clear message; this is a programming error on the
+/// caller's side, not untrusted input, so it is an assertion rather than a `Result`.
 pub fn frame_chunks(chunks: &mut Vec<Vec<u8>>) {
     match chunks.first_mut() {
         None => chunks.push(b"[]".to_vec()),
         Some(first) => {
+            assert_eq!(
+                first.first(),
+                Some(&b','),
+                "frame_chunks expects json_chunk output: every chunk must be non-empty and start with ','"
+            );
             first[0] = b'[';
             chunks.last_mut().expect("non-empty").push(b']');
         }
