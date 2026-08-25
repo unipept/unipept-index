@@ -194,8 +194,6 @@ macro_rules! bitarray_test_suite {
                 assert_eq!(ba.data, vec![0, 0, 0]);
             }
 
-            // ── Binary impl ───────────────────────────────────────────────────────
-
             #[test]
             fn test_write_binary() {
                 let mut ba = $new!(4, 40);
@@ -227,11 +225,6 @@ macro_rules! bitarray_test_suite {
                 assert_eq!(ba.get(2), 0x4567890abc);
                 assert_eq!(ba.get(3), 0xdef0123456);
             }
-
-            // ── range iterator ────────────────────────────────────────────────────
-            //
-            // The iterator is the sequential fast path and duplicates `get`'s unpacking logic
-            // with a cached word pair, so every case below asserts it against `get`.
 
             #[test]
             fn test_iter_range_empty() {

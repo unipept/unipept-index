@@ -415,18 +415,11 @@ impl LoadIndex for InMemoryProteins<InMemoryProteinText> {
     }
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod size_limit_tests {
     use text_compression::InMemoryProteinText;
 
     use super::*;
-
-    // ── check_blob_sizes ──────────────────────────────────────────────────────
-    //
-    // Pure in its arguments precisely so the boundary can be tested without building a 4 GB
-    // database. The real write path cannot reach these values in any practical test.
 
     #[test]
     fn blob_exactly_at_the_limit_is_accepted() {

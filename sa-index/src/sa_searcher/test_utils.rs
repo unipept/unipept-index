@@ -284,17 +284,6 @@ pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> TestSearcher {
     build_searcher(text, proteins, positions, sparseness, Mapping::BitVec)
 }
 
-// ── Backend agreement ───────────────────────────────────────────────────────────────────
-//
-// The searcher is generic over three backends, each with an owned and a mapped implementation, and
-// the protein struct is generic over its text backend on top of that — sixteen combinations in all.
-// Which one a binary uses is a build-time choice made in `sa-server`; which one is *correct* is
-// none, individually, because they are all the same index read three different ways.
-//
-// So one test asserts the only property that matters across them: same files in, same answers out.
-// Every other test in this crate runs on the fully-owned combination alone, and that is what
-// entitles them to. The fixture below is its subject; the test itself is in `super::tests`.
-
 /// One row per (mapping representation, peptide, equate_il, tryptic): the result-variant tag, the
 /// sorted matching suffixes, and the `(taxon_id, uniprot_id)` pairs they retrieve.
 ///

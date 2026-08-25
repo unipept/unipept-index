@@ -372,13 +372,6 @@ mod tests {
         )
     }
 
-    // ── Byte-identity against the original implementation ─────────────────────
-    //
-    // The rewrite's whole contract is that it changes nothing about the output, so the old
-    // implementation is kept here verbatim and the new one is checked against it. Every branch of
-    // the state machine is reachable from arbitrary bytes, including combinations `encode` never
-    // produces, so the corpus is exhaustive where it can afford to be.
-
     /// The pre-rewrite decoder, copied unchanged. Do not "simplify" this — its value is being the
     /// thing the current implementation is not.
     fn decode_reference(input: &[u8]) -> String {
@@ -480,8 +473,6 @@ mod tests {
         assert_eq!(decode(&encoded(text)), text);
     }
 
-    // ── The lookup tables ─────────────────────────────────────────────────────
-
     #[test]
     fn decode_matches_the_character_set() {
         for value in 0..16u8 {
@@ -505,8 +496,6 @@ mod tests {
             assert_eq!(SPECIAL[byte as usize], expected, "byte {byte}");
         }
     }
-
-    // ── The other two entry points ────────────────────────────────────────────
 
     #[test]
     fn decoded_renders_the_same_text_as_decode() {

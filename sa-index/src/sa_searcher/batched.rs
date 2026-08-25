@@ -585,12 +585,6 @@ mod tests {
         }
     }
 
-    // ── The entry point: `search_all_matching_suffixes` ─────────────────────────────────
-    //
-    // Everything above tests the kernel against the scalar search directly. These test the
-    // chunk-and-parallelise layer on top of it, which has its own failure modes: a lost or
-    // reordered result, a ragged final chunk, an empty input.
-
     /// What the entry point has to reproduce: the scalar primitive, applied one peptide at a time.
     ///
     /// This is the reference every test below compares against. It used to be
@@ -661,17 +655,6 @@ mod tests {
             s.search_all_matching_suffixes(&peptides, 1000, true, false)
         );
     }
-
-    // ── Whole-pipeline equivalence ──────────────────────────────────────────────────────
-    //
-    // The entry-point tests above run one small dense fixture and stop at the suffixes. This is
-    // the wider guard: three suffix-array shapes, both search options, and *retrieval* as well as
-    // search — chunking and parallelising must not change which proteins come back, not just
-    // which suffixes.
-    //
-    // It was the `SearchTuning` equivalence test, which swept the knobs and asserted the results
-    // never moved. The knobs are constants now, so what is left to guard is the one decomposition
-    // choice still in the code: batched-and-parallel against one-at-a-time.
 
     /// 500 short proteins built from a rotating set of motifs. The repetition is what makes the
     /// fixture useful: a 2-mer query lands an SA range well above the two-pass threshold

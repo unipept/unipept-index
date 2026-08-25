@@ -62,8 +62,6 @@ pub fn bit_array_byte_size(text_length: usize) -> Option<usize> {
     Some(text_length.checked_mul(5)?.div_ceil(64) * 8)
 }
 
-// ── ProteinTextBackend ─────────────────────────────────────────────────────────
-
 /// Full access interface for protein text backends.
 pub trait ProteinTextBackend {
     /// Returns the ASCII residue at `index`, decoded from its 5-bit code.
@@ -119,8 +117,6 @@ pub trait ProteinTextBackend {
         ProteinTextSlice::new(self, start, end)
     }
 }
-
-// ── ProteinTextSlice ──────────────────────────────────────────────────────────
 
 /// A borrowed window onto the text, used to compare a candidate match against a query.
 pub struct ProteinTextSlice<'a, T: ProteinTextBackend> {
@@ -199,8 +195,6 @@ impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
         ProteinTextSliceIterator { text: self.text, pos: self.start, end: self.end }
     }
 }
-
-// ── ProteinTextIterator ───────────────────────────────────────────────────────
 
 /// Iterator over an entire [`ProteinTextBackend`].
 pub struct ProteinTextIterator<'a, T: ProteinTextBackend> {

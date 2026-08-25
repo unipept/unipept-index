@@ -29,16 +29,12 @@ macro_rules! dispatch {
     };
 }
 
-// ── InMemorySA ───────────────────────────────────────────────────────────────
-
 /// Wraps whichever packing a file holds, picked at load time from its `bits_per_value` header
 /// field.
 pub enum InMemorySA {
     Original(OriginalSA),
     Compressed(CompressedSA)
 }
-
-// ── InMemoryRangeIter ────────────────────────────────────────────────────────
 
 /// [`InMemorySA::iter_range`](SuffixArrayBackend::iter_range)'s iterator: whichever of the two
 /// packings' native iterators the loaded variant uses.
@@ -67,8 +63,6 @@ impl Iterator for InMemoryRangeIter<'_> {
 }
 
 impl ExactSizeIterator for InMemoryRangeIter<'_> {}
-
-// ── SuffixArrayBackend for InMemorySA ────────────────────────────────────────
 
 impl SuffixArrayBackend for InMemorySA {
     type RangeIter<'a> = InMemoryRangeIter<'a>;
@@ -100,8 +94,6 @@ impl SuffixArrayBackend for InMemorySA {
         dispatch!(self, prefetch_sa_index(index))
     }
 }
-
-// ── ReadBinary / WriteBinary ──────────────────────────────────────────────────
 
 impl ReadBinary for InMemorySA {
     /// Reads the shared header and picks the variant its width names: 64 bits is the uncompressed

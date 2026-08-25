@@ -60,8 +60,6 @@ pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) -> u64 {
     swept
 }
 
-// ── MmapBackedProteinText ─────────────────────────────────────────────────────
-
 /// Protein text borrowed from a memory mapping.
 ///
 /// The mapping is shared (`Arc`) because one index file holds several structures — the text and
@@ -197,8 +195,6 @@ impl ReadBinaryMmap for MmapBackedProteinText {
         Ok(Self::from_mmap(mmap, 8, text_length))
     }
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

@@ -15,8 +15,6 @@ use bitarray::{Binary, BitArray};
 
 use crate::{BIT5_TO_CHAR, ProteinTextBackend, bit_array_byte_size};
 
-// ── InMemoryProteinText ───────────────────────────────────────────────────────
-
 /// The protein text held in owned memory, packed at 5 bits per residue.
 ///
 /// Carries the ASCII → 5-bit table alongside the packed data so that `set` can encode; decoding
@@ -175,8 +173,6 @@ impl ReadBinary for InMemoryProteinText {
         Ok(Self::new(bit_array))
     }
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

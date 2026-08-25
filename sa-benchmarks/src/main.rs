@@ -370,7 +370,7 @@ struct StartupTiming {
     /// The three index loads plus the k-mer table. Excludes warmup, which is opt-in.
     load_total_ms: u64,
 
-    // ── What the page sweep actually did ─────────────────────────────────────
+    // What the page sweep actually did
     //
     // Elapsed milliseconds alone cannot tell a sweep that read from disk apart from one that hit
     // the page cache, and the two differ by an order of magnitude on the same bytes. Since the

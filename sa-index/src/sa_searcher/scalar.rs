@@ -506,8 +506,6 @@ mod tests {
         }
     }
 
-    // ── left-extended tryptic search ─────────────────────────────────────
-
     // The left-extended tryptic path (sparseness >= 2) must return exactly what the dense index
     // returns, where `use_extended` is false and the original skip loop runs. A dense searcher
     // over the same text is therefore an exact oracle.

@@ -66,8 +66,6 @@ impl WriteBinary for OriginalSA {
     }
 }
 
-// ── I/O helpers ──────────────────────────────────────────────────────────────
-
 /// Reads until `buffer` is full or the input is exhausted, since one `read` may return less than
 /// asked for. Returns `(input_exhausted, bytes_read)`.
 fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<(bool, usize)> {

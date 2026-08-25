@@ -159,8 +159,6 @@ impl LoadIndex for MmapBackedSA {
     }
 }
 
-// ── range iterator ────────────────────────────────────────────────────────────
-
 /// Reads a u64 value in little-endian byte order from the given mmap at the given byte offset.
 #[inline]
 pub(super) fn read_u64_le(mmap: &Mmap, byte_offset: usize) -> u64 {
@@ -277,8 +275,6 @@ impl Iterator for MmapSaRangeIter<'_> {
 }
 
 impl ExactSizeIterator for MmapSaRangeIter<'_> {}
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
