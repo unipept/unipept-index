@@ -3,7 +3,27 @@
 //! Wraps the searcher with the parts a caller actually wants — normalising the query, dropping
 //! peptides too short to be searchable, resolving suffixes to proteins, and decoding annotations.
 //! `sa-server` calls [`search_all_peptides_json`], which hands back the response body already
-//! serialised.
+//! serialised — and so does anything else building an endpoint on this crate, which is how the
+//! search actually reaches production. `sa-server` is a testing and direct-serving tool, not the
+//! path a deployed request takes.
+//!
+//! # Resource limits are the caller's, and there are none here
+//!
+//! Nothing in this module bounds the work a request can ask for. A caller exposing these functions
+//! to untrusted input owns that, and two things multiply:
+//!
+//! * **The peptide list.** Every entry costs an independent search plus per-hit protein retrieval,
+//!   and short peptides are the expensive ones — a single residue matches a large fraction of the
+//!   index.
+//! * **`cutoff`.** It is *not* an upper bound on work in the direction that matters. It caps a
+//!   result set only while the match range is larger than it; once the range is smaller, the whole
+//!   range is collected regardless (see `sa_searcher::scalar`). A very large `cutoff` therefore
+//!   means "return everything", not "return at most this many".
+//!
+//! So the cost of one request is roughly the sum over peptides of that peptide's match count, each
+//! match carrying a random access into the protein store and an annotation decode. Bound the
+//! peptide count and clamp `cutoff` at the boundary that accepts the request; neither is done here,
+//! and the alphabet and length filters below are correctness filters, not limits.
 //!
 //! # Why the results borrow, and why serialisation happens here
 //!

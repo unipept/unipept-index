@@ -14,7 +14,7 @@ that crate alone** (`sa-server/src/backends.rs`). There is no runtime switch, an
 anywhere in the search path.
 
 **`sa-server` declares no `default = [...]`, so a plain `cargo build --release -p sa-server` gives
-you the preloaded backend.** The production server is built with `--features mmap`.
+you the preloaded backend.** Build with `--features mmap` for the memory-mapped one.
 
 | | preloaded (default) | `--features mmap` |
 |---|---|---|
@@ -163,6 +163,15 @@ a full index build, since it is derived from the suffix array before that is wri
 
 ## Running the server
 
+`sa-server` exists to exercise the index over HTTP — for testing, and for serving an index directly
+when that is what you want. **It is not how the search reaches Unipept:** the API site builds its
+own endpoints on top of `sa-index`'s public functions (`peptide_search::search_all_peptides_json`
+and friends) rather than proxying this binary.
+
+That matters for anyone adding limits or validation. `sa-server` is not the untrusted boundary, so
+hardening it protects nothing that runs in production; the caller that exposes these functions to
+the network is the place for that. See the note on resource limits in `sa-index::peptide_search`.
+
 ```bash
 ./target/release/sa-server \
   --database-file proteins.bin \
@@ -213,7 +222,7 @@ silently ignores.
 
 | crate | what it does |
 |---|---|
-| `sa-server` | HTTP server; the deployed artifact |
+| `sa-server` | HTTP server for testing and for serving an index directly; see the note below |
 | `sa-builder` | builds an index from a protein TSV |
 | `sa-index` | the search itself: suffix array, k-mer table, suffix→protein mapping |
 | `sa-mappings` | protein metadata — accessions, taxa, annotations |
