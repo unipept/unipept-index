@@ -39,10 +39,37 @@ impl<const BITS: usize> BitArray<BITS> {
     /// caller once it has filled it: see [`crate::hugepages`] for why that ordering is the whole
     /// point.
     pub fn with_capacity(capacity: usize) -> Self {
-        let extra = if (capacity * BITS).is_multiple_of(64) { 0 } else { 1 };
-        let array = Self { data: vec![0; capacity * BITS / 64 + extra], len: capacity };
+        Self::try_with_capacity(capacity)
+            .expect("BitArray::with_capacity: capacity * BITS does not fit, or allocation failed")
+    }
+
+    /// Like [`Self::with_capacity`], but reports failure instead of aborting the process.
+    ///
+    /// The counterpart of [`crate::DynBitArray::try_with_capacity`], and for the same reason:
+    /// readers take the capacity out of an untrusted file header, where a corrupt value either
+    /// overflows `capacity * BITS` or asks for more memory than exists. `vec![0; n]` aborts on
+    /// allocation failure, turning a damaged index into a dead process.
+    pub fn try_with_capacity(capacity: usize) -> Option<Self> {
+        let words = capacity.checked_mul(BITS)?.div_ceil(64);
+        let mut data: Vec<u64> = Vec::new();
+        data.try_reserve_exact(words).ok()?;
+        data.resize(words, 0);
+        let array = Self { data, len: capacity };
         array.advise_hugepages();
-        array
+        Some(array)
+    }
+
+    /// Number of backing words the array currently holds.
+    ///
+    /// Exposed so a reader can check a body it has just decoded against the length its header
+    /// declared — see [`crate::DynBitArray::word_len`].
+    pub fn word_len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Number of 64-bit words `len()` values at `BITS` bits occupy.
+    pub fn required_words(&self) -> usize {
+        (self.len * BITS).div_ceil(64)
     }
 
     /// Requests transparent huge pages over the backing data (no-op off Linux).

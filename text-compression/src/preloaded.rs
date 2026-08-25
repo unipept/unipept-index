@@ -144,13 +144,33 @@ impl ReadBinary for InMemoryProteinText {
         reader.read_exact(&mut buf8).map_err(|_| "Could not read text_length from binary file")?;
         let text_length = u64::from_le_bytes(buf8) as usize;
 
-        let n_bytes = bit_array_byte_size(text_length);
-        let mut bit_array = BitArray::<5>::with_capacity(text_length);
+        let n_bytes =
+            bit_array_byte_size(text_length).ok_or("The protein text header declares an implausible text length")?;
+
+        // Fallibly, because `text_length` is eight bytes straight out of the file: a corrupt header
+        // asking for more memory than exists becomes a load error rather than an aborted process.
+        let mut bit_array = BitArray::<5>::try_with_capacity(text_length)
+            .ok_or("The protein text header declares more residues than can be allocated")?;
         let mut limited = <&mut R as Read>::take(reader, n_bytes as u64);
         bit_array.read_binary(&mut limited).map_err(|_| "Could not parse BitArray data from binary file")?;
         // The huge-page advice is not issued here: `BitArray::with_capacity` already did it, on the
         // untouched allocation, which is the only point at which it does anything. See
         // `bitarray::hugepages`.
+
+        // `read_binary` refills the backing store with however many words the reader supplied, which
+        // says nothing about the length the header declared. Without this, a truncated or
+        // over-declared `proteins.bin` loaded cleanly, `len()` reported the declared length, and the
+        // first `get` past the real data panicked inside `bitarray` — on a live query rather than at
+        // load. `read_binary_mmap` rejects both cases; this is the sibling that did not.
+        if bit_array.word_len() < bit_array.required_words() {
+            return Err(format!(
+                "The protein text header declares {} residues ({} words) but the file holds {} words",
+                text_length,
+                bit_array.required_words(),
+                bit_array.word_len()
+            )
+            .into());
+        }
 
         Ok(Self::new(bit_array))
     }
@@ -315,5 +335,59 @@ mod tests {
         assert_eq!(reader.fill_buf().unwrap(), &[] as &[u8]);
         let mut buffer = [0_u8; 1];
         assert!(reader.read(&mut buffer).is_err());
+    }
+
+    /// The preloaded reader must refuse the same damaged files the mmap reader refuses.
+    ///
+    /// `mmap::tests` has pinned truncation and over-declared headers for a while; this side had no
+    /// equivalent, and no check either. A short or over-declared `proteins.bin` loaded cleanly,
+    /// `len()` reported the declared length, and the first `get` past the real data panicked inside
+    /// `bitarray` — on a live query rather than at load, which is exactly what the
+    /// `ReadBinaryMmap` contract exists to prevent. Both backends now answer the same way.
+    #[test]
+    fn both_backends_reject_the_same_damaged_text_files() {
+        use binary_traits::ReadBinaryMmap;
+
+        let text = InMemoryProteinText::from_string("ACACA-CAC$MLPGLALLLL$");
+        let text_len = text.len();
+        let mut buf: Vec<u8> = Vec::new();
+        text.write_binary(&mut buf).unwrap();
+
+        let map_bytes = |bytes: &[u8]| {
+            let mut tmp = tempfile::NamedTempFile::new().unwrap();
+            std::io::Write::write_all(&mut tmp, bytes).unwrap();
+            std::io::Write::flush(&mut tmp).unwrap();
+            (crate::MmapBackedProteinText::read_binary_mmap(tmp.path()).is_ok(), tmp)
+        };
+
+        // Every truncation: both backends must reject every prefix.
+        for cut in 0..buf.len() {
+            let preloaded_ok = InMemoryProteinText::read_binary(&mut &buf[..cut]).is_ok();
+            let (mmap_ok, _tmp) = map_bytes(&buf[..cut]);
+            assert!(!preloaded_ok, "preloaded accepted a {cut}-byte prefix of {}", buf.len());
+            assert_eq!(preloaded_ok, mmap_ok, "backends disagree on a {cut}-byte prefix");
+        }
+
+        // A header claiming far more text than the body holds.
+        let mut overlong = buf.clone();
+        overlong[0..8].copy_from_slice(&1_000_000_u64.to_le_bytes());
+        let preloaded_ok = InMemoryProteinText::read_binary(&mut overlong.as_slice()).is_ok();
+        let (mmap_ok, _tmp) = map_bytes(&overlong);
+        assert!(!preloaded_ok, "preloaded accepted an over-declared header");
+        assert_eq!(preloaded_ok, mmap_ok, "backends disagree on an over-declared header");
+
+        // A header whose length overflows the byte-size computation must be an error on both,
+        // not a panic inside the check itself.
+        let mut absurd = buf.clone();
+        absurd[0..8].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(InMemoryProteinText::read_binary(&mut absurd.as_slice()).is_err());
+        let (mmap_ok, _tmp) = map_bytes(&absurd);
+        assert!(!mmap_ok, "mmap accepted a text length of u64::MAX");
+
+        // The intact file loads on both and reads back, so the rejections above are specific.
+        let loaded = InMemoryProteinText::read_binary(&mut buf.as_slice()).expect("intact file must load");
+        assert_eq!(loaded.len(), text_len);
+        let (mmap_ok, _tmp) = map_bytes(&buf);
+        assert!(mmap_ok, "mmap rejected an intact file");
     }
 }

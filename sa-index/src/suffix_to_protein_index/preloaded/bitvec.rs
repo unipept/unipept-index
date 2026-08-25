@@ -228,7 +228,7 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 
     let mut buffer = vec![0u8; READ_CHUNK_BYTES];
 
-    let mut blocks = Vec::with_capacity(block_count);
+    let mut blocks = super::try_alloc_exact(block_count, "bitvec")?;
     // Before the loop below touches a page of it, which is the only point at which the advice does
     // anything — see `bitarray::hugepages`, and `array::preloaded::original::load_original`, which
     // does the same for the same reason. At UniProt scale this is the ~8 GB half of a ~10 GB
@@ -248,7 +248,7 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     }
 
     let sb_count = block_count / 8 + 1;
-    let mut counts = Vec::with_capacity(sb_count);
+    let mut counts = super::try_alloc_exact(sb_count, "bitvec superblock")?;
     // The other ~2 GB of the same structure; same argument as for `blocks` above.
     bitarray::hugepages::advise_capacity(&counts);
     let mut cells_left = sb_count;

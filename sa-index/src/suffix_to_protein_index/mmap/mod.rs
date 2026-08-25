@@ -81,6 +81,84 @@ mod tests {
         }
     };
 
+    /// A truncated mapping file must be refused by *all three* representations, on both backends.
+    ///
+    /// Dense and sparse used to validate only their 9-byte header, so a file whose body was short
+    /// loaded cleanly and panicked on the first lookup — inside a request handler, since this is a
+    /// server startup path. Bitvec always checked. The contract in `binary_traits` requires all
+    /// three to behave the same way, and now they do.
+    #[test]
+    fn every_mmap_representation_rejects_a_truncated_body() {
+        use crate::{
+            ReadBinary,
+            suffix_to_protein_index::{InMemorySuffixToProteinMapping, test_utils::to_binary}
+        };
+
+        let text = sample_text();
+        let cases: [(&str, Vec<u8>); 3] = [
+            ("dense", to_binary(DenseSuffixToProtein::new(&text))),
+            ("sparse", to_binary(SparseSuffixToProtein::new(&text))),
+            ("bitvec", to_binary(BitVecSuffixToProtein::new(&text)))
+        ];
+
+        for (name, full) in cases {
+            // Header intact, body cut in half — unambiguously short for every layout.
+            let cut = 9 + (full.len() - 9) / 2;
+            assert!(cut < full.len(), "{name}: fixture too small to truncate meaningfully");
+
+            let tmp = write_to_tempfile(&full[..cut]);
+            assert!(
+                MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).is_err(),
+                "{name}: the mmap reader accepted a truncated body"
+            );
+
+            // The preloaded sibling has always rejected these; assert it stays that way, so the
+            // two backends are pinned to the same answer rather than merely both erroring today.
+            assert!(
+                InMemorySuffixToProteinMapping::read_binary(&mut &full[..cut]).is_err(),
+                "{name}: the preloaded reader accepted a truncated body"
+            );
+
+            // And the intact file still loads on both, so the assertions above reject for the
+            // right reason.
+            let tmp_full = write_to_tempfile(&full);
+            assert!(
+                MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp_full.path()).is_ok(),
+                "{name}: the mmap reader rejected an intact file"
+            );
+            assert!(
+                InMemorySuffixToProteinMapping::read_binary(&mut full.as_slice()).is_ok(),
+                "{name}: the preloaded reader rejected an intact file"
+            );
+        }
+    }
+
+    /// A corrupt count must be a load error on both backends, not a process abort.
+    ///
+    /// All three preloaded readers used to size a `Vec` straight from the header, so an
+    /// implausible count reached `handle_alloc_error` and `abort()`ed — un-catchable, and the
+    /// opposite of the `Err` the mmap readers return for the same nine bytes.
+    #[test]
+    fn an_implausible_count_is_an_error_not_an_abort() {
+        use crate::{ReadBinary, suffix_to_protein_index::InMemorySuffixToProteinMapping};
+
+        for tag in [0u8, 1u8] {
+            let mut bytes = vec![tag];
+            bytes.extend_from_slice(&(1u64 << 60).to_le_bytes());
+
+            assert!(
+                InMemorySuffixToProteinMapping::read_binary(&mut bytes.as_slice()).is_err(),
+                "tag {tag}: preloaded accepted a count of 2^60"
+            );
+
+            let tmp = write_to_tempfile(&bytes);
+            assert!(
+                MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).is_err(),
+                "tag {tag}: mmap accepted a count of 2^60"
+            );
+        }
+    }
+
     #[test]
     fn test_load_mmap_dense() {
         assert_load_mmap(DenseSuffixToProtein::new(&sample_text()), 0u8);

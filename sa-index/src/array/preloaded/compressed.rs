@@ -105,10 +105,31 @@ pub(super) fn load_compressed(
     bits_per_value: usize,
     size: usize
 ) -> Result<DynBitArray, Box<dyn Error>> {
-    let mut compressed_suffix_array = DynBitArray::with_capacity(size, bits_per_value);
+    // `size` is eight bytes straight out of the file header, so it is allocated through the
+    // fallible constructor: a corrupt count that overflows `size * bits_per_value`, or that simply
+    // asks for more memory than exists, becomes a load error rather than an aborted process.
+    // `read_binary_mmap` reaches the same conclusion by never allocating at all.
+    let mut compressed_suffix_array = DynBitArray::try_with_capacity(size, bits_per_value)
+        .ok_or("The SA header declares more entries than can be allocated")?;
     compressed_suffix_array
         .read_binary(reader)
         .map_err(|_| "Could not read the compressed suffix array from the binary file")?;
+
+    // `read_binary` refills the backing store with however many words the reader yielded, which
+    // says nothing about the count the header declared. Without this, a truncated `sa.bin` loads
+    // cleanly, `len()` reports the declared count, and the first binary-search probe past the real
+    // data panics inside a request handler. `load_original` and `read_binary_mmap` both check the
+    // equivalent; this was the one sibling that did not.
+    if compressed_suffix_array.word_len() < compressed_suffix_array.required_words() {
+        return Err(format!(
+            "The SA header declares {} entries at {} bits ({} words) but the file holds {} words",
+            size,
+            bits_per_value,
+            compressed_suffix_array.required_words(),
+            compressed_suffix_array.word_len()
+        )
+        .into());
+    }
     // The huge-page advice is not issued here: `DynBitArray::with_capacity` already did it, on the
     // untouched allocation, which is the only point at which it does anything. See
     // `bitarray::hugepages`.

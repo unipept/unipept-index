@@ -140,11 +140,17 @@ pub fn dump_suffix_array(sa: Vec<i64>, sparseness_factor: u8, writer: &mut impl 
 /// holding more — a header that disagrees with its file — stops at `size` rather than returning
 /// entries nothing accounted for.
 pub(super) fn load_original(reader: &mut impl BufRead, size: usize) -> Result<Vec<i64>, Box<dyn Error>> {
-    let mut sa = Vec::with_capacity(size);
+    // `size` is eight bytes straight out of the file header, so it is related to something real
+    // *before* it becomes an allocation: `checked_mul` rejects a count whose body would overflow,
+    // and `try_reserve_exact` reports an impossible allocation instead of aborting the process the
+    // way `Vec::with_capacity` does. `read_binary_mmap` gets there by never allocating at all.
+    let body_bytes = size.checked_mul(8).ok_or("The SA header declares too many items")? as u64;
+    let mut sa: Vec<i64> = Vec::new();
+    sa.try_reserve_exact(size)
+        .map_err(|_| "The SA header declares more entries than can be allocated")?;
     // Before `read_vec_i64` touches a page of it: the advice only shapes the faults that populate
     // the buffer. `read_vec_i64` clears and refills within this capacity, so it never reallocates.
     bitarray::hugepages::advise_capacity(&sa);
-    let body_bytes = size.checked_mul(8).ok_or("The SA header declares too many items")? as u64;
     read_vec_i64(&mut sa, reader.take(body_bytes))
         .map_err(|_| "Could not read the suffix array from the binary file")?;
     if sa.len() != size {

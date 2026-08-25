@@ -45,14 +45,38 @@ impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
     }
 }
 
-/// Maps a sparse mapping file, validating its header only. The entry count is kept, since the
-/// binary search needs it, but is not checked against the file length: a header claiming more
-/// entries than the body holds loads, and panics on the first lookup.
+/// Maps a sparse mapping file, validating the header *and* the body it declares.
+///
+/// The count is checked against the mapping's actual length before the struct is built, so every
+/// lookup below can index the mapping without re-checking. It used to be validated only as far as
+/// the 9-byte header, which meant a file whose body was short — a build killed part-way, a partial
+/// copy, a full disk — loaded cleanly and then panicked on the first lookup, inside a request
+/// handler. That is what [`ReadBinaryMmap`](text_compression::ReadBinaryMmap)'s contract forbids,
+/// and what the bitvec reader next door already did correctly.
+///
+/// This also bounds `touch_all_pages`, whose sweep is `data_offset .. data_offset + count * 8`:
+/// with the count validated, that range is guaranteed to lie inside the mapping, so the sweep no
+/// longer needs a clamp the dense sibling has and this one lacked.
 pub(super) fn read_sparse_mmap(mmap: Mmap) -> Result<MmapSparseSuffixToProtein, Box<dyn Error>> {
     if mmap.len() < 9 {
         return Err("The sparse mapping file is too small to contain the count header".into());
     }
     let count = u64::from_le_bytes(mmap[1..9].try_into()?) as usize;
+
+    // Checked, because `count` is untrusted: an unchecked `* 8` wraps for a header near
+    // `usize::MAX` and would make `expected` small enough to pass the comparison below.
+    let expected = count
+        .checked_mul(8)
+        .and_then(|n| n.checked_add(9))
+        .ok_or("The sparse mapping header declares too many entries")?;
+    if mmap.len() < expected {
+        return Err(format!(
+            "The sparse mapping file is too small to contain the mapping data: expected {expected} bytes, got {}",
+            mmap.len()
+        )
+        .into());
+    }
+
     Ok(MmapSparseSuffixToProtein { mmap, count, data_offset: 9 })
 }
 

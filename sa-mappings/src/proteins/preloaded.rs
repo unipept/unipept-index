@@ -268,26 +268,75 @@ pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Pr
     let uid_bytes_total = u64::from_le_bytes(buf8) as usize;
     reader.read_exact(&mut buf8)?;
     let fa_bytes_total = u64::from_le_bytes(buf8) as usize;
-    let mut table = vec![[0u8; 16]; protein_count];
+    // Each of these three lengths is eight bytes straight out of the file, and this is the one
+    // route that reaches the parser with no size check in front of it — the mapped routes go
+    // through `mmap::layout` first. `vec![0; n]` on a corrupt count reaches `handle_alloc_error`
+    // and `abort()`s: un-catchable, so `Result` cannot carry it and the default-built server dies
+    // on a damaged index instead of reporting it. The mapped loaders return `Err` for the very
+    // same bytes.
+    let mut table: Vec<[u8; 16]> = try_zeroed(protein_count, "protein entries")?;
     for entry in table.iter_mut() {
         reader.read_exact(entry)?;
     }
-    let mut uid_data = vec![0u8; uid_bytes_total];
+    let mut uid_data: Vec<u8> = try_zeroed(uid_bytes_total, "UID bytes")?;
     reader.read_exact(&mut uid_data)?;
-    let mut fa_data = vec![0u8; fa_bytes_total];
+    let mut fa_data: Vec<u8> = try_zeroed(fa_bytes_total, "annotation bytes")?;
     reader.read_exact(&mut fa_data)?;
-    let mut proteins = Vec::with_capacity(protein_count);
-    for entry in &table {
+
+    let mut proteins: Vec<Protein> = Vec::new();
+    proteins
+        .try_reserve_exact(protein_count)
+        .map_err(|_| format!("The proteins header declares {protein_count} proteins, which cannot be allocated"))?;
+
+    for (index, entry) in table.iter().enumerate() {
         let taxon_id = u32::from_le_bytes(entry[0..4].try_into()?);
         let uid_offset = u32::from_le_bytes(entry[4..8].try_into()?) as usize;
         let uid_len = u16::from_le_bytes(entry[8..10].try_into()?) as usize;
         let fa_offset = u32::from_le_bytes(entry[10..14].try_into()?) as usize;
         let fa_len = u16::from_le_bytes(entry[14..16].try_into()?) as usize;
-        let uniprot_id = String::from_utf8(uid_data[uid_offset..uid_offset + uid_len].to_vec())?;
-        let functional_annotations = fa_data[fa_offset..fa_offset + fa_len].to_vec();
-        proteins.push(Protein { uniprot_id, taxon_id, functional_annotations });
+
+        // An entry's offsets are as untrusted as the header. Unchecked, a corrupt one indexed
+        // outside the blob and panicked here — at load in this path, but the mapped sibling defers
+        // the same slicing to `get`, i.e. into a request handler.
+        let uniprot_id = slice_of(&uid_data, uid_offset, uid_len, index, "UID")?;
+        let functional_annotations = slice_of(&fa_data, fa_offset, fa_len, index, "annotation")?;
+
+        proteins.push(Protein {
+            uniprot_id: String::from_utf8(uniprot_id.to_vec())?,
+            taxon_id,
+            functional_annotations: functional_annotations.to_vec()
+        });
     }
     Ok(proteins)
+}
+
+/// Allocates `len` zeroed elements, reporting failure instead of aborting the process.
+///
+/// Every length passed here is read from the file header, where a corrupt value can ask for more
+/// memory than exists. See the note in [`read_metadata_section`].
+fn try_zeroed<T: Copy + Default>(len: usize, what: &str) -> Result<Vec<T>, Box<dyn Error>> {
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(len)
+        .map_err(|_| format!("The proteins header declares {len} {what}, which cannot be allocated"))?;
+    buffer.resize(len, T::default());
+    Ok(buffer)
+}
+
+/// Borrows `blob[offset .. offset + len]`, or reports which entry pointed outside it.
+fn slice_of<'a>(
+    blob: &'a [u8],
+    offset: usize,
+    len: usize,
+    index: usize,
+    what: &str
+) -> Result<&'a [u8], Box<dyn Error>> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| format!("protein {index}: {what} range {offset}..+{len} overflows"))?;
+    blob.get(offset..end).ok_or_else(|| {
+        format!("protein {index}: {what} range {offset}..{end} lies outside the {}-byte {what} blob", blob.len()).into()
+    })
 }
 
 /// Reads the whole file into owned memory.

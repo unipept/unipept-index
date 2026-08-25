@@ -70,7 +70,7 @@ pub(super) fn read_sparse_mapping<R: Read>(reader: &mut R) -> Result<SparseSuffi
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
     let count = u64::from_le_bytes(buf8) as usize;
-    let mut mapping = Vec::with_capacity(count);
+    let mut mapping = super::try_alloc_exact(count, "sparse")?;
     for _ in 0..count {
         reader.read_exact(&mut buf8)?;
         mapping.push(i64::from_le_bytes(buf8));

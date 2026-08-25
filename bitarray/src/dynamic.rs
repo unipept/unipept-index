@@ -35,15 +35,49 @@ impl DynBitArray {
     /// caller once it has filled it: see [`crate::hugepages`] for why that ordering is the whole
     /// point.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
-        let extra = if (capacity * bits_per_value).is_multiple_of(64) { 0 } else { 1 };
+        Self::try_with_capacity(capacity, bits_per_value)
+            .expect("DynBitArray::with_capacity: capacity * bits_per_value does not fit, or allocation failed")
+    }
+
+    /// Like [`Self::with_capacity`], but reports failure instead of aborting the process.
+    ///
+    /// Readers take the capacity straight out of an untrusted file header, where a corrupt count
+    /// can ask for more memory than the machine has — or, once `capacity * bits_per_value`
+    /// overflows, for an arbitrary amount unrelated to what the header said. `vec![0; n]` aborts on
+    /// allocation failure, which turns a damaged index into a dead process; this returns `None` so
+    /// the caller can turn it into a load error instead.
+    ///
+    /// Returns `None` if `capacity * bits_per_value` overflows or the allocation fails.
+    pub fn try_with_capacity(capacity: usize, bits_per_value: usize) -> Option<Self> {
+        let words = capacity.checked_mul(bits_per_value)?.div_ceil(64);
+        let mut data: Vec<u64> = Vec::new();
+        data.try_reserve_exact(words).ok()?;
+        data.resize(words, 0);
         let array = Self {
-            data: vec![0; capacity * bits_per_value / 64 + extra],
+            data,
             mask: if bits_per_value == 64 { u64::MAX } else { (1 << bits_per_value) - 1 },
             len: capacity,
             bits_per_value
         };
         array.advise_hugepages();
-        array
+        Some(array)
+    }
+
+    /// Number of backing words the array currently holds.
+    ///
+    /// Exposed so a reader can check a body it has just decoded against the item count its header
+    /// declared: [`Binary::read_binary`] refills the backing store with however many words the
+    /// reader actually yielded, which for a truncated file is fewer than `len` implies. Nothing
+    /// else relates the two, so without this check `len()` reports the declared count over a
+    /// short body and every lookup past the real data panics.
+    pub fn word_len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Number of 64-bit words `len()` values at this width occupy — what [`Self::word_len`] must
+    /// be at least, for the array to be readable through its whole declared length.
+    pub fn required_words(&self) -> usize {
+        (self.len * self.bits_per_value).div_ceil(64)
     }
 
     /// Requests transparent huge pages over the backing data (no-op off Linux).

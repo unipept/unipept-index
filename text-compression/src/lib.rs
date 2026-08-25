@@ -48,14 +48,20 @@ pub use preloaded::InMemoryProteinText;
 /// bounds check from the hot path.
 pub const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
-/// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
+/// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value,
+/// or `None` if `text_length * 5` does not fit in a `usize`.
 ///
 /// Rounded up to whole `u64` words, matching how `bitarray` allocates. Both mmap readers use this
 /// to bounds-check a declared text length against the actual file size before mapping it, so it
 /// must stay in step with `BitArray::<5>::with_capacity`.
-pub fn bit_array_byte_size(text_length: usize) -> usize {
-    let extra = if (text_length * 5).is_multiple_of(64) { 0 } else { 1 };
-    (text_length * 5 / 64 + extra) * 8
+///
+/// It is fallible because the length it is handed comes straight out of an untrusted file header,
+/// and a validator must not fail on the very input it exists to reject. `text_length * 5`
+/// overflows for any declared length above `usize::MAX / 5`: unchecked, that panicked in a debug
+/// build *inside the check*, and in release wrapped to a value that only happened to still fail
+/// the comparison that follows.
+pub fn bit_array_byte_size(text_length: usize) -> Option<usize> {
+    Some(text_length.checked_mul(5)?.div_ceil(64) * 8)
 }
 
 // ── ProteinTextBackend ─────────────────────────────────────────────────────────

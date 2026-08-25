@@ -77,7 +77,7 @@ pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixT
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
     let count = u64::from_le_bytes(buf8) as usize;
-    let mut mapping = Vec::with_capacity(count);
+    let mut mapping = super::try_alloc_exact(count, "dense")?;
     // Before the loop below touches it; see `bitarray::hugepages` for why the ordering is the whole
     // point, and the bitvec reader for the same call. Exactly `count` pushes follow, so the
     // allocation the advice names is the one that gets filled.

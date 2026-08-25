@@ -140,16 +140,31 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
     ///
     /// # Panics
     ///
-    /// Three ways, all of them on a corrupt or truncated file rather than on bad input:
+    /// Three ways, all of them on a *deliberately edited* file rather than on bad input:
     ///
     /// * `index` is out of range. Only `debug_assert`ed, so a release build panics on the slice
     ///   below instead of erroring.
-    /// * the entry's `uid_offset` / `fa_offset` point past the end of the mapping.
+    /// * the entry's `uid_offset` / `fa_offset` point outside their blob.
     /// * the accession bytes are not valid UTF-8.
     ///
-    /// All three panic inside a request handler, since `read_binary_mmap` does not validate this
-    /// far — see `truncated_files_error_rather_than_panicking` for exactly where its checking
-    /// stops. Tracked as a known issue.
+    /// # Why this is not checked here
+    ///
+    /// A *truncated* file no longer reaches this point: `layout` bounds all four sections —
+    /// including the annotation blob, whose length header it used to skip — so the realistic
+    /// damage (a build killed part-way, a partial copy, a full disk) is now a load error rather
+    /// than a panic in a request handler. What remains is an entry whose offsets were edited to
+    /// point elsewhere while the section headers stayed consistent, which truncation cannot
+    /// produce.
+    ///
+    /// Closing that last gap is a deliberate non-goal, not an oversight. Validating every entry at
+    /// load is O(protein_count) and would fault in the whole entry table, which is precisely the
+    /// lazy startup this backend exists to provide; checking on each lookup would put two bounds
+    /// checks on the retrieval hot path. The preloaded sibling *does* check per entry, because it
+    /// materialises both blobs anyway and the check is free there — so the two backends differ
+    /// here on purpose.
+    ///
+    /// See `truncation_inside_the_annotation_blob_is_rejected_by_both_backends` for what the load
+    /// path now catches.
     #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;
@@ -210,7 +225,8 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
 
     let text_length = u64::from_le_bytes(mmap[0..8].try_into()?) as usize;
     let text_data_offset: usize = 8;
-    let bit_array_bytes = bit_array_byte_size(text_length);
+    let bit_array_bytes = bit_array_byte_size(text_length)
+        .ok_or_else(|| "The proteins header declares an implausible text length".to_string())?;
 
     let meta_offset = text_data_offset
         .checked_add(bit_array_bytes)
@@ -224,6 +240,10 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
 
     let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
     let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?) as usize;
+    // The third header field. It used to be skipped entirely, which left the annotation blob as
+    // the one section never bounded against the file: a `proteins.bin` truncated anywhere inside
+    // it mapped cleanly and panicked later, in a query for one of the last proteins.
+    let fa_bytes_total = u64::from_le_bytes(mmap[meta_offset + 16..meta_offset + 24].try_into()?) as usize;
 
     let fixed_table_offset = meta_offset
         .checked_add(24)
@@ -238,7 +258,11 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
         .checked_add(uid_bytes_total)
         .ok_or_else(|| "overflow while computing fa data offset".to_string())?;
 
-    if uid_data_offset > mmap_len || fa_data_offset > mmap_len {
+    let fa_data_end = fa_data_offset
+        .checked_add(fa_bytes_total)
+        .ok_or_else(|| "overflow while computing fa data end offset".to_string())?;
+
+    if uid_data_offset > mmap_len || fa_data_offset > mmap_len || fa_data_end > mmap_len {
         return Err("The proteins file is too small to contain the data sections its header declares".into());
     }
 
@@ -528,7 +552,7 @@ mod tests {
         assert_eq!(Mapped::read_binary_mmap(&bin_path).unwrap().warm_from, 0, "mapped text: warm the whole file");
 
         let owned_text = MappedMetaOwnedText::read_binary_mmap(&bin_path).unwrap();
-        let meta_offset = 8 + bit_array_byte_size(owned_text.text.len());
+        let meta_offset = 8 + bit_array_byte_size(owned_text.text.len()).unwrap();
         assert!(meta_offset > 8, "fixture should have a non-empty text section");
         assert_eq!(owned_text.warm_from, meta_offset, "owned text: warming must start at the metadata section");
     }
@@ -588,7 +612,7 @@ mod tests {
 
         // Recompute the section boundaries the way the reader does, rather than hard-coding them.
         let text_length = u64::from_le_bytes(full[0..8].try_into().unwrap()) as usize;
-        let meta_offset = 8 + bit_array_byte_size(text_length);
+        let meta_offset = 8 + bit_array_byte_size(text_length).unwrap();
         let protein_count = u64::from_le_bytes(full[meta_offset..meta_offset + 8].try_into().unwrap()) as usize;
         let uid_bytes_total = u64::from_le_bytes(full[meta_offset + 8..meta_offset + 16].try_into().unwrap()) as usize;
         let fa_data_offset = meta_offset + 24 + protein_count * 16 + uid_bytes_total;
@@ -603,6 +627,43 @@ mod tests {
         }
     }
 
+    /// A file truncated inside the annotation blob must be refused by *both* backends.
+    ///
+    /// `layout` bounded the entry table and the UID blob but never parsed `fa_bytes_total`, so the
+    /// annotation section was the one part of the file no reader checked. A `proteins.bin` cut
+    /// anywhere inside it mapped cleanly, served the early proteins, and panicked on one of the
+    /// last — inside a request handler, long after startup. The owned loader rejected the same
+    /// file with "failed to fill whole buffer", so the two disagreed.
+    #[test]
+    fn truncation_inside_the_annotation_blob_is_rejected_by_both_backends() {
+        use text_compression::ReadBinary;
+
+        let tmp_dir = TempDir::new("test_fa_truncation").unwrap();
+        let bin_path = write_binary_to_tempfile(&tmp_dir);
+        let buf = std::fs::read(&bin_path).unwrap();
+
+        // The annotation blob is the last section, so the final bytes lie inside it.
+        for cut in [buf.len() - 1, buf.len() - 2] {
+            let short = tmp_dir.path().join(format!("short{cut}.bin"));
+            std::fs::write(&short, &buf[..cut]).unwrap();
+
+            assert!(
+                Mapped::read_binary_mmap(&short).is_err(),
+                "mmap accepted a file truncated to {cut} of {} bytes",
+                buf.len()
+            );
+            assert!(
+                InMemoryProteins::<InMemoryProteinText>::read_binary(&mut &buf[..cut]).is_err(),
+                "preloaded accepted a file truncated to {cut} of {} bytes",
+                buf.len()
+            );
+        }
+
+        // The intact file still loads on both, so the rejections above are specific.
+        assert!(Mapped::read_binary_mmap(&bin_path).is_ok());
+        assert!(InMemoryProteins::<InMemoryProteinText>::read_binary(&mut buf.as_slice()).is_ok());
+    }
+
     /// A header declaring more proteins than the file holds must be rejected.
     #[test]
     fn overlong_protein_count_is_rejected() {
@@ -613,7 +674,7 @@ mod tests {
         // The protein count sits just past the text section; locate it the same way the reader
         // does rather than hard-coding an offset.
         let text_length = u64::from_le_bytes(bytes[0..8].try_into().unwrap()) as usize;
-        let meta_offset = 8 + bit_array_byte_size(text_length);
+        let meta_offset = 8 + bit_array_byte_size(text_length).unwrap();
         bytes[meta_offset..meta_offset + 8].copy_from_slice(&1_000_000_u64.to_le_bytes());
 
         let path = tmp_dir.path().join("overlong.bin");

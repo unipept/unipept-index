@@ -286,6 +286,45 @@ mod tests {
         }
     }
 
+    /// A truncated body must be refused by *both* readers, identically.
+    ///
+    /// The compressed preloaded path was the one sibling that never related the body it decoded to
+    /// the count its header declared: `read_binary` refills the backing store with however many
+    /// words the reader yielded, and nothing compared that to `len`. A short `sa.bin` therefore
+    /// loaded cleanly, reported the declared entry count, and panicked on the first probe past the
+    /// real data — inside a request handler, since this is a server startup path.
+    #[test]
+    fn both_readers_reject_a_truncated_body() {
+        use text_compression::ReadBinaryMmap;
+
+        use crate::array::{MmapBackedSA, mmap::test_utils::write_to_tempfile};
+
+        for bits in [None, Some(29), Some(40)] {
+            let sa = match bits {
+                None => sample_sa(100),
+                Some(b) => fit_to_width(&sample_sa(100), b)
+            };
+            let full = to_file_bytes(&sa, 1, bits);
+
+            // A quarter of the body removed: unambiguously short, whatever the rounding.
+            let cut = 10 + (full.len() - 10) * 3 / 4;
+
+            let preloaded = InMemorySA::read_binary(&mut Cursor::new(full[..cut].to_vec()));
+            assert!(preloaded.is_err(), "preloaded accepted a truncated body at bits={bits:?}");
+
+            let tmp = write_to_tempfile(&full[..cut]);
+            assert!(
+                MmapBackedSA::read_binary_mmap(tmp.path()).is_err(),
+                "mmap accepted a truncated body at bits={bits:?}"
+            );
+
+            // The intact file still loads and reads back, so the check above rejects for the right
+            // reason rather than rejecting everything.
+            let ok = InMemorySA::read_binary(&mut Cursor::new(full.clone())).expect("intact file must load");
+            assert_backend_holds(&ok, &sa, 1, bits.unwrap_or(64));
+        }
+    }
+
     /// The trait's `is_empty` default, which nothing else reaches.
     #[test]
     fn empty_arrays_report_empty() {

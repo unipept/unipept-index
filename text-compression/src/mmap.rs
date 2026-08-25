@@ -133,7 +133,10 @@ impl ProteinTextBackend for MmapBackedProteinText {
     fn touch_all_pages(&self) -> u64 {
         // Only this text's own section of the mapping: `proteins.bin` holds the metadata after it,
         // and whoever owns that warms it — or deliberately does not.
-        let end = self.data_offset + bit_array_byte_size(self.len);
+        // Infallible here: `self.len` was validated against the mapping when the file was mapped,
+        // so it cannot be the overflowing header this function guards against.
+        let end = self.data_offset
+            + bit_array_byte_size(self.len).expect("text length was validated when the file was mapped");
         touch_all_pages(&self.mmap, self.data_offset..end)
     }
 
@@ -173,7 +176,9 @@ impl ReadBinaryMmap for MmapBackedProteinText {
         let text_length =
             u64::from_le_bytes(mmap[0..8].try_into().map_err(|_| "Failed to parse ProteinText header")?) as usize;
 
-        if mmap.len() < 8 + bit_array_byte_size(text_length) {
+        let data_bytes =
+            bit_array_byte_size(text_length).ok_or("The protein text header declares an implausible text length")?;
+        if mmap.len() < 8 + data_bytes {
             return Err("The protein text file is too small to contain the text data its header declares".into());
         }
 

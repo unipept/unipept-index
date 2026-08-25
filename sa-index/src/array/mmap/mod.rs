@@ -94,6 +94,15 @@ impl ReadBinaryMmap for MmapBackedSA {
     /// Maps an SA file, checking that it is long enough for both the header and the entries the
     /// header declares. That check is what lets every lookup below index the mapping without
     /// bounds-checking against the file length.
+    ///
+    /// The length required is measured in whole 64-bit **words**, not in packed bits, because that
+    /// is what `get` reads: it loads the word holding an entry, and a second word when the entry
+    /// straddles the boundary. `ceil(items * bits / 8)` — the size of the packed payload — is up to
+    /// seven bytes short of that for the final entry, so a file trimmed to exactly the payload
+    /// size used to load cleanly and then panic on the last entry, while `iter_range` silently
+    /// returned `0` for it instead. Rounding to whole words makes the accepted set exactly the
+    /// set `get` can read, and costs nothing in practice: `bitarray::binary::write_words` only
+    /// ever emits whole words, so every file the builder produces already satisfies it.
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
         // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
@@ -117,7 +126,11 @@ impl ReadBinaryMmap for MmapBackedSA {
         let total_bits = amount_of_items
             .checked_mul(bits_per_value)
             .ok_or("The SA header declares too many items or bits per value")?;
-        let data_bytes = total_bits.div_ceil(8);
+        // Whole words, not packed bytes — see the note above.
+        let data_bytes = total_bits
+            .div_ceil(64)
+            .checked_mul(8)
+            .ok_or("The SA header declares too many items or bits per value")?;
 
         if mmap.len() < header_bytes + data_bytes {
             return Err("The binary file is too small to contain the SA data".into());
@@ -335,11 +348,14 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         dump_compressed_suffix_array(sa.clone(), 1, 29, &mut buf).unwrap();
 
-        // The writer pads the body out to whole `u64` words, but the reader only requires
-        // `ceil(items * bits / 8)` bytes, so the last few bytes of the file are slack that a
-        // truncation can legitimately remove. Sweep up to the reader's actual requirement.
-        let required = 10 + (sa.len() * 29).div_ceil(8);
-        assert!(required <= buf.len());
+        // What the reader requires is what `get` reads: whole `u64` words, not the packed byte
+        // count. The writer emits exactly that, so the requirement is the entire file and there is
+        // no trailing slack a truncation could legitimately remove. This used to read
+        // `div_ceil(8)`, which left the last five bytes looking like slack — so the sweep stopped
+        // short of `cut == required`, the one length that loaded successfully and then panicked
+        // on the final entry.
+        let required = 10 + (sa.len() * 29).div_ceil(64) * 8;
+        assert_eq!(required, buf.len(), "the writer should emit exactly what the reader requires");
 
         for cut in 0..required {
             let tmp = write_to_tempfile(&buf[..cut]);
@@ -348,6 +364,19 @@ mod tests {
                 .unwrap_or_else(|| panic!("{cut} of {required} required bytes should not load"));
             assert!(err.to_string().contains("too small"), "unexpected error at {cut}: {err}");
         }
+
+        // Anything that loads must be readable through its whole declared length — the invariant
+        // the sweep exists to protect, and the half that was never asserted. The last entry is the
+        // one that straddles into the final word, so it is exactly where `get` and `iter_range`
+        // used to disagree: a panic from one, a silent `0` from the other.
+        let tmp = write_to_tempfile(&buf[..required]);
+        let mapped = MmapBackedSA::read_binary_mmap(tmp.path()).expect("the full file must load");
+        assert_eq!(mapped.len(), sa.len());
+
+        let via_get: Vec<i64> = (0..mapped.len()).map(|i| mapped.get(i)).collect();
+        let via_iter: Vec<i64> = mapped.iter_range(0, mapped.len()).collect();
+        assert_eq!(via_get, sa, "get must return every entry that was written");
+        assert_eq!(via_iter, sa, "iter_range must agree with get on every entry");
     }
 
     /// A header claiming more entries than the file holds must be rejected, not trusted.

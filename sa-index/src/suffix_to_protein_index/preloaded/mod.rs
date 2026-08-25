@@ -18,6 +18,24 @@ pub use bitvec::BitVecSuffixToProtein;
 pub use dense::DenseSuffixToProtein;
 pub use sparse::SparseSuffixToProtein;
 
+/// Allocates a `Vec` with exactly `capacity`, reporting failure instead of aborting the process.
+///
+/// Every reader below takes its capacity from a count in the file header. `Vec::with_capacity`
+/// reaches `handle_alloc_error` on an implausible one, which `abort()`s — un-catchable, and a very
+/// different outcome from the `Err` the mmap readers return for the very same bytes. A crafted
+/// 9-byte header declaring `2^60` entries used to kill the process here and load-error there.
+///
+/// The capacity stays exact on purpose: `bitarray::hugepages::advise_capacity` is issued against
+/// these allocations, and a rounded-up or capped capacity would detach the advice from the
+/// allocation it describes.
+pub(super) fn try_alloc_exact<T>(capacity: usize, what: &str) -> Result<Vec<T>, Box<dyn Error>> {
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(capacity)
+        .map_err(|_| format!("The {what} mapping header declares {capacity} entries, which cannot be allocated"))?;
+    Ok(buffer)
+}
+
 /// Wraps whichever of the three mappings a file holds, picked at load time from its type byte.
 pub enum InMemorySuffixToProteinMapping {
     Dense(DenseSuffixToProtein),
