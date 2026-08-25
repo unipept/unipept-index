@@ -103,6 +103,9 @@ impl ProteinTextBackend for MmapBackedProteinText {
     /// to them.
     #[inline]
     fn get(&self, index: usize) -> u8 {
+        // Not redundant with the slice indexing below: that bounds the *mapping*, which for a
+        // shared `proteins.bin` runs on past this text into the metadata. See the trait.
+        debug_assert!(index < self.len, "residue index {index} is past the end of the text");
         const BITS: usize = 5;
         const MASK: u64 = (1u64 << BITS) - 1;
         let bit_offset = index * BITS;
@@ -120,9 +123,10 @@ impl ProteinTextBackend for MmapBackedProteinText {
         BIT5_TO_CHAR[raw as usize]
     }
 
-    /// `#[inline]` for the same reason as [`Self::get`], and the preloaded backend carries it too:
-    /// `Searcher::compare` reads this once per binary-search probe, so without cross-crate LTO it
-    /// would be a real call per probe to return a field.
+    /// `#[inline]` is load-bearing, and the preloaded backend carries it for the same reason:
+    /// `Searcher::compare` reads this once per binary-search probe, and every caller is in another
+    /// crate with no cross-crate LTO to fall back on, so without it each probe would pay a real
+    /// call to return a field. `bitarray::BitArray::get` spells the same argument out at length.
     #[inline]
     fn len(&self) -> usize {
         self.len
@@ -140,9 +144,9 @@ impl ProteinTextBackend for MmapBackedProteinText {
 
     #[inline]
     fn prefetch_at(&self, index: usize) {
-        let bit_off = self.data_offset + (index * 5) / 8;
-        if bit_off < self.mmap.len() {
-            prefetch::prefetch_read(&self.mmap[bit_off] as *const u8);
+        let byte_off = self.data_offset + (index * 5) / 8;
+        if byte_off < self.mmap.len() {
+            prefetch::prefetch_read(&self.mmap[byte_off] as *const u8);
         }
     }
 }

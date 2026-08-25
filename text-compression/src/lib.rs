@@ -42,16 +42,22 @@ pub use preloaded::InMemoryProteinText;
 ///
 /// Note it has 27 entries but is indexed by a 5-bit value, so codes 27..=31 are out of bounds. No
 /// encoder can emit them, but a corrupt or truncated index file can, which would panic here.
-/// Tracked as a known issue; padding the table to 32 entries would remove both the panic and the
-/// bounds check from the hot path.
+/// A known limitation, with no tracking issue filed for it; padding the table to 32 entries would
+/// remove both the panic and the bounds check from the hot path.
 pub const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
 /// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value,
 /// or `None` if `text_length * 5` does not fit in a `usize`.
 ///
-/// Rounded up to whole `u64` words, matching how `bitarray` allocates. Both mmap readers use this
-/// to bounds-check a declared text length against the actual file size before mapping it, so it
-/// must stay in step with `BitArray::<5>::with_capacity`.
+/// Rounded up to whole `u64` words, matching how `bitarray` allocates, so it must stay in step
+/// with `BitArray::<5>::with_capacity`.
+///
+/// Every reader of the format goes through it. The two mmap readers —
+/// [`crate::MmapBackedProteinText`] and `sa_mappings::proteins::mmap` — check a declared text
+/// length against the real file size with it *after* mapping the file, not before;
+/// [`crate::InMemoryProteinText`]'s `read_binary` uses it to bound the reader it hands to
+/// `bitarray`; and [`ProteinTextBackend::touch_all_pages`] uses it to find where the text's own
+/// section of a shared file ends.
 ///
 /// It is fallible because the length it is handed comes straight out of an untrusted file header,
 /// and a validator must not fail on the very input it exists to reject. `text_length * 5`
@@ -62,13 +68,32 @@ pub fn bit_array_byte_size(text_length: usize) -> Option<usize> {
     Some(text_length.checked_mul(5)?.div_ceil(64) * 8)
 }
 
-/// Full access interface for protein text backends.
+/// What the index needs from a protein text, whichever backend is holding it.
+///
+/// Implemented by [`InMemoryProteinText`] and [`MmapBackedProteinText`]. Everything in the
+/// workspace that reads the text is generic over this trait, which is what lets a build choose a
+/// backend by naming a type rather than by branching.
+///
+/// Only [`Self::get`], [`Self::len`] and [`Self::prefetch_at`] differ per backend; the iteration
+/// and slicing helpers are provided in terms of them, and [`Self::touch_all_pages`] defaults to a
+/// no-op for a backend that already owns its memory.
 pub trait ProteinTextBackend {
     /// Returns the ASCII residue at `index`, decoded from its 5-bit code.
     ///
     /// # Panics
     ///
-    /// If `index` is past the end of the text.
+    /// Eventually, for an index far enough past the end — but **not** at the first such index, so
+    /// this is not a bounds check. Both backends locate the `u64` word holding the residue and
+    /// index *that*, so an index landing in the zero padding of the final word decodes to the
+    /// first alphabet entry (`A`) and returns normally.
+    ///
+    /// [`crate::MmapBackedProteinText`] is looser still. `sa-mappings` builds one over the whole
+    /// of `proteins.bin`, where the metadata section starts immediately after the text, so an
+    /// out-of-range read there decodes metadata bytes as residues for the entire rest of the
+    /// file before it reaches the end of the mapping and panics.
+    ///
+    /// Both implementations open with a `debug_assert!`, so a debug build does catch the first
+    /// index past the end. A release build returns the garbage described above.
     fn get(&self, index: usize) -> u8;
 
     /// Number of residues in the text, including separators and the terminator.
@@ -126,13 +151,18 @@ pub struct ProteinTextSlice<'a, T: ProteinTextBackend> {
 }
 
 impl<'a, T: ProteinTextBackend> ProteinTextSlice<'a, T> {
-    /// Borrows `start..end` (half-open) of `text`. Bounds are not checked here; an out-of-range
-    /// window panics when read.
+    /// Borrows `start..end` (half-open) of `text`.
+    ///
+    /// Bounds are not checked here, and reading an out-of-range window is not reliably a panic
+    /// either — see [`ProteinTextBackend::get`] for what such a read actually does.
     pub fn new(text: &'a T, start: usize, end: usize) -> Self {
         Self { text, start, end }
     }
 
     /// Returns the residue at `index`, counted from the start of the slice.
+    ///
+    /// Inherits [`ProteinTextBackend::get`]'s behaviour past the end of the text, which is not a
+    /// bounds check; a window built out of range reads garbage rather than panicking.
     pub fn get(&self, index: usize) -> u8 {
         self.text.get(self.start + index)
     }

@@ -31,6 +31,12 @@ impl InMemoryProteinText {
 
     /// Encodes `input_string`, one residue per character.
     ///
+    /// The input is assumed to be ASCII, and nothing here enforces it: the allocation is sized
+    /// from `str::len` (bytes) while the loop walks `chars()` (code points), and each `char` is
+    /// narrowed with `as u8`. Non-ASCII input therefore does *not* reliably hit the panic below —
+    /// `'ł'` (U+0142) narrows to `0x42`, a perfectly valid `'B'`, and is encoded silently. Use
+    /// [`Self::from_vec`] for anything not known to be ASCII.
+    ///
     /// # Panics
     ///
     /// If any character is outside the alphabet in [`crate::BIT5_TO_CHAR`].
@@ -94,6 +100,9 @@ impl InMemoryProteinText {
 impl ProteinTextBackend for InMemoryProteinText {
     #[inline]
     fn get(&self, index: usize) -> u8 {
+        // Not redundant with `bitarray`'s own bounds check: that one indexes the backing *word*
+        // slice, so it lets an index in the final word's zero padding through. See the trait.
+        debug_assert!(index < self.bit_array.len(), "residue index {index} is past the end of the text");
         BIT5_TO_CHAR[self.bit_array.get(index) as usize]
     }
 
@@ -136,6 +145,12 @@ impl WriteBinary for InMemoryProteinText {
     }
 }
 
+/// Reads the format documented on the [`WriteBinary`] impl above, validating the header against
+/// what the file actually holds.
+///
+/// [`crate::MmapBackedProteinText`]'s `read_binary_mmap` is the sibling that must reject exactly
+/// the same files; `tests::both_backends_reject_the_same_damaged_text_files` pins the two
+/// together.
 impl ReadBinary for InMemoryProteinText {
     fn read_binary<R: BufRead>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
         let mut buf8 = [0u8; 8];

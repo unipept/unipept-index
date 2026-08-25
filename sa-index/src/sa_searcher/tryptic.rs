@@ -161,11 +161,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     before == SEPARATION_CHARACTER || ((before == b'K' || before == b'R') && first_not_proline)
                 };
 
-                // C-terminus. `text[match_end]` answers protein-end and proline-block at once.
-                n_term_ok && {
-                    let after = text.get(match_end);
-                    after == TERMINATION_CHARACTER || after == SEPARATION_CHARACTER || (last_is_kr && after != b'P')
-                }
+                // C-terminus. Delegated rather than repeated: this used to be an inline copy of
+                // `check_tryptic_c_term`'s body *without* its `match_end >= text.len()` guard, so
+                // the two halves of the same predicate disagreed about the end of the text and
+                // this one panicked there. `#[inline]` keeps it a single read either way.
+                n_term_ok && self.check_tryptic_c_term(text, match_end, last_is_kr)
             }
             // Zero-length query: `match_end == match_start`, so the peptide has no character to
             // stand in for either read and the original formulation is the only correct one.
@@ -178,9 +178,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Checks only the C-terminal half of the tryptic predicate.
     ///
-    /// Used by the left-extended search path, where the N-terminal half holds by construction:
-    /// the search string was `X + peptide` for `X` in {K, R, separator}, so the character before
-    /// the match *is* `X`. Nothing to read and nothing to check.
+    /// Called by [`Self::check_tryptic_boundaries`] for its second conjunct, and directly by the
+    /// left-extended search path, where the N-terminal half holds by construction: the search
+    /// string was `X + peptide` for `X` in {K, R, separator}, so the character before the match
+    /// *is* `X`. Nothing to read and nothing to check.
     ///
     /// `last_is_kr` is the query-invariant stand-in for `text[match_end - 1]` — see
     /// [`TrypticQuery`] for why the substitution is sound.
@@ -199,6 +200,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// {12, 25, 38, 51}, plus `len % 64 == 0`), while the mmap one reads whatever sits inside the
     /// page-rounded mapping and can return *either* verdict — the first two clauses test `after`
     /// directly, so a stray separator or terminator byte makes the predicate accept.
+    ///
+    /// The guard has to live *here* rather than at each call site, because it is exactly what the
+    /// inline copy in [`Self::check_tryptic_boundaries`] was missing: the extended path was fixed
+    /// and the normal path was not, and nothing tested the pair together.
     ///
     /// One past the last residue is the end of the final protein, so it is reported as a valid
     /// C-terminal cut, symmetric with [`Searcher::check_start_of_protein`] treating index 0 as a
@@ -244,6 +249,38 @@ mod tests {
             // symmetric with `check_start_of_protein(0)`. Neither argument may panic.
             assert!(searcher.check_tryptic_c_term(t, t.len(), true), "len {len}, last_is_kr");
             assert!(searcher.check_tryptic_c_term(t, t.len(), false), "len {len}, not kr");
+        }
+    }
+
+    /// The other half of the same bound, on the other entry point.
+    ///
+    /// `check_tryptic_c_term` guards `match_end >= text.len()`; `check_tryptic_boundaries` carried
+    /// an inline copy of that read that did not, so the normal search path panicked at the end of
+    /// the text on exactly the lengths the sibling test pins — the extended path had been fixed
+    /// and this one had not. Asserting the two agree, rather than just that neither panics, is
+    /// what stops them drifting apart again.
+    #[test]
+    fn test_boundary_check_is_bounded_at_end_of_text() {
+        for len in [12usize, 25, 38, 51, 64] {
+            let text = format!("{}$", "A".repeat(len - 1));
+            assert_eq!(text.len(), len);
+
+            let searcher = searcher_over_text(&text, 1);
+            let t = searcher.proteins.text();
+            assert_eq!(t.len(), len, "fixture length must survive the builder");
+
+            for last_is_kr in [true, false] {
+                for first_not_proline in [true, false] {
+                    let query = TrypticQuery::On { first_not_proline, last_is_kr };
+                    // `match_start == 0` is a protein start, so the N-terminal conjunct holds and
+                    // the verdict is the C-terminal one alone — which is what must not panic.
+                    assert_eq!(
+                        searcher.check_tryptic_boundaries(t, 0, t.len(), query),
+                        searcher.check_tryptic_c_term(t, t.len(), last_is_kr),
+                        "len {len}, last_is_kr {last_is_kr}, first_not_proline {first_not_proline}"
+                    );
+                }
+            }
         }
     }
 
