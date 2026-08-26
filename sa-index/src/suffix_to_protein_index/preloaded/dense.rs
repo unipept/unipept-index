@@ -4,7 +4,7 @@ use std::{
 };
 
 use binary_traits::WriteBinary;
-use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use protein_metadata::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
 use super::super::SuffixToProteinMappingBackend;

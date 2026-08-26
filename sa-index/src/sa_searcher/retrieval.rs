@@ -23,7 +23,7 @@
 //! Hence the shape: pass 1 issues hints for a whole batch, pass 2 consumes it once the loads are
 //! in flight. The lookahead distance is `RETRIEVAL_PREFETCH_DISTANCE`.
 
-use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
+use protein_metadata::{ProteinRef, ProteinsBackend};
 
 use super::{RETRIEVAL_PREFETCH_DISTANCE, Searcher};
 use crate::{Nullable, array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};

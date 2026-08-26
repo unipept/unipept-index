@@ -5,7 +5,7 @@
 //! a mapped file are in [`mmap::test_utils`](super::mmap::test_utils) instead.
 
 use binary_traits::WriteBinary;
-use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use protein_metadata::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
 use super::SuffixToProteinMappingBackend;

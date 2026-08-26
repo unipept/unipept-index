@@ -290,7 +290,7 @@ mod tests {
     /// implicitly and exactly.
     #[test]
     fn structures_from_different_builds_are_rejected() {
-        use sa_mappings::proteins::{InMemoryProteins, Protein};
+        use protein_metadata::{InMemoryProteins, Protein};
         use text_compression::InMemoryProteinText;
 
         use crate::{
@@ -362,7 +362,7 @@ mod tests {
         let small_text = InMemoryProteinText::from_string("AC$");
         let small_sa = InMemorySA::Original(OriginalSA(vec![2, 0, 1], 1));
         let stp = BitVecSuffixToProtein::new(&small_text);
-        let proteins = sa_mappings::proteins::InMemoryProteins::new(small_text, vec![sa_mappings::proteins::Protein {
+        let proteins = protein_metadata::InMemoryProteins::new(small_text, vec![protein_metadata::Protein {
             uniprot_id: "P0".to_string(),
             taxon_id: 1,
             functional_annotations: vec![]
@@ -377,7 +377,7 @@ mod tests {
         let sa = InMemorySA::Original(OriginalSA(vec![4, 2, 0, 3, 1], 1));
         let good = KmerTable::build_from_sa(&sa, &text, 2);
         let stp = BitVecSuffixToProtein::new(&text);
-        let proteins = sa_mappings::proteins::InMemoryProteins::new(text, vec![sa_mappings::proteins::Protein {
+        let proteins = protein_metadata::InMemoryProteins::new(text, vec![protein_metadata::Protein {
             uniprot_id: "P0".to_string(),
             taxon_id: 1,
             functional_annotations: vec![]

@@ -15,6 +15,9 @@ coverage:
       memory-hints:
         flags:
           - memory-hints
+      protein-metadata:
+        flags:
+          - protein-metadata
       sa-builder:
         flags:
           - sa-builder
@@ -22,9 +25,6 @@ coverage:
         target: 80%
         flags:
           - sa-index
-      sa-mappings:
-        flags:
-          - sa-mappings
       sa-server:
         flags:
           - sa-server
@@ -50,6 +50,10 @@ flags:
     paths:
       - memory-hints
     carryforward: true
+  protein-metadata:
+    paths:
+      - protein-metadata
+    carryforward: true
   sa-builder:
     paths:
       - sa-builder
@@ -57,10 +61,6 @@ flags:
   sa-index:
     paths:
       - sa-index
-    carryforward: true
-  sa-mappings:
-    paths:
-      - sa-mappings
     carryforward: true
   sa-server:
     paths:

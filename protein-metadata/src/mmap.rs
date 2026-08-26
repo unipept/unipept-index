@@ -1,6 +1,6 @@
 //! Protein metadata borrowed from a memory mapping.
 //!
-//! The counterpart to [`super::preloaded`]: same file, but the accession strings and the encoded
+//! The counterpart to [`crate::preloaded`]: same file, but the accession strings and the encoded
 //! annotations are returned as slices into the mapping instead of owned `String`s and `Vec`s.
 //! That is what keeps a multi-gigabyte protein table servable in bounded RSS.
 //!
@@ -20,7 +20,7 @@ use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap};
 use memmap2::Mmap;
 use text_compression::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, bit_array_byte_size};
 
-use super::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
+use crate::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
 
 /// Protein table borrowed from a memory mapping.
 ///
@@ -48,7 +48,7 @@ pub struct MmapBackedProteins<T> {
 
 /// Field layout of one fixed-size entry in the protein table.
 ///
-/// Must stay in lockstep with the writer in [`super::preloaded`], which emits these fields in
+/// Must stay in lockstep with the writer in [`crate::preloaded`], which emits these fields in
 /// this order. The two are independent statements of the same 16-byte layout; what catches a
 /// drift between them is the `matches_the_preloaded_backend_field_for_field` test below, which
 /// writes a file with one backend and reads it back with the other.
@@ -150,7 +150,7 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
     /// than a panic; only an index far enough past the end to leave the mapping entirely trips
     /// either the assert or the slice. The preloaded sibling does panic on the same index, so the
     /// two backends disagree here and callers must not rely on either. `load_from_tsv` in
-    /// [`super::preloaded`] rejects the input that used to produce such an index.
+    /// [`crate::preloaded`] rejects the input that used to produce such an index.
     ///
     /// # Why this is not checked here
     ///
@@ -351,7 +351,7 @@ impl ReadBinaryMmap for MmapBackedProteins<InMemoryProteinText> {
 /// that its text still lives in the mapping: something has to hold the file open, and the metadata
 /// is what gets copied out. `read_metadata_section` is the same parser the fully-preloaded reader
 /// uses, applied to the mapping instead of a file handle.
-impl ReadBinaryMmap for super::InMemoryProteins<MmapBackedProteinText> {
+impl ReadBinaryMmap for crate::InMemoryProteins<MmapBackedProteinText> {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let mmap = map_file(path)?;
         let l = layout(&mmap)?;
@@ -380,7 +380,7 @@ impl ReadBinaryMmap for super::InMemoryProteins<MmapBackedProteinText> {
 // `proteins.bin` holds the text and the metadata in one file, so it has to be *mapped* whenever
 // either section is mapped — not merely when the metadata is. The odd one out is the last impl
 // below, whose metadata is owned; the fourth pairing, with nothing mapped, takes the owned route
-// in `super::preloaded`. This used to be a `#[cfg]` predicate spelled out at every loader.
+// in `crate::preloaded`. This used to be a `#[cfg]` predicate spelled out at every loader.
 
 impl LoadIndex for MmapBackedProteins<MmapBackedProteinText> {
     fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
@@ -394,7 +394,7 @@ impl LoadIndex for MmapBackedProteins<InMemoryProteinText> {
     }
 }
 
-impl LoadIndex for super::InMemoryProteins<MmapBackedProteinText> {
+impl LoadIndex for crate::InMemoryProteins<MmapBackedProteinText> {
     fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
         Self::read_binary_mmap(path)
     }
@@ -448,10 +448,10 @@ mod tests {
     use text_compression::{ProteinTextBackend as _, bit_array_byte_size};
 
     use super::{InMemoryProteinText, MmapBackedProteinText, MmapBackedProteins};
-    use crate::proteins::{
+    use crate::{
         ProteinsBackend,
         preloaded::InMemoryProteins,
-        test_fixtures::{TEST_PROTEINS, write_database_file}
+        test_utils::{TEST_PROTEINS, write_database_file}
     };
 
     /// The four ways `proteins.bin` can be loaded, named once so the tests read as prose.

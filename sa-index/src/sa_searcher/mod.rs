@@ -24,8 +24,8 @@ mod test_utils;
 mod tryptic;
 mod tuning;
 
+use protein_metadata::ProteinsBackend;
 pub use results::{BoundSearchResult, SearchAllSuffixesResult};
-use sa_mappings::proteins::ProteinsBackend;
 use text_compression::{ProteinTextBackend, ProteinTextSlice};
 use tryptic::TrypticQuery;
 pub(crate) use tuning::{
@@ -572,7 +572,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(test)]
 mod tests {
-    use sa_mappings::proteins::ProteinsBackend as _;
+    use protein_metadata::ProteinsBackend as _;
 
     use super::{
         BoundSearch::{Maximum, Minimum},

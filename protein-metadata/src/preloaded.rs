@@ -6,7 +6,7 @@
 //!
 //! The struct is generic over its text backend, so "owned metadata" does not imply "owned text" —
 //! see [`super`] for the two axes. The reader here handles the both-owned case; the pairings that
-//! involve the mapping live in [`super::mmap`], which has the mapping to hand.
+//! involve the mapping live in [`crate::mmap`], which has the mapping to hand.
 
 use std::{
     error::Error,
@@ -21,7 +21,7 @@ use bytelines::ByteLines;
 use fa_compression::algorithm1::encode;
 use text_compression::{InMemoryProteinText, ProteinTextBackend};
 
-use super::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use crate::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
 /// All protein metadata held in owned memory, plus the concatenated text.
 ///
@@ -598,7 +598,7 @@ mod tests {
     use text_compression::ProteinTextBackend as _;
 
     use super::*;
-    use crate::proteins::test_fixtures::{TEST_PROTEINS, write_database_file};
+    use crate::test_utils::{TEST_PROTEINS, write_database_file};
 
     #[test]
     fn test_new_protein() {

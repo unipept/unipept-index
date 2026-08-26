@@ -34,7 +34,7 @@
 //! [`ActiveProteins`] instantiates the protein struct with [`ActiveText`]: the text axis is already
 //! resolved by the time it is substituted, so the two compose without a case per combination.
 //! Which reader that pairing needs is not decided here — it is the `LoadIndex` implementation on
-//! the pairing itself; see `sa_mappings::proteins::mmap`.
+//! the pairing itself; see `protein_metadata::mmap`.
 
 // Every type below is named by its full path rather than imported: only one arm of each pair is
 // compiled, so an import would be unused in the configuration that does not take it.
@@ -55,10 +55,10 @@ pub type ActiveText = text_compression::InMemoryProteinText;
 
 /// The protein-metadata backend this build uses, holding [`ActiveText`].
 #[cfg(all(feature = "mmap", not(feature = "preloaded-proteins")))]
-pub type ActiveProteins = sa_mappings::proteins::MmapBackedProteins<ActiveText>;
+pub type ActiveProteins = protein_metadata::MmapBackedProteins<ActiveText>;
 /// The protein-metadata backend this build uses, holding [`ActiveText`].
 #[cfg(any(not(feature = "mmap"), feature = "preloaded-proteins"))]
-pub type ActiveProteins = sa_mappings::proteins::InMemoryProteins<ActiveText>;
+pub type ActiveProteins = protein_metadata::InMemoryProteins<ActiveText>;
 
 /// The suffix-to-protein mapping backend this build uses.
 #[cfg(all(feature = "mmap", not(feature = "preloaded-mapping")))]

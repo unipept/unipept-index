@@ -12,7 +12,7 @@
 //! * [`tryptic_extension_chars`] lets the *search* find left-extended matches directly, instead of
 //!   finding every match and filtering afterwards. `scalar.rs` and `batched.rs` drive that.
 
-use sa_mappings::proteins::{ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
 use super::Searcher;
@@ -220,7 +220,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
 #[cfg(test)]
 mod tests {
-    use sa_mappings::proteins::ProteinsBackend as _;
+    use protein_metadata::ProteinsBackend as _;
     use text_compression::ProteinTextBackend as _;
 
     use super::TrypticQuery;

@@ -15,13 +15,13 @@ use std::{
 
 use binary_traits::WriteBinary;
 use clap::Parser;
+use protein_metadata::{InMemoryProteins, ProteinsBackend as _};
 use sa_builder::{Arguments, SuffixToProteinMappingStyle, build_ssa};
 use sa_index::{
     KmerTable,
     array::{dump_compressed_suffix_array, dump_suffix_array},
     suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
 };
-use sa_mappings::proteins::{InMemoryProteins, ProteinsBackend as _};
 use text_compression::ProteinTextBackend as _;
 
 fn main() {

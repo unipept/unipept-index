@@ -131,7 +131,7 @@ mod imp {
 }
 
 pub use imp::{Counter, Timer};
-use sa_mappings::proteins::ProteinsBackend;
+use protein_metadata::ProteinsBackend;
 
 use super::Searcher;
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};

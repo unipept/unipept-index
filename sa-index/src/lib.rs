@@ -20,7 +20,7 @@
 //! |---|---|---|
 //! | suffix array | [`array::InMemorySA`] | [`array::MmapBackedSA`] |
 //! | protein text | `text_compression::InMemoryProteinText` | `text_compression::MmapBackedProteinText` |
-//! | protein metadata | `sa_mappings::proteins::InMemoryProteins<T>` | `sa_mappings::proteins::MmapBackedProteins<T>` |
+//! | protein metadata | `protein_metadata::InMemoryProteins<T>` | `protein_metadata::MmapBackedProteins<T>` |
 //! | suffix→protein | [`suffix_to_protein_index::InMemorySuffixToProteinMapping`] | [`suffix_to_protein_index::MmapBackedSuffixToProteinMapping`] |
 //!
 //! The choice is made once per build, by the binary: `sa-server`'s `backends` module resolves four
@@ -38,7 +38,7 @@
 //!
 //! * The protein text and the protein metadata share one file (`proteins.bin`) but are separate
 //!   axes, which is why the protein structs are generic over their text type. All four pairings
-//!   load from the same file; see `sa_mappings::proteins::mmap`.
+//!   load from the same file; see `protein_metadata::mmap`.
 //! * Which reader a structure needs is not a decision any caller makes — it is the `LoadIndex`
 //!   implementation on that concrete type. That is what lets a test build all sixteen combinations
 //!   without a single `#[cfg]`; see `sa_searcher::backend_agreement`, which asserts they answer
@@ -75,7 +75,7 @@
 //!
 //! One consequence shows up everywhere and is easy to undo by accident: because the workspace
 //! sets no `[profile.release]`, there is **no cross-crate LTO**, so a call into `bitarray`,
-//! `text-compression`, `sa-mappings` or `memory-hints` is a real cross-crate call unless the callee's
+//! `text-compression`, `protein-metadata` or `memory-hints` is a real cross-crate call unless the callee's
 //! body reaches the caller's codegen unit — which happens only when the callee is `#[inline]` or
 //! generic (both export their MIR). Those attributes on the small getters are load-bearing, not
 //! decoration.
@@ -195,7 +195,7 @@ pub mod suffix_to_protein_index;
 
 pub use array::SuffixArrayBackend;
 pub use kmer_table::KmerTable;
-pub use sa_mappings::proteins::ProteinsBackend;
+pub use protein_metadata::ProteinsBackend;
 
 /// Custom trait implemented by types that have a value that represents NULL
 pub trait Nullable<T> {

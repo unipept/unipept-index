@@ -1,11 +1,18 @@
-//! Protein metadata, in either of two backends.
+//! Protein metadata: accessions, taxon ids and functional annotations, addressed by index.
 //!
-//! Submodules:
+//! The suffix array resolves a peptide to positions in the concatenated protein text; the
+//! suffix-to-protein mapping turns those positions into protein indices; and this crate turns an
+//! index into the metadata a search result actually reports. The text itself is the other half of
+//! the same `proteins.bin` and lives in `text-compression`.
+//!
+//! # Two backends
+//!
 //! - [`preloaded`] — [`InMemoryProteins`], the metadata table in owned memory
 //! - [`mmap`] — [`MmapBackedProteins`], the table borrowed from a mapping
 //!
 //! Both are always compiled; callers pick by naming a type. Everything that reads protein metadata
-//! is written against [`ProteinsBackend`].
+//! is written against [`ProteinsBackend`], and both backends hand out [`ProteinRef`], which borrows
+//! rather than copies — so they differ only in where the bytes live.
 //!
 //! # Two independent axes
 //!
@@ -19,11 +26,12 @@
 //! trait they implement, the [`Protein`] / [`ProteinRef`] pair a lookup returns, and the
 //! [`SEPARATION_CHARACTER`] and [`TERMINATION_CHARACTER`] delimiters that give the concatenated
 //! text its structure.
+#![warn(missing_docs)]
 
 pub mod mmap;
 pub mod preloaded;
 #[cfg(test)]
-pub(crate) mod test_fixtures;
+pub(crate) mod test_utils;
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 use fa_compression::algorithm1::decode;

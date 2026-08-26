@@ -21,7 +21,7 @@ use std::{
 };
 
 use binary_traits::{LoadIndex, WriteBinary};
-use sa_mappings::proteins::{InMemoryProteins, MmapBackedProteins, Protein, ProteinsBackend};
+use protein_metadata::{InMemoryProteins, MmapBackedProteins, Protein, ProteinsBackend};
 use tempfile::NamedTempFile;
 use text_compression::{InMemoryProteinText, MmapBackedProteinText};
 

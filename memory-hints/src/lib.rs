@@ -31,7 +31,7 @@
 //!
 //! # Why a separate crate
 //!
-//! `text-compression`, `sa-mappings`, `sa-index` and `bitarray` all need these hints without
+//! `text-compression`, `protein-metadata`, `sa-index` and `bitarray` all need these hints without
 //! depending on one another. Both modules were previously separate crates for exactly that reason
 //! — `prefetch`, and `hugepages` inside `bitarray` — and were merged once it was clear the second
 //! had nothing to do with bit packing: four of its six call sites advise plain `Vec`s in

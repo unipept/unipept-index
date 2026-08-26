@@ -969,6 +969,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "protein-metadata"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "bytelines",
+ "fa-compression",
+ "memmap2",
+ "memory-hints",
+ "tempdir",
+ "text-compression",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1162,8 +1175,8 @@ dependencies = [
  "clap",
  "libdivsufsort-rs",
  "libsais64-rs",
+ "protein-metadata",
  "sa-index",
- "sa-mappings",
  "tempfile",
  "text-compression",
 ]
@@ -1177,24 +1190,11 @@ dependencies = [
  "fa-compression",
  "memmap2",
  "memory-hints",
+ "protein-metadata",
  "rayon",
- "sa-mappings",
  "serde",
  "serde_json",
  "tempfile",
- "text-compression",
-]
-
-[[package]]
-name = "sa-mappings"
-version = "0.1.0"
-dependencies = [
- "binary-traits",
- "bytelines",
- "fa-compression",
- "memmap2",
- "memory-hints",
- "tempdir",
  "text-compression",
 ]
 
@@ -1205,8 +1205,8 @@ dependencies = [
  "axum",
  "binary-traits",
  "clap",
+ "protein-metadata",
  "sa-index",
- "sa-mappings",
  "serde",
  "serde_json",
  "text-compression",

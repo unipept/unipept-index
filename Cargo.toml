@@ -6,10 +6,10 @@ members = [ "binary-traits",
     "fa-compression",
     "libsais64-rs",
     "memory-hints",
+    "protein-metadata",
     "sa-benchmarks",
     "sa-builder",
     "sa-index",
-    "sa-mappings",
     "sa-server",
     "text-compression"
 ]
@@ -25,9 +25,9 @@ default-members = [ "binary-traits",
     "fa-compression",
     "libsais64-rs",
     "memory-hints",
+    "protein-metadata",
     "sa-builder",
     "sa-index",
-    "sa-mappings",
     "sa-server",
     "text-compression"
 ]

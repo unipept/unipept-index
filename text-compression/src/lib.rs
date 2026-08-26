@@ -53,7 +53,7 @@ pub const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 /// with `BitArray::<5>::with_capacity`.
 ///
 /// Every reader of the format goes through it. The two mmap readers —
-/// [`crate::MmapBackedProteinText`] and `sa_mappings::proteins::mmap` — check a declared text
+/// [`crate::MmapBackedProteinText`] and `protein_metadata::mmap` — check a declared text
 /// length against the real file size with it *after* mapping the file, not before;
 /// [`crate::InMemoryProteinText`]'s `read_binary` uses it to bound the reader it hands to
 /// `bitarray`; and [`ProteinTextBackend::touch_all_pages`] uses it to find where the text's own
@@ -87,7 +87,7 @@ pub trait ProteinTextBackend {
     /// index *that*, so an index landing in the zero padding of the final word decodes to the
     /// first alphabet entry (`A`) and returns normally.
     ///
-    /// [`crate::MmapBackedProteinText`] is looser still. `sa-mappings` builds one over the whole
+    /// [`crate::MmapBackedProteinText`] is looser still. `protein-metadata` builds one over the whole
     /// of `proteins.bin`, where the metadata section starts immediately after the text, so an
     /// out-of-range read there decodes metadata bytes as residues for the entire rest of the
     /// file before it reaches the end of the mapping and panics.

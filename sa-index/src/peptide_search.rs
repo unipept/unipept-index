@@ -44,8 +44,8 @@
 //! [`Searcher`], so it can never satisfy the `'static` bound an HTTP body needs. Serialising inside
 //! the request handler is not merely an optimisation here — it is what the lifetimes require.
 
+use protein_metadata::{ProteinRef, ProteinsBackend};
 use rayon::prelude::*;
-use sa_mappings::proteins::{ProteinRef, ProteinsBackend};
 use serde::{Serialize, Serializer};
 
 use crate::{
@@ -371,7 +371,7 @@ pub fn frame_chunks(chunks: &mut Vec<Vec<u8>>) {
 #[cfg(test)]
 mod tests {
     // `ProteinsBackend` (for `proteins.text()`) comes in through `use super::*`.
-    use sa_mappings::proteins::{InMemoryProteins, Protein};
+    use protein_metadata::{InMemoryProteins, Protein};
     use text_compression::InMemoryProteinText;
 
     use super::*;

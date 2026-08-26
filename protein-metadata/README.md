@@ -1,11 +1,11 @@
 # Suffix Array Mappings
 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=sa-mappings&logo=codecov)
+![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=protein-metadata&logo=codecov)
 ![Static Badge](https://img.shields.io/badge/doc-rustdoc-blue)
 
 A suffix array search returns positions in the concatenated protein text, and the suffix-to-protein
-mapping turns those positions into protein indices. The `sa-mappings` library is the last step: it
+mapping turns those positions into protein indices. The `protein-metadata` library is the last step: it
 turns an index into the metadata a search result actually reports — the UniProt accession, the NCBI
 taxon id, and the functional annotations.
 
@@ -26,7 +26,7 @@ Both are always compiled. A caller picks a backend by naming its type:
 Both implement `proteins::ProteinsBackend` and both hand out a borrowed `ProteinRef`, so reading
 code is written once and never copies per result. The on-disk format of `proteins.bin` is
 documented at its writer, on the `impl WriteBinary for InMemoryProteins` block in
-`src/proteins/preloaded.rs`.
+`src/preloaded.rs`.
 
 ## Two axes, not one
 
@@ -43,14 +43,14 @@ the two can be chosen independently.
 | `InMemoryProteins<MmapBackedProteinText>` | owned | mapped |
 
 All four load from the same file, and every reader that needs the mapping lives in
-`src/proteins/mmap.rs`, sharing one header parser so the combinations cannot drift apart on how
+`src/mmap.rs`, sharing one header parser so the combinations cannot drift apart on how
 they bound it. The third row is the interesting one: it keeps the multi-gigabyte metadata table
 mapped while the ~190 MB text that search reads once per character compared sits in owned RAM.
 
 ## Example
 
 ```rust
-use sa_mappings::proteins::{InMemoryProteins, ProteinsBackend};
+use protein_metadata::{InMemoryProteins, ProteinsBackend};
 
 fn main() {
     let proteins = InMemoryProteins::load_from_tsv("database.tsv").unwrap();

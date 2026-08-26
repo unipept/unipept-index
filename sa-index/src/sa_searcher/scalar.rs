@@ -5,7 +5,7 @@
 
 use std::cmp::min;
 
-use sa_mappings::proteins::{ProteinsBackend, SEPARATION_CHARACTER};
+use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER};
 
 use super::{
     BoundSearch,

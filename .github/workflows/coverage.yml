@@ -43,6 +43,6 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
-          flags: binary-traits,bitarray,fa-compression,memory-hints,sa-builder,sa-index,sa-mappings,sa-server,text-compression
+          flags: binary-traits,bitarray,fa-compression,memory-hints,protein-metadata,sa-builder,sa-index,sa-server,text-compression
           verbose: true
           fail_ci_if_error: true

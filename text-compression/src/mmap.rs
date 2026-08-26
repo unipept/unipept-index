@@ -43,7 +43,7 @@ const ASSUMED_PAGE_SIZE: usize = 4096;
 /// bandwidth do the same work and take an order of magnitude apart, and without the byte count the
 /// two are indistinguishable in a report.
 ///
-/// This lives here because `sa-index` and `sa-mappings` both need it and both already depend on
+/// This lives here because `sa-index` and `protein-metadata` both need it and both already depend on
 /// this crate; it previously existed as five near-identical copies.
 pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) -> u64 {
     #[cfg(unix)]
@@ -75,7 +75,7 @@ impl MmapBackedProteinText {
     /// Borrows `len` residues packed at 5 bits each, starting `data_offset` bytes into `mmap`.
     ///
     /// The caller is responsible for having validated that the mapping is long enough; see
-    /// `read_binary_mmap`, or `sa-mappings`, which builds one of these over a shared mapping
+    /// `read_binary_mmap`, or `protein-metadata`, which builds one of these over a shared mapping
     /// after doing its own bounds checks.
     pub fn from_mmap(mmap: Arc<Mmap>, data_offset: usize, len: usize) -> Self {
         Self { mmap, data_offset, len }
@@ -169,7 +169,7 @@ impl ReadBinaryMmap for MmapBackedProteinText {
         // * Safe: `sa-builder` writes every section to a temporary sibling and renames it over the
         //   destination. A rename only unlinks the old name, so the inode a live mapping holds
         //   survives and keeps returning the bytes it was opened with. Pinned by
-        //   `sa_mappings::proteins::mmap::tests::replacing_an_index_by_rename_keeps_a_live_mapping_valid`.
+        //   `protein_metadata::mmap::tests::replacing_an_index_by_rename_keeps_a_live_mapping_valid`.
         // * Safe: `mv` a new index over the path, for the same reason.
         // * **Not safe:** `cp`, `rsync --inplace`, `> file`, or anything else that opens the
         //   destination with `O_TRUNC`. That truncates the inode the server is still mapping, and

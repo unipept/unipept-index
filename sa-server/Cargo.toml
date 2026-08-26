@@ -22,7 +22,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros"] }
 sa-index = { path = "../sa-index" }
 clap = { version = "4.5.1", features = ["derive"] }
-sa-mappings = { path = "../sa-mappings" }
+protein-metadata = { path = "../protein-metadata" }
 text-compression = { path = "../text-compression" }
 
 # Building the reference response the parity test compares against. Already in the graph via axum.

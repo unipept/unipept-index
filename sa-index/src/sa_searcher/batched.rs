@@ -28,8 +28,8 @@
 
 use std::cmp::min;
 
+use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER};
 use rayon::prelude::*;
-use sa_mappings::proteins::{ProteinsBackend, SEPARATION_CHARACTER};
 use text_compression::ProteinTextBackend;
 
 use super::{

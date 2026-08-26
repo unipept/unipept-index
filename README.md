@@ -227,7 +227,7 @@ silently ignores.
 | `sa-server` | HTTP server for testing and for serving an index directly; see the note below |
 | `sa-builder` | builds an index from a protein TSV |
 | `sa-index` | the search itself: suffix array, k-mer table, suffix→protein mapping |
-| `sa-mappings` | protein metadata — accessions, taxa, annotations |
+| `protein-metadata` | protein metadata — accessions, taxa, annotations |
 | `text-compression` | the concatenated protein text, packed at 5 bits per residue |
 | `bitarray` | dense arrays of fixed-width values |
 | `fa-compression` | encoding for functional annotations |

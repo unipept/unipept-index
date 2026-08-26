@@ -18,7 +18,7 @@
 //! preloaded types for exactly this reason: one writer per structure, whichever backend reads it
 //! later.
 //!
-//! These traits live in their own crate so that `sa-index`, `sa-mappings` and `text-compression`
+//! These traits live in their own crate so that `sa-index`, `protein-metadata` and `text-compression`
 //! can implement them for each other's types without a dependency cycle. Each of those crates
 //! depends on this one directly and names the traits as `binary_traits::…`, so that the crate a
 //! trait is imported from is the crate that defines it.
@@ -93,7 +93,7 @@ pub trait ReadBinaryMmap: Sized {
 /// `proteins.bin` holds both the protein text and the metadata table, so it must be *mapped*
 /// whenever either section is mapped, not merely when the metadata is. That is now expressed by
 /// which of the four `InMemory`/`MmapBacked` protein pairings implements this trait through which
-/// route; see `sa_mappings::proteins::mmap`.
+/// route; see `protein_metadata::mmap`.
 pub trait LoadIndex: Sized {
     /// Loads the structure stored at `path`.
     fn load(path: &Path) -> Result<Self, Box<dyn Error>>;
