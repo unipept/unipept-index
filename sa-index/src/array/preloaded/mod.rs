@@ -8,7 +8,9 @@ use std::{error::Error, io::BufRead};
 use binary_traits::{LoadIndex, ReadBinary, WriteBinary};
 use bitarray::DynBitArrayRangeIter;
 
+/// The bit-packed owned-memory packing.
 pub mod compressed;
+/// The one-`i64`-per-entry owned-memory packing.
 pub mod original;
 #[cfg(test)]
 pub(super) mod test_utils;
@@ -32,7 +34,9 @@ macro_rules! dispatch {
 /// Wraps whichever packing a file holds, picked at load time from its `bits_per_value` header
 /// field.
 pub enum InMemorySA {
+    /// A 64-bit header: one plain `i64` per entry.
     Original(OriginalSA),
+    /// Any narrower header: entries bit-packed at the declared width.
     Compressed(CompressedSA)
 }
 
@@ -43,7 +47,9 @@ pub enum InMemorySA {
 /// the index, so the branch predicts perfectly, but it is a branch, and the mmap iterator has no
 /// equivalent. Anything that widens this into real work per entry is a regression.
 pub enum InMemoryRangeIter<'a> {
+    /// Iterating an [`InMemorySA::Original`] array.
     Original(OriginalRangeIter<'a>),
+    /// Iterating an [`InMemorySA::Compressed`] array.
     Compressed(DynBitArrayRangeIter<'a>)
 }
 
@@ -364,7 +370,8 @@ mod tests {
     }
 
     /// The two storage backends read the same bytes and must answer identically; the searcher is
-    /// written against whichever one it is handed. `sa_searcher::backend_agreement` makes the same
+    /// written against whichever one it is handed.
+    /// `sa_searcher::tests::every_backend_combination_returns_identical_results` makes the same
     /// check end to end, but this one localises a failure to the array.
     #[test]
     fn agrees_with_the_mmap_backend() {

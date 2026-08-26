@@ -10,7 +10,7 @@ use super::CompressionTable;
 ///
 /// # Arguments
 ///
-/// * `input` - The byte slice to decode. Must be the output of [`encode`](super::encode) against
+/// * `input` - The byte slice to decode. Must be the output of [`encode()`](super::encode()) against
 ///   **this same table**; the bytes carry no way to check that.
 /// * `compression_table` - The compression table used for decoding. **Consumed**: the table is
 ///   taken by value, so decoding twice against the same table needs two tables.

@@ -31,8 +31,12 @@
 //! Sixteen combinations are constructible, of which the binaries expose nine. The point is that
 //! the best place for one structure is not the best place for another — the text is the hottest
 //! and the metadata table the biggest — so, for instance, `--features mmap,preloaded-text` keeps
-//! the multi-gigabyte index mapped while the ~190 MB text that search reads once per character
-//! compared sits in owned RAM.
+//! the multi-gigabyte index mapped while the text that search reads once per character compared
+//! sits in owned RAM: ~190 MB over the ~300 M-residue reference database, packed at 5 bits.
+//!
+//! Two database scales appear throughout these docs and are not interchangeable. The ~300 M-residue
+//! one is the reference for every per-structure size quoted in this crate; the full UniProt index
+//! of the memory-ceiling section below is roughly 200x larger, and is always named as such.
 //!
 //! Consequences worth knowing before reading further:
 //!
@@ -41,8 +45,8 @@
 //!   load from the same file; see `protein_metadata::mmap`.
 //! * Which reader a structure needs is not a decision any caller makes — it is the `LoadIndex`
 //!   implementation on that concrete type. That is what lets a test build all sixteen combinations
-//!   without a single `#[cfg]`; see `sa_searcher::backend_agreement`, which asserts they answer
-//!   identically.
+//!   without a single `#[cfg]`; see `sa_searcher::tests::every_backend_combination_returns_identical_results`,
+//!   which asserts they answer identically.
 //! * The owned half owns the `WriteBinary` implementations that produce the files the mapped half
 //!   reads, which is why `sa-builder` never mentions a backend.
 //! * The two halves are kept deliberately separate rather than sharing code, so that a tuning
@@ -199,6 +203,7 @@ pub use protein_metadata::ProteinsBackend;
 
 /// Custom trait implemented by types that have a value that represents NULL
 pub trait Nullable<T> {
+    /// The sentinel value standing for "no value".
     const NULL: T;
 
     /// Returns whether the value is NULL.

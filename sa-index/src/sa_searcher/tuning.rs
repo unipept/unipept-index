@@ -40,7 +40,7 @@
 //! deliberately more work than editing a number here — a knob that no measurement can move is a
 //! knob that costs more to carry than to rebuild.
 
-/// Peptides interleaved per rayon task in `search_all_matching_suffixes`, for cross-query
+/// Peptides interleaved per rayon task in `search_all_matching_suffixes_batched`, for cross-query
 /// memory-level parallelism.
 ///
 /// A suffix-array probe is a random read whose address depends on the previous probe's result, so

@@ -9,8 +9,11 @@ use std::{error::Error, path::Path};
 use binary_traits::{LoadIndex, ReadBinaryMmap};
 use memmap2::Mmap;
 
+/// The bit-vector-plus-rank representation, read from a mapping.
 pub mod bitvec;
+/// The one-`u32`-per-position representation, read from a mapping.
 pub mod dense;
+/// The protein-start-positions representation, read from a mapping.
 pub mod sparse;
 #[cfg(test)]
 pub(super) mod test_utils;
@@ -21,8 +24,11 @@ pub use sparse::MmapSparseSuffixToProtein;
 
 /// Wraps whichever of the three mappings a file holds, picked at load time from its type byte.
 pub enum MmapBackedSuffixToProteinMapping {
+    /// Type byte `0x00`: one `u32` per text position.
     Dense(MmapDenseSuffixToProtein),
+    /// Type byte `0x01`: protein start positions, binary-searched.
     Sparse(MmapSparseSuffixToProtein),
+    /// Type byte `0x02`: one bit per text position, with a two-level rank structure.
     BitVec(MmapBitVecSuffixToProtein)
 }
 

@@ -68,69 +68,69 @@ use sysinfo::{Pid, System};
 /// Schema version — increment when the output JSON format changes.
 /// v2: matrix records aggregate `runs` reps into one line and carry a `stats` spread.
 /// v3: every `SearchTuning` field is recorded in `config` (was previously implicit/default),
-///     plus a `phase` tag so records from different sweeps are groupable in one jsonl file;
-///     `result` gains `candidates_examined` / `candidates_accepted`.
+///   plus a `phase` tag so records from different sweeps are groupable in one jsonl file;
+///   `result` gains `candidates_examined` / `candidates_accepted`.
 /// v12: `SearchTuning` is gone — its fields are compile-time constants now — so `config.tuning`
-///     and `config.tuning_defaults` are no longer written. A reader that wants to know what a
-///     record ran at reads the commit, not the record.
+///   and `config.tuning_defaults` are no longer written. A reader that wants to know what a
+///   record ran at reads the commit, not the record.
 /// v4: the OFAT and confirm sweeps were retired once they had settled which knobs matter, so
-///     `config.ofat_baseline` / `config.ofat_knob` are gone and `config.phase` is now only
-///     "single" (non-matrix CLI run) or "grid" (matrix sweep).
+///   `config.ofat_baseline` / `config.ofat_knob` are gone and `config.phase` is now only
+///   "single" (non-matrix CLI run) or "grid" (matrix sweep).
 /// v5: storage is chosen per structure, so the single `use_mmap` bool is replaced by
-///     `sa_storage` / `text_storage` / `proteins_storage` / `mapping_storage`, each
-///     "mmap" or "preloaded".
+///   `sa_storage` / `text_storage` / `proteins_storage` / `mapping_storage`, each
+///   "mmap" or "preloaded".
 /// v6: records carry a `startup` section timing each structure's load and the warmup pass.
-///     Preloading a structure moves cost from steady-state page faults to startup, and that
-///     trade was previously invisible.
+///   Preloading a structure moves cost from steady-state page faults to startup, and that
+///   trade was previously invisible.
 /// v7: `result` gains `major_faults` / `minor_faults`, counted across the timed region. They are
-///     what separates "slow because it is waiting on I/O" from "slow for some other reason" when
-///     the index does not fit in RAM.
+///   what separates "slow because it is waiting on I/O" from "slow for some other reason" when
+///   the index does not fit in RAM.
 /// v8: records carry `suite` and a free-form `dims` map, both supplied by the caller. A sweep
-///     dimension this binary knows nothing about — a cgroup ceiling, a `RAYON_NUM_THREADS` value,
-///     which storage arm was built — used to survive only in the file name (`c167_pprot_t96.jsonl`),
-///     so every driver script needed its own file-name parser and every one of them could disagree
-///     about what a run meant. Now the coordinates travel inside the record.
+///   dimension this binary knows nothing about — a cgroup ceiling, a `RAYON_NUM_THREADS` value,
+///   which storage arm was built — used to survive only in the file name (`c167_pprot_t96.jsonl`),
+///   so every driver script needed its own file-name parser and every one of them could disagree
+///   about what a run meant. Now the coordinates travel inside the record.
 /// v10: matrix grids can be supplied by the driver (`--grid-file`), so `config` gains `sweep` and
-///     `grid_slot`. `sweep` names the block of the suite a cell came from; two blocks may measure
-///     the same configuration at different rep counts, and comparing across them would compare
-///     precisions rather than configurations. `grid_slot` distinguishes repeats of one
-///     configuration inside a single process — the drift cadence writes the same tuning point
-///     several times, and keyed on `config` alone those records would collapse into one.
+///   `grid_slot`. `sweep` names the block of the suite a cell came from; two blocks may measure
+///   the same configuration at different rep counts, and comparing across them would compare
+///   precisions rather than configurations. `grid_slot` distinguishes repeats of one
+///   configuration inside a single process — the drift cadence writes the same tuning point
+///   several times, and keyed on `config` alone those records would collapse into one.
 /// v11: `peptide_source` is the name the SUITE gave the file, not the file's stem, when a grid cell
-///     supplies one (`bucket`). A profile maps `mixed` to whatever that machine calls the file, so
-///     keying a report on the stem meant the same bucket was called `mixed` on one box and
-///     `peptides_5_50` on another — and a baseline comparison across two such boxes silently
-///     matched nothing. Cells without a `bucket` still record the stem.
+///   supplies one (`bucket`). A profile maps `mixed` to whatever that machine calls the file, so
+///   keying a report on the stem meant the same bucket was called `mixed` on one box and
+///   `peptides_5_50` on another — and a baseline comparison across two such boxes silently
+///   matched nothing. Cells without a `bucket` still record the stem.
 /// v12: the two phases production runs after retrieval are measured too, when a cell asks for them
-///     (`response`): turning each `ProteinRef` into a `ProteinInfo` — an fa-compression decode plus
-///     an accession `String` — and serialising the lot to JSON, which is what `sa-server` returns.
-///     They are recorded BESIDE `total_duration_ns` and never inside it: widening the timed region
-///     would change what every suite's throughput means and invalidate every baseline, including
-///     the regression gate. `throughput_qps` is still search plus retrieval, exactly as in v11.
+///   (`response`): turning each `ProteinRef` into a `ProteinInfo` — an fa-compression decode plus
+///   an accession `String` — and serialising the lot to JSON, which is what `sa-server` returns.
+///   They are recorded BESIDE `total_duration_ns` and never inside it: widening the timed region
+///   would change what every suite's throughput means and invalidate every baseline, including
+///   the regression gate. `throughput_qps` is still search plus retrieval, exactly as in v11.
 /// v13: v12's `decode_duration_ns` and `serialise_duration_ns` are replaced by a single
-///     `response_duration_ns`, because the pair they formed was not measurable against the rest of
-///     the record. v12 timed both of them SERIALLY while it timed search and retrieval in parallel,
-///     so on a 12-core box the decode share was overstated by up to the core count, and the
-///     "measured share" heatmap built on that comparison was correspondingly wrong. v12 also
-///     serialised a bare `Vec<Vec<ProteinInfo>>` rather than the `Vec<SearchResult>` the server
-///     returns, so `response_bytes` omitted every peptide's `sequence`, `cutoff_used` and object
-///     framing and under-reported the response.
+///   `response_duration_ns`, because the pair they formed was not measurable against the rest of
+///   the record. v12 timed both of them SERIALLY while it timed search and retrieval in parallel,
+///   so on a 12-core box the decode share was overstated by up to the core count, and the
+///   "measured share" heatmap built on that comparison was correspondingly wrong. v12 also
+///   serialised a bare `Vec<Vec<ProteinInfo>>` rather than the `Vec<SearchResult>` the server
+///   returns, so `response_bytes` omitted every peptide's `sequence`, `cutoff_used` and object
+///   framing and under-reported the response.
 ///
-///     v13 measures the whole proteins-to-bytes phase the way production runs it — the decode
-///     parallel across peptides, the JSON in the shape `sa-server` actually returns — and records it
-///     as one number. **v12 and v13 shares are not comparable**; a baseline comparison across the
-///     boundary will show a large apparent shift in the response phase that is the fix, not a
-///     regression. Expect `response_bytes` to grow for the same reason.
+///   v13 measures the whole proteins-to-bytes phase the way production runs it — the decode
+///   parallel across peptides, the JSON in the shape `sa-server` actually returns — and records it
+///   as one number. **v12 and v13 shares are not comparable**; a baseline comparison across the
+///   boundary will show a large apparent shift in the response phase that is the fix, not a
+///   regression. Expect `response_bytes` to grow for the same reason.
 ///
-///     The isolated decoder cost is no longer a field here: it is not a request phase, and
-///     `cargo bench -p fa-compression` measures it properly. `total_duration_ns` and
-///     `throughput_qps` are unchanged and still mean search plus retrieval.
+///   The isolated decoder cost is no longer a field here: it is not a request phase, and
+///   `cargo bench -p fa-compression` measures it properly. `total_duration_ns` and
+///   `throughput_qps` are unchanged and still mean search plus retrieval.
 /// v14: `stats` gains `search_p50_ns` / `retrieval_p50_ns` / `response_p50_ns`, the phase times
-///     pooled over the same reps as `qps_p50`. Readers previously took the phase split off
-///     `result`, which is a single rep, and printed it beside a throughput pooled over twenty —
-///     so the two could disagree, and on the mixed file they disagreed in direction. Records
-///     written before v14 have no such fields and readers must fall back to `result`, which is
-///     what they always did.
+///   pooled over the same reps as `qps_p50`. Readers previously took the phase split off
+///   `result`, which is a single rep, and printed it beside a throughput pooled over twenty —
+///   so the two could disagree, and on the mixed file they disagreed in direction. Records
+///   written before v14 have no such fields and readers must fall back to `result`, which is
+///   what they always did.
 const SCHEMA_VERSION: u32 = 14;
 
 /// Canonical 20 amino acids used for random peptide generation
@@ -254,7 +254,7 @@ struct Args {
 
     /// Run a parameter matrix in one process: loads the index once, then sweeps the cell list from
     /// `--grid-file` for each `--matrix-files` entry. Writes one aggregated record per cell to
-    /// <output>/<label>.jsonl.
+    /// `<output>/<label>.jsonl`.
     #[arg(long)]
     matrix: bool,
 
@@ -647,11 +647,11 @@ fn theoretical_memory(searcher: &ActiveSearcher, mapping_type: &str, proteins_ma
         "dense" => text_len * 4,             // Vec<u32> with one u32 per text character
         "sparse" => (protein_count + 2) * 8, // Vec<i64> with one i64 per protein boundary
         "bitvec" => {
-            // One bit per text character + Rank9 superblock overhead (~16 bytes per 512 bits)
+            // One bit per text character + the two-level rank cells (16 bytes per 512 bits)
             let bits_bytes = text_len.div_ceil(8);
             let superblock_count = text_len / 512 + 1;
-            let rank9_bytes = superblock_count * 16;
-            bits_bytes + rank9_bytes
+            let rank_bytes = superblock_count * 16;
+            bits_bytes + rank_bytes
         }
         _ => 0
     };
@@ -741,7 +741,7 @@ fn run_benchmark(
     // memory-level parallelism — is the searcher's, exactly as it is on the server.
     let refs: Vec<&[u8]> = peptides.iter().map(|p| p.as_bytes()).collect();
     let search_start = Instant::now();
-    let suffix_results = searcher.search_all_matching_suffixes(&refs, max_matches, equate_il, tryptic);
+    let suffix_results = searcher.search_all_matching_suffixes_batched(&refs, max_matches, equate_il, tryptic);
     let search_duration_ns = search_start.elapsed().as_nanos() as u64;
 
     // Read internal timing/candidate breakdown accumulated during the search phase above.
@@ -1361,7 +1361,7 @@ fn warmup_pipeline(searcher: &ActiveSearcher, args: &Args, count: usize) -> Resu
 /// The k-mer tables are swapped in/out (moved, not cloned) so each is built or loaded at most once,
 /// and only the sizes the grid actually names are touched at all. Each config runs its own rep
 /// count but writes a single aggregated record (median-qps rep as `result`, plus a `stats` spread)
-/// to <output>/<label>.jsonl.
+/// to `<output>/<label>.jsonl`.
 // Index-wide facts the caller already computed while loading; they are threaded through rather
 // than recomputed here, which is what pushes this past the argument limit.
 #[allow(clippy::too_many_arguments)]

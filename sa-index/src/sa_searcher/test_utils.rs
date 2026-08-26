@@ -316,7 +316,7 @@ where
             for tryptic in [false, true] {
                 for peptide in PEPTIDES {
                     let (tag, mut suffixes) = match searcher
-                        .search_all_matching_suffixes(&[peptide], usize::MAX, equate_il, tryptic)
+                        .search_all_matching_suffixes_batched(&[peptide], usize::MAX, equate_il, tryptic)
                         .remove(0)
                     {
                         SearchAllSuffixesResult::NoMatches => ("none", Vec::new()),

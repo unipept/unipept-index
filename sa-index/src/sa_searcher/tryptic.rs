@@ -72,6 +72,8 @@ pub(super) fn tryptic_extension_chars(search_string: &[u8]) -> &'static [u8] {
 }
 
 impl TrypticQuery {
+    /// Resolves the query-invariant half of the predicate, once per peptide. Called from
+    /// `iterate_sa_range` before the candidate loop, never inside it.
     #[inline]
     pub(super) fn new(tryptic: bool, search_string: &[u8]) -> Self {
         if !tryptic {
@@ -336,7 +338,8 @@ mod tests {
     // - protein ends at the separators 7/13/16 and at the terminator 21
     // - K/R-preceded cuts (positions 1, 4, 6, 11, 12, 16, 21)
     // - P-blocked cuts ("KP" at 0-1, "RP" at 8-9, "KP"-like "K-" vs "AP" at 13-14)
-    // - a single-residue protein ("K" between the separators at 13 and 16 is "PK")
+    // - a two-residue protein, "PK", between the separators at 13 and 16: it starts with the
+    //   proline that blocks the cut at 14 and ends with the K that opens the one at 16
     // - I and L adjacent at 18/19, so peptides can differ from the text at L/I positions
     const BOUNDARY_TEXT: &str = "KPARCKA-RPKRA-PK-AILK$";
 

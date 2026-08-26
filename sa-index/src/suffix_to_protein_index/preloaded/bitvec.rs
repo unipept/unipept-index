@@ -45,12 +45,25 @@ pub struct BitVecSuffixToProtein {
 }
 
 impl BitVecSuffixToProtein {
+    /// Whether `position` is marked — i.e. holds a separator or the terminator, and so belongs to
+    /// no protein. The caller bounds `position` against `bit_len` first.
     #[inline]
     fn get_bit(&self, position: u64) -> bool {
         let block = self.blocks[(position / 64) as usize];
         (block >> (position % 64)) & 1 == 1
     }
 
+    /// Set bits strictly before `position` — which *is* the protein index, since exactly one
+    /// marked byte closes each protein.
+    ///
+    /// Constant time, from three reads and a popcount: the superblock cell holding `position`
+    /// gives the count before its 512-bit block (`level1`) and before its word within that block
+    /// (the 9-bit `level2` sub-count, zero for word 0, which is not stored); the data word itself
+    /// supplies the rest. `block << (63 - bit_offset)` discards every bit at or above `position`,
+    /// so bits past `bit_len` in the final word cannot affect an in-range answer.
+    ///
+    /// Deliberately the same arithmetic as `mmap::bitvec`'s `rank1`, which runs it against a
+    /// mapping, so the two backends agree by construction rather than by test.
     #[inline]
     fn rank1(&self, position: u64) -> u64 {
         let word_index = (position / 64) as usize;
@@ -309,9 +322,9 @@ mod tests {
         assert_prefetch_is_harmless(&BitVecSuffixToProtein::new(&sample_text()));
     }
 
-    /// The reader rebuilds `Rank9` from the raw bits and skips the superblocks the writer emitted,
-    /// so the second text is long enough to make that several cells rather than one — skip the
-    /// wrong number of them and the bits that follow decode as garbage.
+    /// The reader reads the superblock cells straight out of the file rather than recomputing them,
+    /// so the second text is long enough to make that several cells rather than one — misread the
+    /// cell boundaries and the counts that follow decode as garbage.
     ///
     /// The last two texts straddle the word boundary the reader's `truncate` exists for.
     /// `many_proteins_text(n, l)` is `n * (l + 1)` positions long, so 32x8 = 256 bits fills its

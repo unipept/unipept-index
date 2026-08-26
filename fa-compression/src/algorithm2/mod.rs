@@ -96,7 +96,7 @@ impl CompressionTable {
 
     /// Returns the index of the given annotation in the compression table, if it exists.
     ///
-    /// A linear scan over every entry. This is what makes [`encode`] cost *table size × annotations
+    /// A linear scan over every entry. This is what makes [`encode()`] cost *table size × annotations
     /// encoded*; see the module docs.
     fn index_of(&self, annotation: &str) -> Option<usize> {
         self.entries.iter().position(|entry| entry.annotation == annotation)
@@ -117,7 +117,7 @@ impl Index<usize> for CompressionTable {
     ///
     /// # Panics
     ///
-    /// If `index` is out of bounds, like any other slice index. [`decode`] indexes the table with
+    /// If `index` is out of bounds, like any other slice index. [`decode()`] indexes the table with
     /// values taken straight from its input, so decoding with the wrong table panics here.
     fn index(&self, index: usize) -> &Self::Output {
         &self.entries[index]

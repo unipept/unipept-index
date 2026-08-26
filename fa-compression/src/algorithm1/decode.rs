@@ -22,9 +22,9 @@ use std::fmt;
 /// The prefixes for the different types of annotations.
 static PREFIXES: [&[u8]; 3] = [b"EC:", b"GO:", b"IPR:IPR"];
 
-/// Nibble value to the character it decodes to, in [`CharacterSet`] order.
+/// Nibble value to the character it decodes to, in [`super::CharacterSet`] order.
 ///
-/// The same mapping as [`CharacterSet::decode`], as a table rather than a `match` with a panicking
+/// The same mapping as the test-only `Decode for CharacterSet` impl, as a table rather than a `match` with a panicking
 /// arm — every one of the 16 values is valid, so there is nothing to panic on. `decode_matches_the_character_set`
 /// pins the two together.
 const NIBBLE: [u8; 16] = *b"$0123456789-.n,;";
@@ -139,7 +139,7 @@ impl Sink for FmtSink<'_, '_> {
 /// The decoder itself: one pass over the nibble stream, writing straight into `sink`.
 ///
 /// Reproduces the two-pass `split`-based original exactly, including the cases well-formed
-/// [`encode`](super::encode) output never produces:
+/// [`encode()`](super::encode()) output never produces:
 ///
 /// * only the LOW nibble of a byte is skipped when it is `$`; a `$` in the high nibble is content,
 ///   so `decode(&[0])` is `"EC:$"`.

@@ -8,8 +8,11 @@ use std::{error::Error, path::Path};
 
 use binary_traits::{LoadIndex, ReadBinary};
 
+/// The bit-vector-plus-rank representation.
 pub mod bitvec;
+/// The one-`u32`-per-position representation.
 pub mod dense;
+/// The protein-start-positions representation.
 pub mod sparse;
 #[cfg(test)]
 pub(super) mod test_utils;
@@ -25,9 +28,11 @@ pub use sparse::SparseSuffixToProtein;
 /// different outcome from the `Err` the mmap readers return for the very same bytes. A crafted
 /// 9-byte header declaring `2^60` entries used to kill the process here and load-error there.
 ///
-/// The capacity stays exact on purpose: `memory_hints::hugepages::advise_capacity` is issued against
-/// these allocations, and a rounded-up or capped capacity would detach the advice from the
-/// allocation it describes.
+/// The capacity stays exact on purpose: the dense and bitvec readers issue
+/// `memory_hints::hugepages::advise_capacity` against what this returns — the two large allocations
+/// in the index — and a rounded-up or capped capacity would detach the advice from the allocation
+/// it describes. The sparse reader does not bother: its table is one entry per protein, orders of
+/// magnitude smaller than the other two, so there is nothing for huge pages to buy.
 pub(super) fn try_alloc_exact<T>(capacity: usize, what: &str) -> Result<Vec<T>, Box<dyn Error>> {
     let mut buffer = Vec::new();
     buffer
@@ -38,8 +43,11 @@ pub(super) fn try_alloc_exact<T>(capacity: usize, what: &str) -> Result<Vec<T>, 
 
 /// Wraps whichever of the three mappings a file holds, picked at load time from its type byte.
 pub enum InMemorySuffixToProteinMapping {
+    /// Type byte `0x00`: one `u32` per text position.
     Dense(DenseSuffixToProtein),
+    /// Type byte `0x01`: protein start positions, binary-searched.
     Sparse(SparseSuffixToProtein),
+    /// Type byte `0x02`: one bit per text position, with a two-level rank structure.
     BitVec(BitVecSuffixToProtein)
 }
 

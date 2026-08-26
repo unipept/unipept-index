@@ -37,9 +37,9 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
     }
 
     fn touch_all_pages(&self) -> u64 {
-        // This structure's own entries, the way the sparse backend bounds its sweep. Clamped to the
-        // mapping, because the header is untrusted and `read_dense_mmap` does not check the body
-        // against it.
+        // This structure's own entries, the way the sparse backend bounds its sweep.
+        // `read_dense_mmap` validates `count` against the mapping's length, so this range already
+        // lies inside it; the `min` is a belt-and-braces guard, not the thing that makes it safe.
         let end = (self.data_offset + self.count * 4).min(self.mmap.len());
         memory_hints::warmup::touch_all_pages(&self.mmap, self.data_offset..end)
     }

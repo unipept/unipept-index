@@ -18,6 +18,8 @@ pub(super) mod test_utils;
 /// four fields after it are what [`read_binary_mmap`](ReadBinaryMmap::read_binary_mmap) took from
 /// the file header.
 pub struct MmapBackedSA {
+    /// The whole mapped `sa.bin`, header included. Public so a caller can advise or inspect it;
+    /// entries start at `data_offset`.
     pub mmap: Mmap,
     /// Where the entries start — 10 bytes in, past the header.
     pub(crate) data_offset: usize,
@@ -199,6 +201,12 @@ pub struct MmapSaRangeIter<'a> {
 }
 
 impl<'a> MmapSaRangeIter<'a> {
+    /// Opens an iterator over entries `start..end` (half-open) of the array whose packed body
+    /// begins `data_offset` bytes into `mmap` at `bits_per_value` bits each.
+    ///
+    /// `end <= start` yields an empty iterator. The range is not bounds-checked against the
+    /// mapping: `read_binary_mmap` has already established that every entry below `len` is
+    /// readable, and callers pass ranges the bound search produced.
     pub fn new(mmap: &'a Mmap, data_offset: usize, bits_per_value: usize, start: usize, end: usize) -> Self {
         let remaining = end.saturating_sub(start);
         if remaining == 0 {

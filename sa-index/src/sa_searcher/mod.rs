@@ -1,12 +1,13 @@
 //! Searching peptides against the index.
 //!
 //! This file holds the [`Searcher`] itself and the primitives every search path shares: `compare`,
-//! which orders a peptide against a suffix, and the candidate scan — `iterate_sa_range` and its
-//! left-extended twin — which walks an SA range and validates what it finds. Everything a search
-//! needs beyond that lives in a sibling:
+//! which orders a peptide against a suffix; `opening_window`, which picks the SA window a bound
+//! search starts from and is the one place the k-mer table is consulted; and the candidate scan —
+//! `iterate_sa_range` and its left-extended twin — which walks an SA range and validates what it
+//! finds. Everything a search needs beyond that lives in a sibling:
 //!
 //! * `scalar` / `batched` — one peptide at a time versus B interleaved for memory-level
-//!   parallelism. `batched` also owns `search_all_matching_suffixes`, the entry point every
+//!   parallelism. `batched` also owns `search_all_matching_suffixes_batched`, the entry point every
 //!   multi-peptide caller goes through.
 //! * `retrieval` — turning matched suffix positions into proteins.
 //! * `tryptic` — the trypsin-cut filter the candidate scan applies.
@@ -35,6 +36,7 @@ pub(crate) use tuning::{
 use crate::{
     KmerTable,
     array::SuffixArrayBackend,
+    kmer_table::KmerLookup,
     sa_searcher::{
         BoundSearch::{Maximum, Minimum},
         measure::SearchMeasurements
@@ -59,9 +61,15 @@ enum BoundSearch {
 /// [`Searcher::with_kmer_table`]. The searcher is immutable during search and `Sync`, so one
 /// instance serves every request.
 pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> {
+    /// The suffix array, which also carries the sparseness factor the index was built with.
     pub sa: SA,
+    /// The protein metadata table and, through it, the concatenated protein text.
     pub proteins: P,
+    /// Resolves a matched text position to an index into `proteins`.
     pub suffix_index_to_protein: STPM,
+    /// Optional accelerator narrowing the opening binary search; see [`KmerTable`]. Attached
+    /// through [`Searcher::with_kmer_table`] or [`Searcher::build_kmer_table`], never at
+    /// construction.
     pub kmer_table: Option<KmerTable>,
     /// Instrumentation counters, drained through [`Searcher::drain_timing_ns`] and
     /// [`Searcher::drain_candidate_counts`]. Zero-sized without the `measure` feature.
@@ -165,9 +173,77 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         Ok(self)
     }
 
-    /// Builds and attaches a k-mer table with the given `k` using the already-loaded index data.
+    /// Builds a k-mer table from this searcher's own suffix array and text, and attaches it.
+    ///
+    /// The build-mismatch check [`Self::try_with_kmer_table`] performs is unnecessary here and is
+    /// not run: a table built from `self.sa` cannot point past `self.sa`. Use that method instead
+    /// when the table comes from a file.
+    ///
+    /// Costs a full parallel pass over the suffix array plus a dense `AMINO_ACID_COUNT^k` table —
+    /// ~127 MB at k=5. `sa-builder` normally writes the table once and the server loads it; this
+    /// is for callers holding an index with no table file beside it.
+    ///
+    /// # Panics
+    ///
+    /// If `k` exceeds [`MAX_KMER_K`](crate::kmer_table::MAX_KMER_K).
     pub fn build_kmer_table(&mut self, k: usize) {
         self.kmer_table = Some(KmerTable::build_from_sa(&self.sa, self.proteins.text(), k));
+    }
+
+    /// The SA window a bound search for `search_string` should open with.
+    ///
+    /// `Some((left, right, lcp_skip))` is a half-open window plus the number of leading characters
+    /// every entry in it is already known to share, so the bound search never re-compares them.
+    /// `None` means the k-mer table settled the question: no suffix carries this prefix.
+    ///
+    /// This is the *only* place the k-mer table is consulted, and it is shared by both search
+    /// paths — `scalar::search_bounds_scalar` and `batched::search_bounds_batched` — so the
+    /// two cannot disagree about which queries the table may answer for.
+    ///
+    /// # The three answers, and why the table needs all three
+    ///
+    /// [`KmerLookup`] separates "this k-mer occurs nowhere" from "this k-mer is not in my
+    /// alphabet", and only the first is a result:
+    ///
+    /// * [`Absent`](KmerLookup::Absent) → `None`. The table covers the k-mer and the index does not
+    ///   hold it.
+    /// * [`NotRepresentable`](KmerLookup::NotRepresentable) → the full array. `ALPHABET` in
+    ///   `kmer_table.rs` holds amino acids only, so a k-mer containing the protein separator `-` or
+    ///   the terminator `$` has no bucket and the table abstains rather than answering.
+    /// * shorter than `k`, or no table attached → the full array, for the same reason: nothing to
+    ///   look up.
+    ///
+    /// The abstention is not a corner case. The left-extended tryptic search looks up
+    /// `'-' + peptide` for every tryptic query (see [`TrypticQuery`] and `tryptic_extension_chars`),
+    /// so it lands here once per peptide. Reading that as "no matches" would silently drop every
+    /// protein-start match — roughly 3 % of all tryptic hits, and every protein's N-terminal
+    /// peptide. Both search paths used to carry a second, table-free bounds function called from a
+    /// `prefix_char == SEPARATION_CHARACTER` branch at the call site; those four pieces are what
+    /// this replaces. Bounded by `scalar::tests::test_extended_protein_start_with_kmer_table` and
+    /// its batched twin.
+    ///
+    /// # Cost of the fallback
+    ///
+    /// A full-height binary search: ~35 random SA reads instead of ~12 at the default k=5 on the
+    /// full UniProt index — see [`KmerTable`]. Measured on the full DB that is affordable: even
+    /// 26-50aa tryptic queries, where this fixed cost is the largest share of a ~4 µs budget, came
+    /// out 1.40x *faster* overall (run5), because the left-extension replaced a far more expensive
+    /// truncated pass. Adding `-` to `ALPHABET` would remove the fallback at +29 MB and a rebuild
+    /// of every table file — not worth it while the fallback is this cheap.
+    #[inline]
+    fn opening_window(&self, search_string: &[u8]) -> Option<(usize, usize, usize)> {
+        let full_range = (0, self.sa.len(), 0);
+        let Some(table) = &self.kmer_table else {
+            return Some(full_range);
+        };
+        if search_string.len() < table.k {
+            return Some(full_range);
+        }
+        match table.lookup(&search_string[..table.k]) {
+            KmerLookup::Range(lo, hi) => Some((lo, hi + 1, table.k)),
+            KmerLookup::Absent => None,
+            KmerLookup::NotRepresentable => Some(full_range)
+        }
     }
 
     /// Normalizes L to I so that both map to the same character during suffix array comparisons.

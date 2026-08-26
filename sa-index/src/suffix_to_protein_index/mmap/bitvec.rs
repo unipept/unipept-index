@@ -14,7 +14,8 @@ use crate::Nullable;
 /// - block_count × 8 bytes: raw u64 blocks (bit 0 = LSB of block 0)
 /// - (block_count/8 + 1) × 16 bytes: superblock cells
 ///   each cell: [level1: u64 LE] [packed_level2: u64 LE]
-///   packed_level2 bits (w-1)*9..(w-1)*9+9 hold cumulative count before word w (w=1..7)
+///   packed_level2 bits (w-1)*9..(w-1)*9+9 hold cumulative count before word w, for w = 1..=7
+///   (word 0's sub-count is always zero and is not stored)
 pub struct MmapBitVecSuffixToProtein {
     mmap: Mmap,
     bit_len: u64,
@@ -23,6 +24,9 @@ pub struct MmapBitVecSuffixToProtein {
 }
 
 impl MmapBitVecSuffixToProtein {
+    /// Whether `pos` is marked — i.e. holds a separator or the terminator, and so belongs to no
+    /// protein. The caller bounds `pos` against `bit_len` first; `read_bitvec_mmap` has already
+    /// established that every such position is inside the mapping.
     #[inline]
     fn get_bit(&self, pos: u64) -> bool {
         let block_idx = (pos / 64) as usize;
@@ -32,6 +36,19 @@ impl MmapBitVecSuffixToProtein {
         (block >> bit_idx) & 1 == 1
     }
 
+    /// Set bits strictly before `position` — which *is* the protein index, since exactly one
+    /// marked byte closes each protein.
+    ///
+    /// Constant time, from three reads and a popcount: the superblock cell holding `position`
+    /// gives the count before its 512-bit block (`level1`) and before its word within that block
+    /// (the 9-bit `level2` sub-count, zero for word 0, which is not stored); the data word itself
+    /// supplies the rest. `block << (63 - bit_offset)` discards every bit at or above `position`,
+    /// so bits past `bit_len` in the final word cannot affect an in-range answer.
+    ///
+    /// Deliberately the same arithmetic as `preloaded::bitvec`'s `rank1`, which runs it against
+    /// owned memory, so the two backends agree by construction rather than by test. Here both
+    /// reads come out of the mapping and may fault; `prefetch_for_suffix` hints at exactly this
+    /// pair of addresses.
     #[inline]
     fn rank1(&self, position: u64) -> u64 {
         let bb_index = (position / 512) as usize;
@@ -150,9 +167,9 @@ mod tests {
     };
 
     /// The absolute answers are pinned by `mmap::tests::test_load_mmap_bitvec`; what this adds is
-    /// that the two-level rank read out of the mapped file agrees with `Rank9` everywhere. The
-    /// second text spans several superblocks, so it also exercises the level1 counts, which stay
-    /// zero for anything shorter than 512 bits.
+    /// that the two-level rank read out of the mapped file agrees with the preloaded mapping's own
+    /// two-level rank everywhere. The second text spans several superblocks, so it also exercises
+    /// the level1 counts, which stay zero for anything shorter than 512 bits.
     #[test]
     fn test_mmap_bitvec_roundtrip() {
         for text in [sample_text(), many_proteins_text(300, 5)] {

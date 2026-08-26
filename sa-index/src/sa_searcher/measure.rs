@@ -4,7 +4,7 @@
 //!
 //! `sa-benchmarks` brackets the search and retrieval phases with its own clock, so the wall time of
 //! each is available in every build and owes nothing to this module. What it cannot reach is
-//! anything *inside* one `search_all_matching_suffixes` call:
+//! anything *inside* one `search_all_matching_suffixes_batched` call:
 //!
 //! * the split between the binary search and the range scan. Those alternate per peptide — three
 //!   times per peptide at sparseness 3 — across every rayon worker, so there are tens of thousands
@@ -40,6 +40,8 @@ mod imp {
     pub struct Counter(AtomicU64);
 
     impl Counter {
+        /// A counter at zero. `const` so [`SearchMeasurements::new`](super::SearchMeasurements)
+        /// can build the whole struct in a const context.
         pub const fn new() -> Self {
             Self(AtomicU64::new(0))
         }
@@ -73,11 +75,14 @@ mod imp {
     pub struct Timer(Instant);
 
     impl Timer {
+        /// Reads the clock. Serializing on most platforms, which is why the whole module is behind
+        /// a feature.
         #[inline]
         pub fn start() -> Self {
             Self(Instant::now())
         }
 
+        /// Nanoseconds since [`Self::start`].
         #[inline]
         pub fn elapsed_ns(&self) -> u64 {
             self.0.elapsed().as_nanos() as u64
@@ -93,10 +98,13 @@ mod imp {
     pub struct Counter;
 
     impl Counter {
+        /// Mirrors the real [`Counter::new`]; constructs nothing.
         pub const fn new() -> Self {
             Self
         }
 
+        /// Discards `v`. The argument is evaluated by the caller, but every accumulation feeding
+        /// it folds away with the `Timer` that produced it.
         #[inline]
         pub fn add(&self, _v: u64) {}
 
@@ -118,11 +126,13 @@ mod imp {
     pub struct Timer;
 
     impl Timer {
+        /// Emits no clock read.
         #[inline]
         pub fn start() -> Self {
             Self
         }
 
+        /// Always zero — the constant the optimizer folds the surrounding `Counter::add` into.
         #[inline]
         pub fn elapsed_ns(&self) -> u64 {
             0
@@ -160,6 +170,8 @@ pub struct SearchMeasurements {
 }
 
 impl SearchMeasurements {
+    /// All four counters at zero. `const`, so `Searcher::try_new` builds it without a runtime
+    /// initialiser in either feature configuration.
     pub(super) const fn new() -> Self {
         Self {
             search_bounds_ns: Counter::new(),

@@ -58,8 +58,8 @@ when residency is guaranteed; do not where the ceiling might move. The numbers a
 index does not fit in RAM" section of `sa-index/src/lib.rs`.
 
 These nine feature combinations are the ones the server exposes; the types themselves compose into
-sixteen, and `sa-index`'s `backend_agreement` test builds every one of them and asserts they return
-identical results.
+sixteen, and `sa-index`'s `every_backend_combination_returns_identical_results` test builds every
+one of them and asserts they return identical results.
 
 A running server reports what it was compiled with:
 
@@ -201,8 +201,9 @@ curl -X POST http://localhost:3000/search \
 ## Testing
 
 Both backends of every structure are always compiled, so one run covers them all — the searcher's
-fixtures build each combination by naming its types, and `backend_agreement` asserts the sixteen
-give identical answers:
+fixtures build each combination by naming its types, and
+`sa_index::sa_searcher::tests::every_backend_combination_returns_identical_results` asserts the
+sixteen give identical answers:
 
 ```bash
 cargo test                                  # everything, both backends

@@ -6,11 +6,11 @@
 //! results are identical (see `test_batched_matches_scalar`).
 //!
 //! Two layers, both here. `search_matching_suffixes_batched` is the kernel: single-threaded,
-//! rayon-free, one chunk of peptides in lockstep. `search_all_matching_suffixes` is the entry
-//! point every caller uses: it splits a whole peptide list into [`MLP_BATCH`]-sized chunks and
-//! runs them across rayon. Both the production path (`peptide_search::search_all_peptides`) and
-//! the benchmark go through it, so the decomposition is chosen in one place and measured as it
-//! ships — the kernel is `pub(crate)` precisely so nothing outside can choose a different one.
+//! rayon-free, one chunk of peptides in lockstep. `search_all_matching_suffixes_batched` is the
+//! entry point every caller uses: it splits a whole peptide list into [`MLP_BATCH`]-sized chunks
+//! and runs them across rayon. Both the production path (`peptide_search::search_all_peptides`) and the benchmark
+//! go through it, so the decomposition is chosen in one place and measured as it ships — the kernel
+//! is `pub(crate)` precisely so nothing outside can choose a different one.
 //!
 //! There is no scalar/batched choice to make any more. That used to be a runtime knob, and this
 //! module was two: `orchestrate` held the branch and `batched` the kernel. `MLP_BATCH` is a
@@ -28,7 +28,7 @@
 
 use std::cmp::min;
 
-use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER};
+use protein_metadata::ProteinsBackend;
 use protein_text::ProteinTextBackend;
 use rayon::prelude::*;
 
@@ -117,21 +117,19 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     }
 
     /// The `_batched` twin of `search_bounds_scalar`: many search strings at once.
-    fn search_bounds_batched(&self, strings: &[&[u8]]) -> Vec<BoundSearchResult> {
-        self.search_bounds_inner_batched(strings, true)
-    }
-
-    /// `search_bounds_batched` with the k-mer table forced off.
     ///
-    /// Needed for the separator variant of the left-extended tryptic search: `'-'` is absent from
-    /// the k-mer table's ALPHABET, so a lookup returns `None` and the stream would be dropped as
-    /// `NoMatches`, silently losing every protein-start match. Mirrors
-    /// `search_bounds_full_range_scalar`.
-    fn search_bounds_full_range_batched(&self, strings: &[&[u8]]) -> Vec<BoundSearchResult> {
-        self.search_bounds_inner_batched(strings, false)
-    }
-
-    fn search_bounds_inner_batched(&self, strings: &[&[u8]], use_kmer_table: bool) -> Vec<BoundSearchResult> {
+    /// Three stages, because a stream must survive to the next one to stay interleaved: pick each
+    /// stream's opening window, run every minimum bound together, then run the maximum bound for
+    /// only those streams whose minimum was found. Streams drop out at each stage — a k-mer miss at
+    /// stage 1, no match at stage 2 — and a dropped stream leaves its `NoMatches` in place rather
+    /// than shrinking the output, so the result stays one entry per input, in order.
+    ///
+    /// Stage 1 goes through [`Searcher::opening_window`], the same helper `search_bounds_scalar`
+    /// uses, so the two paths cannot disagree about which queries the k-mer table may answer for.
+    /// This used to take a `use_kmer_table` flag threaded down from a separate full-range entry
+    /// point, which existed solely so the separator-extended tryptic search could bypass the table;
+    /// the helper handles that abstention itself now.
+    fn search_bounds_batched(&self, strings: &[&[u8]]) -> Vec<BoundSearchResult> {
         let n = strings.len();
         let mut out: Vec<BoundSearchResult> = (0..n).map(|_| BoundSearchResult::NoMatches).collect();
 
@@ -139,14 +137,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let mut ranges: Vec<Option<(usize, usize, usize)>> = vec![None; n];
         let mut min_streams: Vec<BsStream> = Vec::with_capacity(n);
         for (i, &ss) in strings.iter().enumerate() {
-            let range = match &self.kmer_table {
-                Some(table) if use_kmer_table && ss.len() >= table.k => {
-                    match table.lookup(&ss[..table.k]) {
-                        Some((lo, hi)) => (lo, hi + 1, table.k),
-                        None => continue // out[i] stays NoMatches
-                    }
-                }
-                _ => (0, self.sa.len(), 0)
+            let Some(range) = self.opening_window(ss) else {
+                continue; // out[i] stays NoMatches
             };
             ranges[i] = Some(range);
             min_streams.push(BsStream::new(i, ss, range.0, range.1, range.2));
@@ -180,7 +172,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// peptide, but with the
     /// binary-search phase interleaved for memory-level parallelism. Single-threaded and
     /// rayon-free: the MLP kernel. Cross-thread parallelism and chunking live in
-    /// [`Searcher::search_all_matching_suffixes`] below, which is the entry point callers use.
+    /// [`Searcher::search_all_matching_suffixes_batched`] below, which is the entry point callers use.
     pub(crate) fn search_matching_suffixes_batched(
         &self,
         strings: &[&[u8]],
@@ -303,13 +295,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 let extended: Vec<&[u8]> = ext_spans.iter().map(|&(s, e)| &ext_buf[s..e]).collect();
 
                 let t_bounds = Timer::start();
-                // The separator is not representable in the k-mer table — routing it there would
-                // silently drop every protein-start match. See `search_bounds_full_range_batched`.
-                let bounds = if prefix_char == SEPARATION_CHARACTER {
-                    self.search_bounds_full_range_batched(&extended)
-                } else {
-                    self.search_bounds_batched(&extended)
-                };
+                // No special case for the separator variant: the k-mer table cannot represent `-`
+                // and says so, and `opening_window` turns that abstention into a full-range search
+                // rather than into `NoMatches`.
+                let bounds = self.search_bounds_batched(&extended);
                 self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
                 let t_iter = Timer::start();
@@ -356,14 +345,17 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Searches every peptide, returning one raw suffix result per input, in order.
     ///
     /// Peptides are split into `MLP_BATCH`-sized chunks, one rayon task each, and each chunk goes
-    /// through `search_matching_suffixes_batched` so its binary searches interleave. The output is
-    /// identical to running `search_matching_suffixes_scalar` over the list one peptide at a time — that
-    /// is what `test_orchestrated_matches_scalar` asserts, over three suffix-array shapes and
-    /// both search options, retrieval included.
+    /// through `search_matching_suffixes_batched` so its binary searches interleave, putting ~B
+    /// random memory misses in flight per core. The output is identical to running
+    /// `search_matching_suffixes_scalar` over the list one peptide at a time — that is what
+    /// `test_search_all_matches_scalar` asserts directly, and `test_orchestrated_matches_scalar`
+    /// again over three suffix-array shapes and both search options, retrieval included.
     ///
-    /// Peptides are searched as given — callers that need length filtering or normalisation
-    /// (e.g. skipping peptides shorter than the sample rate) must do it before calling.
-    pub fn search_all_matching_suffixes(
+    /// Peptides are searched as given — callers that need length filtering or normalisation must do
+    /// it before calling. `peptide_search` is where that lives, and it is not optional: the skip
+    /// loop slices `peptide[skip..]` for `skip` up to `sample_rate - 1`, so a peptide shorter than
+    /// that **panics** on an out-of-range slice rather than returning `NoMatches`.
+    pub fn search_all_matching_suffixes_batched(
         &self,
         peptides: &[&[u8]],
         max_matches: usize,
@@ -395,6 +387,10 @@ struct BsStream<'a> {
 }
 
 impl<'a> BsStream<'a> {
+    /// Opens a stream over the SA window `[left, right)`, remembering `left` as `left0` for the
+    /// edge-case tail. Both LCP accumulators start at `lcp_skip` — the characters a k-mer lookup
+    /// already matched — so they are never re-compared. `idx` is the stream's position in the
+    /// caller's input, carried through because streams finish out of order.
     #[inline]
     fn new(idx: usize, ss: &'a [u8], left: usize, right: usize, lcp_skip: usize) -> Self {
         BsStream {
@@ -548,13 +544,20 @@ mod tests {
     // The batched search must give the same result with a k-mer table as the plain scalar
     // search (covers search_bounds_batched's k-mer branch). L/I-free prefixes only, since the
     // raw test SA is not L->I normalized (see the scalar k-mer test for the reason).
+    //
+    // The last three peptides are unrepresentable in the table — `-` and `$` are not in its
+    // ALPHABET — and must therefore be answered by a full-range search rather than dropped as
+    // `NoMatches`. That is the batched half of
+    // `scalar::tests::test_kmer_table_abstains_on_unrepresentable_prefix`, and it matters here
+    // in particular because a dropped stream in stage 1 leaves its `NoMatches` in place: a
+    // mis-read abstention would be indistinguishable from a real miss in the output.
     #[test]
     fn test_batched_with_kmer_table() {
         let reference = example_searcher();
         let mut kmered = example_searcher();
         kmered.build_kmer_table(3);
 
-        let peptides: Vec<&[u8]> = vec![b"VAA", b"CVAA", b"KCR", b"KCRLY", b"AC", b"ZZZ"];
+        let peptides: Vec<&[u8]> = vec![b"VAA", b"CVAA", b"KCR", b"KCRLY", b"AC", b"ZZZ", b"-AC", b"AI-"];
         let batched = kmered.search_matching_suffixes_batched(&peptides, usize::MAX, false, false);
         for (i, p) in peptides.iter().enumerate() {
             assert_eq!(
@@ -566,11 +569,49 @@ mod tests {
         }
     }
 
+    // The batched half of `scalar::tests::test_kmer_table_is_neutral_under_both_il_settings`: the
+    // k-mer table must be an accelerator under both `equate_il` settings for peptides that contain
+    // I or L. The oracle is the *un-tabled scalar* searcher, so this pins the table and the batched
+    // kernel against the same reference at once.
+    //
+    // `searcher_over_text` is the fixture rather than `example_searcher` because it sorts the SA on
+    // L→I-normalised text the way `sa-builder` does, which is what makes the table's L→I folding
+    // sound; see the scalar test for the argument. The `RIY`/`RLY` and `TRL`/`TRI` pairs are
+    // identical in normalised space and differ at `equate_il=false`, so a table that leaked an
+    // I-vs-L decision into the narrowing would show up here.
+    #[test]
+    fn test_batched_kmer_table_is_neutral_under_both_il_settings() {
+        let peptides: Vec<&[u8]> = vec![
+            b"RIY", b"RLY", b"TRL", b"TRI", b"LDE", b"IDE", b"DEI", b"DEL", b"KTRLDEI", b"KTRIDEI", b"MKA", b"ZZZ",
+        ];
+
+        for &sparseness in &[1u8, 2, 3] {
+            let plain = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
+            let mut kmered = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
+            kmered.build_kmer_table(3);
+
+            for equate_il in [false, true] {
+                for tryptic in [false, true] {
+                    let batched = kmered.search_matching_suffixes_batched(&peptides, usize::MAX, equate_il, tryptic);
+                    for (i, p) in peptides.iter().enumerate() {
+                        assert_eq!(
+                            batched[i],
+                            plain.search_matching_suffixes_scalar(p, usize::MAX, equate_il, tryptic),
+                            "batched+kmer vs plain scalar: sparseness={sparseness} equate_il={equate_il} \
+                             tryptic={tryptic} peptide={:?}",
+                            std::str::from_utf8(p).unwrap()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Regression guard for the I/L-free fast-path extension on the batched path (mirrors
     // scalar.rs's `test_il_free_fast_path_matches_equate_il_true`). With peptides that contain
     // neither I nor L, equate_il=false must behave identically to equate_il=true, and the
     // batched kernel must agree with the scalar one — at a scale that exercises both the
-    // range_size >= max_matches and range_size < max_matches fast-path branches.
+    // range_size > max_matches and range_size <= max_matches fast-path branches.
     #[test]
     fn test_batched_il_free_fast_path_at_scale() {
         let searcher = repeated_residue_searcher('A', 70);
@@ -588,7 +629,7 @@ mod tests {
     /// What the entry point has to reproduce: the scalar primitive, applied one peptide at a time.
     ///
     /// This is the reference every test below compares against. It used to be
-    /// `search_all_matching_suffixes` at `mlp_batch = 1` — the same function under a different
+    /// `search_all_matching_suffixes_batched` at `mlp_batch = 1` — the same function under a different
     /// setting, which could only ever catch a batching bug that the batch size happened to expose.
     /// Comparing against the primitive the batched path is built from is the stronger check, and it
     /// is the only one still possible now that the batch size is a constant.
@@ -614,7 +655,7 @@ mod tests {
         for equate_il in [true, false] {
             for tryptic in [true, false] {
                 let scalar = scalar_reference(&s, &peptides, 1000, equate_il, tryptic);
-                let batched = s.search_all_matching_suffixes(&peptides, 1000, equate_il, tryptic);
+                let batched = s.search_all_matching_suffixes_batched(&peptides, 1000, equate_il, tryptic);
                 assert_eq!(scalar.len(), peptides.len());
                 assert_eq!(batched.len(), peptides.len(), "one result per input, in order");
                 for (i, (a, b)) in scalar.iter().zip(batched.iter()).enumerate() {
@@ -631,7 +672,7 @@ mod tests {
         // "A" matches 5 suffixes; cap at 2 → MaxMatches with 2 entries on both paths.
         let peptides: Vec<&[u8]> = vec![b"A"];
         let scalar = scalar_reference(&s, &peptides, 2, true, false);
-        let batched = s.search_all_matching_suffixes(&peptides, 2, true, false);
+        let batched = s.search_all_matching_suffixes_batched(&peptides, 2, true, false);
         assert!(matches!(scalar[0], SearchAllSuffixesResult::MaxMatches(_)));
         assert_eq!(scalar[0], batched[0]);
     }
@@ -640,7 +681,7 @@ mod tests {
     fn test_search_all_empty() {
         let s = example_searcher();
         let none: Vec<&[u8]> = vec![];
-        assert!(s.search_all_matching_suffixes(&none, 1000, true, false).is_empty());
+        assert!(s.search_all_matching_suffixes_batched(&none, 1000, true, false).is_empty());
     }
 
     // A peptide count that does not divide MLP_BATCH must still return one result per peptide in
@@ -652,7 +693,7 @@ mod tests {
         let peptides: Vec<&[u8]> = vec![b"A", b"AC", b"CLA", b"AI", b"VAA"];
         assert_eq!(
             scalar_reference(&s, &peptides, 1000, true, false),
-            s.search_all_matching_suffixes(&peptides, 1000, true, false)
+            s.search_all_matching_suffixes_batched(&peptides, 1000, true, false)
         );
     }
 
@@ -786,8 +827,10 @@ mod tests {
                         "{name}: fixture matches nothing (il={equate_il} tr={tryptic})"
                     );
 
-                    let actual =
-                        rows_from(searcher, &searcher.search_all_matching_suffixes(&peptides, 64, equate_il, tryptic));
+                    let actual = rows_from(
+                        searcher,
+                        &searcher.search_all_matching_suffixes_batched(&peptides, 64, equate_il, tryptic)
+                    );
                     assert_eq!(actual, expected, "{name}: orchestrated results differ (il={equate_il} tr={tryptic})");
                 }
             }

@@ -58,8 +58,6 @@ impl WriteBinary for CompressedSA {
     }
 }
 
-// ── I/O helpers ──────────────────────────────────────────────────────────────
-
 /// Writes a bit-packed suffix array: the shared header at `bits_per_value` bits per value — see
 /// the [module docs](super) for the layout — then the body packed by `bitarray`. The body goes out
 /// in chunks so peak memory stays bounded at index-build scale.
@@ -152,8 +150,8 @@ pub(super) fn load_compressed(
         )
         .into());
     }
-    // The huge-page advice is not issued here: `DynBitArray::with_capacity` already did it, on the
-    // untouched allocation, which is the only point at which it does anything. See
+    // The huge-page advice is not issued here: `DynBitArray::try_with_capacity` already did it,
+    // on the untouched allocation, which is the only point at which it does anything. See
     // `memory_hints::hugepages`.
     Ok(compressed_suffix_array)
 }

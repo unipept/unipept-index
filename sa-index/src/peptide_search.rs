@@ -119,8 +119,9 @@ impl<'a> From<ProteinRef<'a>> for ProteinInfo<'a> {
 /// makes the same single allocation, without the Unicode table lookups.
 ///
 /// Note this does *not* make the checks in `KmerTable::lookup` or `check_tryptic_c_term`
-/// redundant. `search_matching_suffixes_scalar` and `search_all_matching_suffixes` are public and
-/// are called directly (by `sa-benchmarks`, among others), so those paths never pass through here.
+/// redundant. `search_matching_suffixes_scalar` and `search_all_matching_suffixes_batched` are
+/// public and are called directly (by `sa-benchmarks`, among others), so those paths never pass
+/// through here.
 fn normalise_peptide(peptide: &str) -> Option<String> {
     let trimmed = peptide.trim_end();
     let mut out = String::with_capacity(trimmed.len());
@@ -134,7 +135,10 @@ fn normalise_peptide(peptide: &str) -> Option<String> {
     Some(out)
 }
 
-/// Searches the `peptide` in the index multithreaded and retrieves the matching proteins
+/// Searches one `peptide` in the index and retrieves the matching proteins.
+///
+/// Single-threaded: this is the scalar path, and it is what [`search_peptide`] is built on.
+/// [`search_all_peptides`] is the batched, rayon-parallel path for a whole list.
 ///
 /// # Arguments
 /// * `searcher` - The Searcher which contains the protein database
@@ -218,7 +222,9 @@ pub fn search_peptide<'a, SA: SuffixArrayBackend, P: ProteinsBackend, STPM: Suff
 ///
 /// # Returns
 ///
-/// Returns an `OutputData<SearchOnlyResult>` object with the search results for the peptides
+/// Returns one [`SearchResult`] per peptide that matched, in input order. Peptides that match
+/// nothing, are shorter than the sparseness factor, or fall outside the index alphabet are dropped
+/// rather than represented by an empty entry.
 pub fn search_all_peptides<'a, SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
     searcher: &'a Searcher<SA, P, STPM>,
     peptides: &'a [String],
@@ -265,7 +271,7 @@ where
 
     // One batched (MLP) search over the whole list — the same code path the benchmark measures
     // and the only place the batch size is chosen.
-    let suffix_results = searcher.search_all_matching_suffixes(&byte_peptides, cutoff, equate_il, tryptic);
+    let suffix_results = searcher.search_all_matching_suffixes_batched(&byte_peptides, cutoff, equate_il, tryptic);
 
     // Retrieve the proteins for each hit and build the result, dropping peptides with no matches
     // (preserves the previous filter_map semantics and result ordering).
@@ -384,7 +390,7 @@ mod tests {
 
     /// Built from the owned types directly rather than through `sa_searcher::test_utils`: these
     /// test the peptide-level API, not the storage backends, and the backends are already proved
-    /// interchangeable by `sa_searcher::backend_agreement`.
+    /// interchangeable by `sa_searcher::tests::every_backend_combination_returns_identical_results`.
     ///
     /// `annotations` decides whether the proteins carry real `fa-compression` payloads. Empty ones
     /// keep the fixture readable, but they never exercise the decode path — which is most of what

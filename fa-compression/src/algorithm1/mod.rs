@@ -6,14 +6,14 @@
 //! be decoded in isolation.
 //!
 //! The format exploits the fact that Unipept annotations draw on only sixteen characters
-//! (see `CharacterSet`), so two of them pack into one byte. [`encode`] strips the `EC:`, `GO:` and
+//! (see the private `CharacterSet`), so two of them pack into one byte. [`encode()`] strips the `EC:`, `GO:` and
 //! `IPR:IPR` prefixes, groups what is left into three `,`-separated sections, and packs the result
-//! two characters per byte; [`decode`] puts the prefixes back. Compression is at least **50%** even
+//! two characters per byte; [`decode()`] puts the prefixes back. Compression is at least **50%** even
 //! for a single short annotation, and typically **68-71%**.
 //!
 //! Decoding has three entry points, all the same single pass over the input:
 //!
-//! * [`decode`] — allocates and returns a `String`.
+//! * [`decode()`] — allocates and returns a `String`.
 //! * [`decode_into`] — appends to a buffer you already have.
 //! * [`decoded`] — decodes lazily into a formatter, so a serialiser never materialises the string.
 //!

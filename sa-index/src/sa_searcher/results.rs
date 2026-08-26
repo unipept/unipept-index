@@ -7,7 +7,9 @@
 /// Enum representing the minimum and maximum bound of the found matches in the suffix array
 #[derive(PartialEq, Debug)]
 pub enum BoundSearchResult {
+    /// No suffix in the array has the search string as a prefix.
     NoMatches,
+    /// The half-open SA index range `[min, max)` whose suffixes share that prefix.
     SearchResult((usize, usize))
 }
 
@@ -27,8 +29,11 @@ pub enum BoundSearchResult {
 /// the accumulator to `SearchAllSuffixesResult::truncated`, which drops that extra element.
 #[derive(Debug)]
 pub enum SearchAllSuffixesResult {
+    /// Nothing matched.
     NoMatches,
+    /// More than `max_matches` suffixes matched; this is a sample of exactly `max_matches`.
     MaxMatches(Vec<i64>),
+    /// Every matching text position, complete.
     SearchResult(Vec<i64>)
 }
 

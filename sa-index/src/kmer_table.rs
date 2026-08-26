@@ -8,8 +8,9 @@
 //! The table is dense — `alphabet_size^k` entries — so it is built once by `sa-builder` and
 //! loaded by the server. That density is why `k` is small; see [`MAX_KMER_K`].
 //!
-//! It is an accelerator only: results are identical with and without it, which the golden
-//! configuration matrix asserts.
+//! It is an accelerator only: results are identical with and without it. That is asserted by
+//! `sa_searcher::tests::test_with_kmer_table_attaches_without_changing_results` and, on the
+//! batched path, by `sa_searcher::batched::tests::test_batched_with_kmer_table`.
 
 use std::{
     error::Error,
@@ -69,9 +70,22 @@ fn build_ascii_array() -> [u8; 256] {
 /// Pre-computed k-mer SA bounds lookup table for accelerating suffix array binary search.
 ///
 /// Stores the inclusive `(min_bound, max_bound)` SA range for every k-character amino acid
-/// prefix. At query time the first `k` characters narrow the binary search window from the
-/// full SA length (~32 iterations) to the k-mer's range (~9 iterations at the default k=5, ~13
-/// at k=4), reducing random memory accesses and TLB pressure.
+/// prefix. At query time the first `k` characters narrow the binary search window from the whole
+/// array to that k-mer's range, which is where the saving is: the probe count is the log of the
+/// window, so dividing the window by `AMINO_ACID_COUNT^k` subtracts `k * log2(24)` ≈ 4.6k probes,
+/// whatever the database.
+///
+/// Against the full UniProt index — ~32 G entries, so ~35 probes unaided — that is:
+///
+/// | k | buckets | entries per bucket | probes |
+/// |---|---|---|---|
+/// | none | — | 32 G | ~35 |
+/// | 4 | 331,776 | ~96,000 | ~17 |
+/// | 5 (default) | 7,962,624 | ~4,000 | ~12 |
+/// | 6 | 191,102,976 | ~170 | ~8 |
+///
+/// Every one of those probes is a random read into an array far larger than any cache, so the
+/// saving is in DRAM latency and TLB pressure rather than in instructions.
 ///
 /// Memory: `AMINO_ACID_COUNT^k × 16 bytes` — ~127 MB at the default k=5. See [`MAX_KMER_K`] for
 /// the other sizes, and `sa-builder --kmer-size` for which one to pick.
@@ -111,6 +125,43 @@ impl KmerTable {
         Self::build_kmer_table(sa.len(), |i| sa[i] as usize, text_len, get_char, k)
     }
 
+    /// The shared implementation behind [`Self::build_from_sa`] and [`Self::build_from_raw_sa`],
+    /// which differ only in how they reach the suffix array.
+    ///
+    /// Both the array and the text arrive as closures rather than as slices: the array may be a
+    /// mapping that decodes per entry, and the text is 5-bit packed, so neither exposes a `&[T]`
+    /// to borrow. That is also what keeps this generic over the storage backends without naming
+    /// one.
+    ///
+    /// # How the bounds are found
+    ///
+    /// One pass over the suffix array, in parallel across rayon. Entry `i` names a text position;
+    /// the first `k` characters there give a table index, and `i` is folded into that bucket's
+    /// running minimum and maximum. A suffix is skipped when it runs off the end of the text or
+    /// holds a character outside [`ALPHABET`] — the separator and the terminator both do, which is
+    /// why a k-mer spanning a protein boundary is never recorded.
+    ///
+    /// The sortedness of the array is what makes the result a usable *range* rather than just two
+    /// numbers: entries sharing a k-mer prefix are contiguous, so nothing belonging to a different
+    /// k-mer sits between the minimum and the maximum. The min/max themselves would be correct
+    /// either way, which is why the parallel pass may visit entries in any order.
+    ///
+    /// # Why atomics
+    ///
+    /// Buckets are written by every rayon worker at once, so each is an `AtomicUsize` pair updated
+    /// with `fetch_min` / `fetch_max` — no lock, and no per-bucket ownership to partition. The
+    /// ordering is `Relaxed` throughout: nothing is published *through* these counters, and only
+    /// the settled values are read, after the parallel section has joined.
+    ///
+    /// `(usize::MAX, 0)` is the "absent" sentinel — an empty interval that any real `i` widens, so
+    /// an untouched bucket stays distinguishable from a bucket holding entry 0. [`Self::lookup`]
+    /// reads it back as `min > max`.
+    ///
+    /// # Panics
+    ///
+    /// If `k` exceeds [`MAX_KMER_K`]. `sa-builder --kmer-size` range-checks before it gets here,
+    /// so this is the backstop for callers constructing a table directly; the table is dense, so
+    /// the allocation above the limit is measured in tens of gigabytes.
     fn build_kmer_table(
         sa_len: usize,
         get_sa: impl Fn(usize) -> usize + Sync,
@@ -190,15 +241,51 @@ impl KmerTable {
 
     /// Looks up the inclusive `(min_bound, max_bound)` SA range for a k-mer prefix.
     ///
-    /// Returns `None` if the k-mer is absent from all proteins.
-    /// `kmer` must have exactly `k` bytes; L is treated the same as I.
+    /// `kmer` must have exactly `k` bytes; L is treated the same as I. See [`KmerLookup`] for why
+    /// the two negative answers are distinct.
     #[inline]
-    pub fn lookup(&self, kmer: &[u8]) -> Option<(usize, usize)> {
+    pub fn lookup(&self, kmer: &[u8]) -> KmerLookup {
         debug_assert_eq!(kmer.len(), self.k, "kmer length must equal table k");
-        let idx = self.bytes_to_kmer_index(kmer)?;
+        let Some(idx) = self.bytes_to_kmer_index(kmer) else {
+            return KmerLookup::NotRepresentable;
+        };
         let &(min, max) = &self.bounds[idx];
-        if min > max { None } else { Some((min, max)) }
+        if min > max { KmerLookup::Absent } else { KmerLookup::Range(min, max) }
     }
+}
+
+/// What a [`KmerTable`] can say about a query prefix.
+///
+/// The two negative answers mean opposite things and a caller must not treat them alike:
+///
+/// * [`Absent`](Self::Absent) is a *result* — the table covers this k-mer and no suffix carries
+///   it, so the search is over and the answer is no matches.
+/// * [`NotRepresentable`](Self::NotRepresentable) is an *abstention* — the k-mer holds a character
+///   outside `ALPHABET`, so the table has nothing to say and the caller must fall back to a
+///   full-range binary search.
+///
+/// These used to share a single `None`. That made the abstention indistinguishable from a result,
+/// and the abstention is not hypothetical: the left-extended tryptic search looks up
+/// `'-' + peptide` (see `sa_searcher::tryptic`), whose first character is the protein separator,
+/// which `ALPHABET` does not hold. Reading that `None` as "no matches" silently dropped every
+/// protein-start tryptic match — roughly 3 % of all tryptic hits, and every protein's N-terminal
+/// peptide. Both search paths worked around it by calling a second, table-free bounds function for
+/// exactly that one character; distinguishing the cases here retires both of those workarounds and
+/// puts the knowledge where it belongs.
+///
+/// The terminator `$` is in the same position and was the latent half of the same bug: a query
+/// carrying it in its first `k` characters answered `NoMatches` with a table attached and found
+/// its match without one. `peptide_search::normalise_peptide` rejects `-` and `$`, so only a
+/// caller reaching `Searcher::search_matching_suffixes_scalar` directly could see it — but that
+/// method is public, and `sa-benchmarks` is such a caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KmerLookup {
+    /// The k-mer's inclusive SA range, `min_bound <= max_bound`.
+    Range(usize, usize),
+    /// The k-mer is representable but occurs nowhere in the index.
+    Absent,
+    /// The k-mer holds a character outside `ALPHABET`, so this table cannot answer for it.
+    NotRepresentable
 }
 
 impl WriteBinary for KmerTable {
@@ -273,7 +360,7 @@ mod tests {
 
     use crate::{
         array::{InMemorySA, OriginalSA},
-        kmer_table::KmerTable
+        kmer_table::{KmerLookup, KmerTable}
     };
 
     fn build_test_table(input: &str, sa_values: Vec<i64>, k: usize) -> KmerTable {
@@ -389,9 +476,9 @@ mod tests {
     #[test]
     fn test_lookup_present() {
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
-        let result = table.lookup(b"AC");
-        assert!(result.is_some(), "AC should be found");
-        let (min, max) = result.unwrap();
+        let KmerLookup::Range(min, max) = table.lookup(b"AC") else {
+            panic!("AC should be found");
+        };
         assert!(min <= max);
     }
 
@@ -400,30 +487,41 @@ mod tests {
     /// character arrives here as multi-byte UTF-8 whose every byte is >= 128. The alphabet table
     /// must therefore be indexable by all 256 values — it used to be `[u8; 128]`, which made this
     /// an out-of-bounds index one line *before* the `char_idx == 0` test that rejects such bytes.
+    ///
+    /// These are abstentions, not results: the table has no bucket for them, so it reports
+    /// `NotRepresentable` and the caller searches the full range rather than concluding no matches.
     #[test]
     fn test_lookup_rejects_bytes_outside_ascii_without_panicking() {
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
 
         // 'é' (U+00E9) is 0xC3 0xA9 in UTF-8 — what `to_uppercase()` leaves in the query.
-        assert!(table.lookup(&[0xC3, 0xA9]).is_none(), "non-ASCII bytes are not in the alphabet");
+        assert_eq!(
+            table.lookup(&[0xC3, 0xA9]),
+            KmerLookup::NotRepresentable,
+            "non-ASCII bytes are not in the alphabet"
+        );
         // The boundary itself, and the top of the range.
-        assert!(table.lookup(&[0x80, 0x80]).is_none());
-        assert!(table.lookup(&[0xFF, 0xFF]).is_none());
+        assert_eq!(table.lookup(&[0x80, 0x80]), KmerLookup::NotRepresentable);
+        assert_eq!(table.lookup(&[0xFF, 0xFF]), KmerLookup::NotRepresentable);
         // A valid residue followed by one that is out of range.
-        assert!(table.lookup(&[b'A', 0xFF]).is_none());
+        assert_eq!(table.lookup(&[b'A', 0xFF]), KmerLookup::NotRepresentable);
     }
 
+    // `Absent` and `NotRepresentable` are the two answers that used to share a `None`, and the
+    // whole point of the enum is that they are not interchangeable: "ZZ" is a real k-mer the table
+    // covers and does not hold, "A-" is one the table cannot speak about at all.
     #[test]
     fn test_lookup_absent() {
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
-        let result = table.lookup(b"ZZ");
-        assert!(result.is_none(), "ZZ should not be found");
+        assert_eq!(table.lookup(b"ZZ"), KmerLookup::Absent, "ZZ is representable and not in the index");
     }
 
     #[test]
-    fn test_lookup_separator_returns_none() {
+    fn test_lookup_separator_is_not_representable() {
         let table = build_test_table("AC-AC$", vec![5, 2, 0, 3, 4, 1], 2);
-        assert!(table.lookup(b"A-").is_none());
+        assert_eq!(table.lookup(b"A-"), KmerLookup::NotRepresentable);
+        // The terminator is in exactly the same position.
+        assert_eq!(table.lookup(b"C$"), KmerLookup::NotRepresentable);
     }
 
     #[test]

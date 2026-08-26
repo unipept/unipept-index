@@ -5,7 +5,7 @@
 
 use std::cmp::min;
 
-use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER};
+use protein_metadata::ProteinsBackend;
 
 use super::{
     BoundSearch,
@@ -78,9 +78,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Searches for the minimum and maximum bound for a string in the suffix array.
     ///
-    /// When a k-mer table is attached, the first `k` characters of `search_string` are used
-    /// to narrow the binary search window before running the search, reducing random memory
-    /// accesses by ~60 %.
+    /// The opening window comes from `Searcher::opening_window`, which is where the k-mer table
+    /// is consulted: when one is attached and can answer for this prefix, the first `k` characters
+    /// narrow the window before the search runs — on the full UniProt index ~12 probes at the
+    /// default k=5 instead of ~35, so roughly two thirds of the random SA reads go away. See
+    /// [`KmerTable`](crate::KmerTable) for the counts at every k, and `opening_window` for the
+    /// queries the table abstains on (the separator-extended tryptic search among them) and what
+    /// happens to them.
     ///
     /// # Arguments
     /// * `search_string` - The string/peptide we are searching in the suffix array
@@ -90,37 +94,13 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Returns the minimum and maximum bound of all matches in the suffix array, or `NoMatches` if
     /// no matches were found
     pub fn search_bounds_scalar(&self, search_string: &[u8]) -> BoundSearchResult {
-        let (left, right, lcp_skip) = match &self.kmer_table {
-            Some(table) if search_string.len() >= table.k => match table.lookup(&search_string[..table.k]) {
-                Some((lo, hi)) => (lo, hi + 1, table.k),
-                None => return BoundSearchResult::NoMatches
-            },
-            _ => (0, self.sa.len(), 0)
+        let Some((left, right, lcp_skip)) = self.opening_window(search_string) else {
+            return BoundSearchResult::NoMatches;
         };
         self.search_bounds_inner_scalar(search_string, left, right, lcp_skip)
     }
 
-    /// `search_bounds_scalar` over the whole suffix array, never consulting the k-mer table.
-    ///
-    /// Required for search strings containing the protein separator, which the k-mer table
-    /// cannot represent: `ALPHABET` in `kmer_table.rs` holds amino acids only, so
-    /// `bytes_to_kmer_index` returns `None` for any k-mer containing `-`, and `search_bounds_scalar`
-    /// would turn that into `NoMatches`. Routing the separator variant of the left-extended
-    /// tryptic search through the table would therefore silently drop every protein-start
-    /// match — roughly 3 % of all tryptic hits, and every protein's N-terminal peptide.
-    ///
-    /// Costs a full-height binary search (~35 random SA reads instead of ~13). Measured on the
-    /// full DB that is affordable: even 26-50aa tryptic queries, where this fixed cost is the
-    /// largest share of a ~4 µs budget, came out 1.40x *faster* overall (run5). Adding `-` to the
-    /// k-mer table's ALPHABET would remove the special case, at +29 MB and a rebuild of every
-    /// table file — not worth it while the bypass is free. Bounded by
-    /// `test_extended_protein_start_with_kmer_table`.
-    fn search_bounds_full_range_scalar(&self, search_string: &[u8]) -> BoundSearchResult {
-        self.search_bounds_inner_scalar(search_string, 0, self.sa.len(), 0)
-    }
-
-    /// Shared tail of `search_bounds_scalar` / `search_bounds_full_range_scalar`: the two bound searches over
-    /// an already-chosen window.
+    /// The two bound searches over an already-chosen window.
     fn search_bounds_inner_scalar(
         &self,
         search_string: &[u8],
@@ -251,7 +231,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                         return SearchAllSuffixesResult::MaxMatches(result);
                     }
-                    // range_size < max_matches: collect all entries and continue to the next
+                    // range_size <= max_matches: collect all entries and continue to the next
                     // skip value (rare for short peptides where the range is large).
                     for s in self.sa.iter_range(min_bound, max_bound) {
                         matching_suffixes.push(s);
@@ -298,14 +278,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 extended.extend_from_slice(search_string);
 
                 let t_bounds = Timer::start();
-                // The separator cannot be represented in the k-mer table — see
-                // `search_bounds_full_range_scalar` for why routing it there would silently drop every
-                // protein-start match.
-                let bounds = if prefix_char == SEPARATION_CHARACTER {
-                    self.search_bounds_full_range_scalar(&extended)
-                } else {
-                    self.search_bounds_scalar(&extended)
-                };
+                // No special case for the separator variant: the k-mer table cannot represent `-`
+                // and says so, and `opening_window` turns that abstention into a full-range search
+                // rather than into `NoMatches`.
+                let bounds = self.search_bounds_scalar(&extended);
                 self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
                 if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
@@ -399,7 +375,7 @@ mod tests {
         let bounds_res = searcher.search_bounds_scalar(b"I");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((13, 16)));
 
-        // search bounds 'RIZ' with equal I and L
+        // search bounds 'RIY': 'L' in the text is normalised to 'I', so 'RIY' matches 'RLY'
         let bounds_res = searcher.search_bounds_scalar(b"RIY");
         assert_eq!(bounds_res, BoundSearchResult::SearchResult((17, 18)));
     }
@@ -408,11 +384,11 @@ mod tests {
     fn test_il_equality_sparse() {
         let searcher = example_searcher_with(&EXAMPLE_SA_SPARSE3, 3, Mapping::Sparse);
 
-        // search bounds 'RIZ' with equal I and L
+        // 'RIY' with I and L equated: matches 'RLY' in the text
         let found_suffixes = searcher.search_matching_suffixes_scalar(b"RIY", usize::MAX, true, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::SearchResult(vec![16]));
 
-        // search bounds 'RIZ' without equal I and L
+        // 'RIY' without I and L equated: the text holds 'RLY', so validation rejects it
         let found_suffixes = searcher.search_matching_suffixes_scalar(b"RIY", usize::MAX, false, false);
         assert_eq!(found_suffixes, SearchAllSuffixesResult::NoMatches);
     }
@@ -489,6 +465,120 @@ mod tests {
                 kmered.search_matching_suffixes_scalar(p, usize::MAX, false, false),
                 plain.search_matching_suffixes_scalar(p, usize::MAX, false, false),
                 "k-mer vs plain mismatch for {:?}",
+                std::str::from_utf8(p).unwrap()
+            );
+        }
+    }
+
+    // The k-mer table must be an accelerator under *both* `equate_il` settings, including for
+    // peptides that contain I or L — the case `test_search_with_kmer_table` above cannot reach,
+    // because its `example_searcher` fixture carries a hand-written, non-L→I-normalised SA and so
+    // has to restrict itself to I/L-free prefixes.
+    //
+    // `searcher_over_text` has no such limitation: it sorts the SA on L→I-normalised text while
+    // storing the original characters, exactly as `sa-builder` does (`build_ssa` normalises its own
+    // copy; `proteins.bin` keeps the L). That is what makes the table's L→I folding sound — its
+    // buckets are keyed on normalised k-mers, and suffixes sharing one are contiguous only in that
+    // order.
+    //
+    // The property being pinned: narrowing happens entirely in normalised space, so a table can
+    // never decide an I-vs-L question. That is settled afterwards by `check_il_locations`, against
+    // the true text characters, over I/L positions the k-mer `lcp_skip` does not shrink. Hence the
+    // `RIY`/`RLY` pairs below — identical in normalised space, different answers at `equate_il=false`
+    // (the fixture holds I at 12 and L at 25), and the table must not disturb either.
+    #[test]
+    fn test_kmer_table_is_neutral_under_both_il_settings() {
+        let peptides: Vec<&[u8]> = vec![
+            b"RIY", b"RLY", // text has I at 12: equate_il=false accepts RIY, rejects RLY
+            b"TRL", b"TRI", // text has L at 25: the mirror image
+            b"LDE", b"IDE", b"DEI", b"DEL", b"KTRLDEI", b"KTRIDEI", b"MKA", b"ZZZ",
+        ];
+
+        for &sparseness in &[1u8, 2, 3] {
+            let plain = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
+            let mut kmered = searcher_over_text(TRYPTIC_FIXTURE, sparseness);
+            kmered.build_kmer_table(3);
+
+            for equate_il in [false, true] {
+                for tryptic in [false, true] {
+                    for p in &peptides {
+                        assert_eq!(
+                            kmered.search_matching_suffixes_scalar(p, usize::MAX, equate_il, tryptic),
+                            plain.search_matching_suffixes_scalar(p, usize::MAX, equate_il, tryptic),
+                            "the k-mer table changed the result: sparseness={sparseness} \
+                             equate_il={equate_il} tryptic={tryptic} peptide={:?}",
+                            std::str::from_utf8(p).unwrap()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Non-vacuous companion to the above: `equate_il` must actually decide these peptides, or the
+    // sweep would be comparing two piles of `NoMatches` and would pass however the table behaved.
+    #[test]
+    fn test_il_spelling_discriminates_in_the_kmer_fixture() {
+        let mut s = searcher_over_text(TRYPTIC_FIXTURE, 1);
+        s.build_kmer_table(3);
+
+        // "RIY" is the true spelling (I at 12); "RLY" only matches when I and L are equated.
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"RIY", usize::MAX, false, false),
+            SearchAllSuffixesResult::SearchResult(vec![11])
+        );
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"RLY", usize::MAX, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"RLY", usize::MAX, true, false),
+            SearchAllSuffixesResult::SearchResult(vec![11])
+        );
+
+        // "TRL" is the true spelling (L at 25); "TRI" is the one that needs equating.
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"TRL", usize::MAX, false, false),
+            SearchAllSuffixesResult::SearchResult(vec![23])
+        );
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"TRI", usize::MAX, false, false),
+            SearchAllSuffixesResult::NoMatches
+        );
+        assert_eq!(
+            s.search_matching_suffixes_scalar(b"TRI", usize::MAX, true, false),
+            SearchAllSuffixesResult::SearchResult(vec![23])
+        );
+    }
+
+    // A query whose first k characters are outside the k-mer table's ALPHABET must be answered by
+    // a full-range search, not reported as `NoMatches`.
+    //
+    // `test_extended_protein_start_with_kmer_table` below covers the one instance the tryptic
+    // search creates for itself (`'-' + peptide`), and used to be the only thing holding this
+    // property up — via a separate table-free bounds function the extension path called by name.
+    // Now that the table reports the abstention itself, every unrepresentable query gets it, so
+    // this reaches the property directly: `-AC` occurs at position 10 of EXAMPLE_TEXT, and `Y$`
+    // runs into the terminator. Both were silently lost with a table attached and found without
+    // one, and neither goes anywhere near the tryptic path.
+    #[test]
+    fn test_kmer_table_abstains_on_unrepresentable_prefix() {
+        let plain = example_searcher();
+        let mut kmered = example_searcher();
+        kmered.build_kmer_table(2);
+
+        // Non-vacuous: these really do match, so a wrong answer is `NoMatches` rather than a tie.
+        assert_eq!(
+            plain.search_matching_suffixes_scalar(b"-AC", usize::MAX, false, false),
+            SearchAllSuffixesResult::SearchResult(vec![10]),
+            "the separator match is missing from the un-tabled searcher"
+        );
+
+        for p in [&b"-AC"[..], b"Y$", b"-CL", b"$"] {
+            assert_eq!(
+                kmered.search_matching_suffixes_scalar(p, usize::MAX, false, false),
+                plain.search_matching_suffixes_scalar(p, usize::MAX, false, false),
+                "the k-mer table changed the result for {:?}",
                 std::str::from_utf8(p).unwrap()
             );
         }

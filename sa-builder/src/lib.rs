@@ -109,9 +109,9 @@ pub enum SAConstructionAlgorithm {
 /// `sa_index::suffix_to_protein_index` documents the three representations in full.
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SuffixToProteinMappingStyle {
-    /// One `u32` per text position: a single load per lookup, at 4 bytes per residue — 0.84 GB
-    /// over a 209 M-position text, and ~256 GB at full UniProt scale, which exceeds the whole
-    /// rest of the index. For small databases only.
+    /// One `u32` per text position: a single load per lookup, at 4 bytes per residue — ~1.2 GB
+    /// over the ~300 M-residue reference text, and ~256 GB at full UniProt scale, which exceeds
+    /// the whole rest of the index. For small databases only.
     Dense,
     /// The start position of each protein, binary-searched. Smallest, at O(log m) dependent
     /// loads per lookup for m proteins, each likely a cache miss.
