@@ -319,16 +319,14 @@ pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Pr
     let uid_bytes_total = u64::from_le_bytes(buf8) as usize;
     reader.read_exact(&mut buf8)?;
     let fa_bytes_total = u64::from_le_bytes(buf8) as usize;
-    // Each of these three lengths is eight bytes straight out of the file, and this is the one
-    // route that reaches the parser with no size check in front of it — the mapped routes go
-    // through `mmap::layout` first. `vec![0; n]` on a corrupt count reaches `handle_alloc_error`
-    // and `abort()`s: un-catchable, so `Result` cannot carry it and the default-built server dies
-    // on a damaged index instead of reporting it. The mapped loaders return `Err` for the very
-    // same bytes.
-    let mut table: Vec<[u8; 16]> = try_zeroed(protein_count, "protein entries")?;
-    for entry in table.iter_mut() {
-        reader.read_exact(entry)?;
-    }
+
+    // Held as bytes rather than as `[u8; 16]`s so the whole table can be read in one call instead
+    // of ~200 M sixteen-byte ones; the decode loop below walks it back in `chunks_exact`.
+    let table_bytes = protein_count
+        .checked_mul(16)
+        .ok_or_else(|| format!("The proteins header declares {protein_count} proteins, which cannot be allocated"))?;
+    let mut table: Vec<u8> = try_zeroed(table_bytes, "protein entry bytes")?;
+    reader.read_exact(&mut table)?;
     let mut uid_data: Vec<u8> = try_zeroed(uid_bytes_total, "UID bytes")?;
     reader.read_exact(&mut uid_data)?;
     let mut fa_data: Vec<u8> = try_zeroed(fa_bytes_total, "annotation bytes")?;
@@ -339,7 +337,7 @@ pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Pr
         .try_reserve_exact(protein_count)
         .map_err(|_| format!("The proteins header declares {protein_count} proteins, which cannot be allocated"))?;
 
-    for (index, entry) in table.iter().enumerate() {
+    for (index, entry) in table.chunks_exact(16).enumerate() {
         let taxon_id = u32::from_le_bytes(entry[0..4].try_into()?);
         let uid_offset = u32::from_le_bytes(entry[4..8].try_into()?) as usize;
         let uid_len = u16::from_le_bytes(entry[8..10].try_into()?) as usize;

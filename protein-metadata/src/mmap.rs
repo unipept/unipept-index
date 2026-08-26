@@ -14,7 +14,13 @@
 //! `read_metadata_section` rather than a second copy; the two `MmapBackedProteins` loaders parse
 //! no entries at all, decoding each one lazily in `get`.
 
-use std::{error::Error, path::Path, sync::Arc};
+use std::{
+    error::Error,
+    fs::File,
+    io::{BufReader, Seek, SeekFrom},
+    path::Path,
+    sync::Arc
+};
 
 use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap};
 use memmap2::Mmap;
@@ -286,7 +292,18 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
 
 /// Maps `path` read-only and advises random access, the way every loader here wants it.
 fn map_file(path: &Path) -> Result<Arc<Mmap>, Box<dyn Error>> {
-    use std::fs::File;
+    Ok(map_file_with_handle(path)?.0)
+}
+
+/// [`map_file`], but hands the open handle back as well.
+///
+/// For the one loader that also *reads* the file rather than only mapping it. Reading through this
+/// handle rather than through a second `File::open` is what keeps its two halves consistent: an
+/// index is replaced by rename (see the SAFETY note in `protein_text::mmap`), so a replacement
+/// landing between the map and a re-open would hand back text from the old inode and metadata from
+/// the new one. Both an fd and a mapping pin the inode they were opened on, so one handle used for
+/// both cannot straddle a replacement.
+fn map_file_with_handle(path: &Path) -> Result<(Arc<Mmap>, File), Box<dyn Error>> {
     let f = File::open(path)?;
     // SAFETY: see the note in `protein_text::mmap` — an index file is written once by
     // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
@@ -296,7 +313,7 @@ fn map_file(path: &Path) -> Result<Arc<Mmap>, Box<dyn Error>> {
     #[cfg(unix)]
     mmap.advise(memmap2::Advice::Random)?;
 
-    Ok(mmap)
+    Ok((mmap, f))
 }
 
 /// Metadata and text both borrowed from the mapping — the smallest resident footprint.
@@ -349,28 +366,19 @@ impl ReadBinaryMmap for MmapBackedProteins<InMemoryProteinText> {
 ///
 /// This is a `ReadBinaryMmap` impl on the *preloaded* struct, which reads oddly until you notice
 /// that its text still lives in the mapping: something has to hold the file open, and the metadata
-/// is what gets copied out. `read_metadata_section` is the same parser the fully-preloaded reader
-/// uses, applied to the mapping instead of a file handle.
+/// is what gets copied out. It is also the one loader here that both maps the file and reads from
+/// it — `read_metadata_section` is the same parser the fully-preloaded reader uses, over the same
+/// kind of `BufReader`, just seeked past the text section first.
 impl ReadBinaryMmap for crate::InMemoryProteins<MmapBackedProteinText> {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
-        let mmap = map_file(path)?;
+        let (mmap, mut f) = map_file_with_handle(path)?;
         let l = layout(&mmap)?;
         let text = MmapBackedProteinText::from_mmap(Arc::clone(&mmap), l.text_data_offset, l.text_length);
 
-        // Stream the metadata section in before parsing it, rather than letting the parser demand
-        // page it. `map_file` sets `MADV_RANDOM` for the query workload this mapping exists to
-        // serve, and `read_metadata_section` then walks the section with one `read_exact` per
-        // 16-byte entry — so with readahead disabled it faults 8 GB in through ~200 M sixteen-byte
-        // reads. Cold, that measured 38.8 MB/s against the ~530 MB/s the same parser reaches over
-        // the same bytes from a `BufReader`, and it cost this configuration 218.9 s of a 536.7 s
-        // startup (`startup`, b530143049). It went unnoticed for as long as it did because the
-        // suite ran this arm behind the mapped one, whose page sweep left the section warm.
-        //
-        // `touch_all_pages` is the right helper and not just a convenient one: it brackets the walk
-        // with `MADV_SEQUENTIAL` and restores `MADV_RANDOM` afterwards, which is exactly the
-        // temporary reversal wanted for one bulk copy out of a mapping tuned for random access.
-        let _ = memory_hints::warmup::touch_all_pages(&mmap, l.meta_offset..mmap.len());
-        let proteins = read_metadata_section(&mut &mmap[l.meta_offset..])?;
+        // Seek past the text section: `read_metadata_section` starts at the metadata header, and
+        // `layout` has already bounded that offset against the file.
+        f.seek(SeekFrom::Start(l.meta_offset as u64))?;
+        let proteins = read_metadata_section(&mut BufReader::with_capacity(1 << 20, f))?;
 
         Ok(Self::new(text, proteins))
     }
