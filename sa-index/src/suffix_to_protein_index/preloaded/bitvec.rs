@@ -90,11 +90,11 @@ impl SuffixToProteinMappingBackend for BitVecSuffixToProtein {
         let position = suffix as usize;
         let word_index = position / 64;
         if word_index < self.blocks.len() {
-            prefetch::prefetch_read(&self.blocks[word_index] as *const u64);
+            memory_hints::prefetch::prefetch_read(&self.blocks[word_index] as *const u64);
         }
         let cell_index = position / 512;
         if cell_index < self.counts.len() {
-            prefetch::prefetch_read(&self.counts[cell_index] as *const Superblock);
+            memory_hints::prefetch::prefetch_read(&self.counts[cell_index] as *const Superblock);
         }
     }
 }
@@ -236,12 +236,12 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 
     let mut blocks = super::try_alloc_exact(block_count, "bitvec")?;
     // Before the loop below touches a page of it, which is the only point at which the advice does
-    // anything — see `bitarray::hugepages`, and `array::preloaded::original::load_original`, which
+    // anything — see `memory_hints::hugepages`, and `array::preloaded::original::load_original`, which
     // does the same for the same reason. At UniProt scale this is the ~8 GB half of a ~10 GB
     // structure, and it was the one large preloaded allocation in the index that went unadvised.
     // The fill below pushes exactly `block_count` entries and the `truncate` at the end cannot
     // reallocate, so the advice stays with the allocation it was issued for.
-    bitarray::hugepages::advise_capacity(&blocks);
+    memory_hints::hugepages::advise_capacity(&blocks);
     let mut words_left = block_count;
     while words_left > 0 {
         let words = words_left.min(buffer.len() / 8);
@@ -256,7 +256,7 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     let sb_count = block_count / 8 + 1;
     let mut counts = super::try_alloc_exact(sb_count, "bitvec superblock")?;
     // The other ~2 GB of the same structure; same argument as for `blocks` above.
-    bitarray::hugepages::advise_capacity(&counts);
+    memory_hints::hugepages::advise_capacity(&counts);
     let mut cells_left = sb_count;
     while cells_left > 0 {
         let cells = cells_left.min(buffer.len() / 16);

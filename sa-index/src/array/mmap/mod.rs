@@ -71,7 +71,7 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         let byte_offset = self.data_offset + (index * self.bits_per_value) / 8;
         if byte_offset < self.mmap.len() {
             let ptr: *const u8 = &self.mmap[byte_offset];
-            prefetch::prefetch_read(ptr);
+            memory_hints::prefetch::prefetch_read(ptr);
         }
     }
 

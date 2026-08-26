@@ -104,7 +104,7 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
     #[inline]
     fn prefetch(&self, index: usize) {
         if let Some(entry) = self.entry(index) {
-            prefetch::prefetch_read(entry.as_ptr());
+            memory_hints::prefetch::prefetch_read(entry.as_ptr());
         }
     }
 
@@ -127,10 +127,10 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
         let uid_ptr = self.uid_data_offset + uid_off;
         let fa_ptr = self.fa_data_offset + fa_off;
         if uid_ptr < self.mmap.len() {
-            prefetch::prefetch_read(&self.mmap[uid_ptr] as *const u8);
+            memory_hints::prefetch::prefetch_read(&self.mmap[uid_ptr] as *const u8);
         }
         if fa_ptr < self.mmap.len() {
-            prefetch::prefetch_read(&self.mmap[fa_ptr] as *const u8);
+            memory_hints::prefetch::prefetch_read(&self.mmap[fa_ptr] as *const u8);
         }
     }
 

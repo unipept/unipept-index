@@ -33,7 +33,7 @@ impl SuffixToProteinMappingBackend for DenseSuffixToProtein {
     fn prefetch_for_suffix(&self, suffix: i64) {
         let idx = suffix as usize;
         if idx < self.mapping.len() {
-            prefetch::prefetch_read(&self.mapping[idx] as *const u32);
+            memory_hints::prefetch::prefetch_read(&self.mapping[idx] as *const u32);
         }
     }
 }
@@ -84,10 +84,10 @@ pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixT
     reader.read_exact(&mut buf8)?;
     let count = u64::from_le_bytes(buf8) as usize;
     let mut mapping = super::try_alloc_exact(count, "dense")?;
-    // Before the loop below touches it; see `bitarray::hugepages` for why the ordering is the whole
+    // Before the loop below touches it; see `memory_hints::hugepages` for why the ordering is the whole
     // point, and the bitvec reader for the same call. Exactly `count` pushes follow, so the
     // allocation the advice names is the one that gets filled.
-    bitarray::hugepages::advise_capacity(&mapping);
+    memory_hints::hugepages::advise_capacity(&mapping);
     for _ in 0..count {
         let mut buf4 = [0u8; 4];
         reader.read_exact(&mut buf4)?;

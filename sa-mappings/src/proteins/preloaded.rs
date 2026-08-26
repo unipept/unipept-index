@@ -177,7 +177,7 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T
     #[inline]
     fn prefetch(&self, index: usize) {
         if index < self.proteins.len() {
-            prefetch::prefetch_read(&self.proteins[index] as *const Protein);
+            memory_hints::prefetch::prefetch_read(&self.proteins[index] as *const Protein);
         }
     }
 }

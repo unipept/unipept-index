@@ -1,21 +1,16 @@
 //! A single portable software-prefetch hint.
 //!
-//! The index is far larger than any cache — a full UniProt suffix array runs to ~149 GB and the
-//! suffix-to-protein mapping to ~10 GB, out of 223 GB total; see the crate docs of `sa-index` for
-//! the full breakdown — so both backends spend most of their time waiting on DRAM. Binary search
-//! and protein retrieval walk these structures in an order the hardware prefetcher cannot
+//! Binary search and protein retrieval walk the index in an order the hardware prefetcher cannot
 //! predict, which is exactly the case software prefetching exists for: the address of the *next*
 //! access is known several iterations before the value is needed, so the load can be started
-//! early and its ~80-100 ns latency overlapped with useful work.
+//! early and its ~80-100 ns latency overlapped with useful work. See the [crate docs](crate) for
+//! how large the structures being walked are, and why the sibling [`hugepages`](crate::hugepages)
+//! hint attacks the same problem from the other end.
 //!
 //! Callers pair this with two-pass batching (fill a batch and issue hints, then process the
 //! batch) rather than prefetching one element ahead. Both loops are methods on `sa_searcher`'s
 //! `Searcher`: the private `iterate_sa_range`, and `retrieve_proteins`, which is public but is
 //! written in the private `sa_searcher::retrieval` module.
-//!
-//! This lives in its own crate so that `text-compression`, `sa-mappings` and `sa-index` can all
-//! issue hints without depending on one another.
-#![warn(missing_docs)]
 
 /// Issues a non-blocking hardware prefetch hint for the cache line at `ptr`.
 ///

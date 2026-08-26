@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 binary-traits = { path = "../binary-traits" }
 bitarray = { path = "../bitarray" }
-prefetch = { path = "../prefetch" }
+memory-hints = { path = "../memory-hints" }
 memmap2 = "0.9"
 
 [dev-dependencies]

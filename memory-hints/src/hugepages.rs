@@ -1,12 +1,17 @@
 //! Best-effort transparent huge page advice for large anonymous buffers.
 //!
-//! WHEN the advice is issued decides whether it does anything at all, so both `with_capacity`
-//! constructors call [`advise_capacity`] on the reserved allocation *before* zeroing it, and no
-//! caller should need to. `MADV_HUGEPAGE` on an untouched region makes the *page faults that
-//! populate it* allocate 2 MB pages directly. On a region that is already populated it does
-//! nothing of the sort: the 4 KB pages are already there, and all the advice buys is eligibility
-//! for khugepaged to collapse them in the background — at a default 4096 pages per 10 s scan,
-//! which for a 160 GB suffix array is on the order of a day.
+//! The sibling hint to [`prefetch`](crate::prefetch), against the same problem: where that one
+//! hides the latency of a single load, this one cuts how many page-walks the walk costs at all. A
+//! 149 GB suffix array needs ~36 M page-table entries at 4 KB granularity and ~72 K at 2 MB, and
+//! the accesses are random, so the TLB miss rate is the difference between the two.
+//!
+//! WHEN the advice is issued decides whether it does anything at all, so `bitarray`'s two
+//! `with_capacity` constructors call [`advise_capacity`] on the reserved allocation *before*
+//! zeroing it, and no caller of theirs should need to. `MADV_HUGEPAGE` on an untouched region
+//! makes the *page faults that populate it* allocate 2 MB pages directly. On a region that is
+//! already populated it does nothing of the sort: the 4 KB pages are already there, and all the
+//! advice buys is eligibility for khugepaged to collapse them in the background — at a default
+//! 4096 pages per 10 s scan, which for a 160 GB suffix array is on the order of a day.
 //!
 //! Two versions of that mistake have already been made here. The advice was first issued by the
 //! loaders, after `read_binary` had filled the buffer. Moving it into the constructors did not fix

@@ -32,7 +32,7 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
         let off = self.data_offset + suffix as usize * 4;
         if off < self.mmap.len() {
             // Bounds checked above, so this indexes the mapping directly (Mmap derefs to [u8]).
-            prefetch::prefetch_read(&self.mmap[off] as *const u8);
+            memory_hints::prefetch::prefetch_read(&self.mmap[off] as *const u8);
         }
     }
 

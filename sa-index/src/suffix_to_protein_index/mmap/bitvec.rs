@@ -78,11 +78,11 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
         let sb_off = self.counts_offset + (pos / 512) * 16;
         if bit_off < self.mmap.len() {
             // Bounds checked above, so this indexes the mapping directly (Mmap derefs to [u8]).
-            prefetch::prefetch_read(&self.mmap[bit_off] as *const u8);
+            memory_hints::prefetch::prefetch_read(&self.mmap[bit_off] as *const u8);
         }
         if sb_off + 16 <= self.mmap.len() {
             // Bounds checked above, so this indexes the mapping directly (Mmap derefs to [u8]).
-            prefetch::prefetch_read(&self.mmap[sb_off] as *const u8);
+            memory_hints::prefetch::prefetch_read(&self.mmap[sb_off] as *const u8);
         }
     }
 

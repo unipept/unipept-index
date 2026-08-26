@@ -30,7 +30,7 @@ impl DynBitArray {
     /// `bits_per_value` is expected to be in `1..=64`.
     ///
     /// The huge-page advice is issued here, between reserving the allocation and zeroing it, and
-    /// not by the caller once it has filled it: see [`crate::hugepages`] for why that ordering is
+    /// not by the caller once it has filled it: see [`memory_hints::hugepages`] for why that ordering is
     /// the whole point.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
         Self::try_with_capacity(capacity, bits_per_value)
@@ -54,9 +54,9 @@ impl DynBitArray {
         // every word, which faults the whole buffer in. Advice issued after that arrives at a
         // region that is already populated with 4 KB pages, where it buys nothing but khugepaged
         // eligibility. Here it still governs the faults `resize` is about to take. See
-        // [`crate::hugepages`]. `resize` cannot reallocate, since the capacity is already reserved,
+        // [`memory_hints::hugepages`]. `resize` cannot reallocate, since the capacity is already reserved,
         // so the advice stays with the allocation it was issued for.
-        crate::hugepages::advise_capacity(&data);
+        memory_hints::hugepages::advise_capacity(&data);
         data.resize(words, 0);
         Some(Self {
             data,

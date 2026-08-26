@@ -232,7 +232,7 @@ silently ignores.
 | `bitarray` | dense arrays of fixed-width values |
 | `fa-compression` | encoding for functional annotations |
 | `binary-traits` | the read/write/load traits every on-disk structure is written and read through |
-| `prefetch` | one portable software-prefetch hint |
+| `memory-hints` | prefetch and transparent-huge-page hints to the memory subsystem |
 | `libsais64-rs` | bindings to the suffix-array construction library |
 | `sa-benchmarks` | measurement harness (see below) |
 

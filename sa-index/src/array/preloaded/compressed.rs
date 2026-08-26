@@ -39,7 +39,7 @@ impl SuffixArrayBackend for CompressedSA {
         if index < self.0.len() {
             let word_idx = (index * self.0.bits_per_value()) / 64;
             let ptr: *const u64 = self.0.get_data_slice(word_idx, word_idx + 1).as_ptr();
-            prefetch::prefetch_read(ptr);
+            memory_hints::prefetch::prefetch_read(ptr);
         }
     }
 }
@@ -154,7 +154,7 @@ pub(super) fn load_compressed(
     }
     // The huge-page advice is not issued here: `DynBitArray::with_capacity` already did it, on the
     // untouched allocation, which is the only point at which it does anything. See
-    // `bitarray::hugepages`.
+    // `memory_hints::hugepages`.
     Ok(compressed_suffix_array)
 }
 

@@ -75,7 +75,7 @@
 //!
 //! One consequence shows up everywhere and is easy to undo by accident: because the workspace
 //! sets no `[profile.release]`, there is **no cross-crate LTO**, so a call into `bitarray`,
-//! `text-compression`, `sa-mappings` or `prefetch` is a real cross-crate call unless the callee's
+//! `text-compression`, `sa-mappings` or `memory-hints` is a real cross-crate call unless the callee's
 //! body reaches the caller's codegen unit — which happens only when the callee is `#[inline]` or
 //! generic (both export their MIR). Those attributes on the small getters are load-bearing, not
 //! decoration.

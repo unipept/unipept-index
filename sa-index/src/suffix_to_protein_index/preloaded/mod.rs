@@ -25,7 +25,7 @@ pub use sparse::SparseSuffixToProtein;
 /// different outcome from the `Err` the mmap readers return for the very same bytes. A crafted
 /// 9-byte header declaring `2^60` entries used to kill the process here and load-error there.
 ///
-/// The capacity stays exact on purpose: `bitarray::hugepages::advise_capacity` is issued against
+/// The capacity stays exact on purpose: `memory_hints::hugepages::advise_capacity` is issued against
 /// these allocations, and a rounded-up or capped capacity would detach the advice from the
 /// allocation it describes.
 pub(super) fn try_alloc_exact<T>(capacity: usize, what: &str) -> Result<Vec<T>, Box<dyn Error>> {

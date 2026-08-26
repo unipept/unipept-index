@@ -12,9 +12,9 @@ coverage:
       fa-compression:
         flags:
           - fa-compression
-      prefetch:
+      memory-hints:
         flags:
-          - prefetch
+          - memory-hints
       sa-builder:
         flags:
           - sa-builder
@@ -46,9 +46,9 @@ flags:
     paths:
       - fa-compression
     carryforward: true
-  prefetch:
+  memory-hints:
     paths:
-      - prefetch
+      - memory-hints
     carryforward: true
   sa-builder:
     paths:

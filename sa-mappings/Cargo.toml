@@ -11,7 +11,7 @@ tempdir = "0.3.7"
 [dependencies]
 binary-traits = { path = "../binary-traits" }
 fa-compression = { path = "../fa-compression" }
-prefetch = { path = "../prefetch" }
+memory-hints = { path = "../memory-hints" }
 bytelines = "2.5.0"
 text-compression = { path = "../text-compression" }
 memmap2 = "0.9"

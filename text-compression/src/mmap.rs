@@ -146,7 +146,7 @@ impl ProteinTextBackend for MmapBackedProteinText {
     fn prefetch_at(&self, index: usize) {
         let byte_off = self.data_offset + (index * 5) / 8;
         if byte_off < self.mmap.len() {
-            prefetch::prefetch_read(&self.mmap[byte_off] as *const u8);
+            memory_hints::prefetch::prefetch_read(&self.mmap[byte_off] as *const u8);
         }
     }
 }

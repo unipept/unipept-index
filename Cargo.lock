@@ -212,7 +212,7 @@ dependencies = [
 name = "bitarray"
 version = "0.1.0"
 dependencies = [
- "libc",
+ "memory-hints",
 ]
 
 [[package]]
@@ -780,6 +780,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "memory-hints"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -941,10 +948,6 @@ name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
-
-[[package]]
-name = "prefetch"
-version = "0.1.0"
 
 [[package]]
 name = "prettyplease"
@@ -1173,7 +1176,7 @@ dependencies = [
  "bitarray",
  "fa-compression",
  "memmap2",
- "prefetch",
+ "memory-hints",
  "rayon",
  "sa-mappings",
  "serde",
@@ -1190,7 +1193,7 @@ dependencies = [
  "bytelines",
  "fa-compression",
  "memmap2",
- "prefetch",
+ "memory-hints",
  "tempdir",
  "text-compression",
 ]
@@ -1368,7 +1371,7 @@ dependencies = [
  "binary-traits",
  "bitarray",
  "memmap2",
- "prefetch",
+ "memory-hints",
  "tempfile",
 ]
 

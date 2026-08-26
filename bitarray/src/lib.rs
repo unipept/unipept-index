@@ -29,18 +29,19 @@
 //!   is worth reading before embedding one in a larger file.
 //! * [`data_to_writer`] packs and writes a `Vec<i64>` in chunks, so building a file does not need
 //!   a second full copy of the index in memory.
-//! * [`hugepages`] explains why both constructors advise transparent huge pages *before* they
-//!   touch the allocation, and why doing it afterwards would be pointless.
+//!
+//! Both constructors advise transparent huge pages over the allocation before they zero it, via
+//! [`memory_hints::hugepages`]. That ordering is the whole point and is argued there; callers do
+//! not need to repeat it.
 #![warn(missing_docs)]
 
 #[cfg(test)]
 #[macro_use]
 mod test_suite;
 
-mod binary;
+pub mod binary;
 pub mod constant;
 pub mod dynamic;
-pub mod hugepages;
 
 use std::{
     cmp::max,

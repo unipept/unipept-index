@@ -40,7 +40,7 @@ impl<const BITS: usize> BitArray<BITS> {
     /// Allocates room for `capacity` values, all zero.
     ///
     /// The huge-page advice is issued here, between reserving the allocation and zeroing it, and
-    /// not by the caller once it has filled it: see [`crate::hugepages`] for why that ordering is
+    /// not by the caller once it has filled it: see [`memory_hints::hugepages`] for why that ordering is
     /// the whole point.
     pub fn with_capacity(capacity: usize) -> Self {
         Self::try_with_capacity(capacity)
@@ -61,9 +61,9 @@ impl<const BITS: usize> BitArray<BITS> {
         // every word, which faults the whole buffer in. Advice issued after that arrives at a
         // region that is already populated with 4 KB pages, where it buys nothing but khugepaged
         // eligibility. Here it still governs the faults `resize` is about to take. See
-        // [`crate::hugepages`]. `resize` cannot reallocate, since the capacity is already reserved,
+        // [`memory_hints::hugepages`]. `resize` cannot reallocate, since the capacity is already reserved,
         // so the advice stays with the allocation it was issued for.
-        crate::hugepages::advise_capacity(&data);
+        memory_hints::hugepages::advise_capacity(&data);
         data.resize(words, 0);
         Some(Self { data, len: capacity })
     }
@@ -87,8 +87,8 @@ impl<const BITS: usize> BitArray<BITS> {
     /// `[profile.release]`, so there is no cross-crate LTO to fall back on and the innermost loop
     /// of the index would pay a call per residue. Being a method on a const-generic type already
     /// exports the MIR, so LLVM would likely inline it anyway; the attribute makes that a
-    /// guarantee rather than a cost-model coincidence. See the crate docs on `prefetch` for the
-    /// same argument at length.
+    /// guarantee rather than a cost-model coincidence. See the docs of
+    /// `memory_hints::prefetch::prefetch_read` for the same argument at length.
     ///
     /// # Panics
     ///

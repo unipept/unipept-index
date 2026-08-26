@@ -55,7 +55,7 @@ impl SuffixArrayBackend for OriginalSA {
     fn prefetch_sa_index(&self, index: usize) {
         if index < self.0.len() {
             let ptr: *const i64 = &self.0[index];
-            prefetch::prefetch_read(ptr);
+            memory_hints::prefetch::prefetch_read(ptr);
         }
     }
 }
@@ -148,7 +148,7 @@ pub(super) fn load_original(reader: &mut impl BufRead, size: usize) -> Result<Ve
         .map_err(|_| "The SA header declares more entries than can be allocated")?;
     // Before `read_vec_i64` touches a page of it: the advice only shapes the faults that populate
     // the buffer. `read_vec_i64` clears and refills within this capacity, so it never reallocates.
-    bitarray::hugepages::advise_capacity(&sa);
+    memory_hints::hugepages::advise_capacity(&sa);
     read_vec_i64(&mut sa, reader.take(body_bytes))
         .map_err(|_| "Could not read the suffix array from the binary file")?;
     if sa.len() != size {

@@ -24,7 +24,7 @@ rayon = "1.8.1"
 # hit's annotations straight into its output buffer instead of materialising a String per hit.
 fa-compression = { path = "../fa-compression" }
 serde = { version = "1.0.197", features = ["derive"] }
-prefetch = { path = "../prefetch" }
+memory-hints = { path = "../memory-hints" }
 sa-mappings = { path = "../sa-mappings" }
 text-compression = { path = "../text-compression" }
 bitarray = { path = "../bitarray" }

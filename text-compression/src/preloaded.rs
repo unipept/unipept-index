@@ -121,7 +121,7 @@ impl ProteinTextBackend for InMemoryProteinText {
         if index < self.bit_array.len() {
             let word_idx = (index * 5) / 64;
             let ptr: *const u64 = self.bit_array.get_data_slice(word_idx, word_idx + 1).as_ptr();
-            prefetch::prefetch_read(ptr);
+            memory_hints::prefetch::prefetch_read(ptr);
         }
     }
 }
@@ -168,7 +168,7 @@ impl ReadBinary for InMemoryProteinText {
         bit_array.read_binary(&mut limited).map_err(|_| "Could not parse BitArray data from binary file")?;
         // The huge-page advice is not issued here: `BitArray::with_capacity` already did it, on the
         // untouched allocation, which is the only point at which it does anything. See
-        // `bitarray::hugepages`.
+        // `memory_hints::hugepages`.
 
         // `read_binary` refills the backing store with however many words the reader supplied, which
         // says nothing about the length the header declared. Without this, a truncated or
