@@ -108,6 +108,18 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         right: usize,
         lcp_skip: usize
     ) -> BoundSearchResult {
+        // An empty search string is not a query. `compare` returns `(false, 0)` for it, so
+        // `found |= lcp_center == search_string.len()` in the loop below reports a match on every
+        // probe while no bound condition ever holds: the Minimum pass walks `lo` up to `right - 1`
+        // and returns `hi = right`, the Maximum pass walks `hi` down and returns `lo = left`. The
+        // result is the inverted range `(right, left + 1)`, and `max_bound - min_bound` in
+        // `search_matching_suffixes_scalar` then underflows. Rejecting it here is cheaper than
+        // teaching the probe loop about a case that cannot occur for a real peptide, and keeps the
+        // guard off the hot path entirely.
+        if search_string.is_empty() {
+            return BoundSearchResult::NoMatches;
+        }
+
         let (found_min, min_bound) = self.binary_search_bound_scalar(Minimum, search_string, left, right, lcp_skip);
 
         if !found_min {
@@ -132,6 +144,22 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// # Returns
     ///
     /// Returns all the matching suffixes
+    ///
+    /// # Peptide length
+    ///
+    /// Peptides are searched as given; callers needing normalisation or length filtering must do it
+    /// first, and `peptide_search` is where that lives — it enforces `len >= sample_rate`, which is
+    /// what makes a result complete. Two things go wrong below that:
+    ///
+    /// * A peptide shorter than `sample_rate - 1` **panics**: the skip loop slices
+    ///   `search_string[skip..]` for `skip` up to `sample_rate - 1`, and the slice runs off the end.
+    /// * A peptide of exactly `sample_rate - 1` does not panic, but its last pass searches an empty
+    ///   string, which `search_bounds_scalar` reports as `NoMatches` — so the result is silently
+    ///   incomplete, missing any match at `ms ≡ 1 (mod sample_rate)`. `test_search_sparse` relies on
+    ///   this being merely incomplete rather than fatal.
+    ///
+    /// The empty peptide is the one short input that is answered rather than either of those: it is
+    /// not a query, and it returns no matches.
     #[inline]
     pub fn search_matching_suffixes_scalar(
         &self,
@@ -140,6 +168,25 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         equate_il: bool,
         tryptic: bool
     ) -> SearchAllSuffixesResult {
+        // Handled before the skip loop rather than inside it: at `sample_rate >= 2` the loop
+        // reaches `skip = 1` and slices `""[1..]`, which panics before any bound search runs, so
+        // the rejection in `search_bounds_inner_scalar` never gets the chance to fire.
+        if search_string.is_empty() {
+            return SearchAllSuffixesResult::NoMatches;
+        }
+
+        // The bound is `sample_rate - 1`, not `sample_rate`: that is where the slice below goes out
+        // of range. A peptide of exactly `sample_rate - 1` is legal and merely incomplete, and the
+        // sparse-search tests exercise it deliberately (`test_search_sparse` searches a 2-mer at
+        // sample rate 3). Asserting completeness here instead would reject those.
+        debug_assert!(
+            search_string.len() + 1 >= self.sa.sample_rate() as usize,
+            "peptide of length {} cannot be searched at sample rate {}: the skip loop would slice \
+             out of range — see the length note on this function",
+            search_string.len(),
+            self.sa.sample_rate()
+        );
+
         // There is no k-mer prefetch pass here, and there is no longer one in the batched path
         // either. The call used to sit immediately before the `search_bounds_scalar` below that repeats
         // the identical k-mer table lookup — no intervening work, so no latency to hide — and
@@ -331,6 +378,51 @@ mod tests {
             repeated_residue_searcher, searcher_over_text, tryptic_fixture_peptides
         }
     };
+
+    /// An empty search string is not a query, and must be answered rather than fall through the
+    /// binary search.
+    ///
+    /// It used to fall through, and the consequences were not subtle. `compare` returns
+    /// `(false, 0)` for it, so `found |= lcp_center == search_string.len()` reported a match on
+    /// every probe while no bound condition ever held: the bounds came back inverted as
+    /// `(sa.len(), 1)`, and `max_bound - min_bound` on the fast path underflowed — a panic in
+    /// debug, and in release a `range_size` near `usize::MAX` that took the `> max_matches` branch
+    /// and iterated `max_matches` entries from `sa.len()` onwards. `OriginalSA::iter_range` clamps
+    /// and yields nothing, but the compressed and mmap iterators do not, so those two backends
+    /// fabricated `max_matches` zero-valued suffixes and handed them to `retrieve_proteins`.
+    ///
+    /// Sparseness 3 is covered as well as 1, because it fails a step earlier: the skip loop slices
+    /// `""[1..]` before any bound search runs.
+    #[test]
+    fn test_empty_search_string_matches_nothing() {
+        for (label, sa, sparseness) in [("dense", &EXAMPLE_SA_FULL[..], 1u8), ("sparse", &EXAMPLE_SA_SPARSE3[..], 3u8)]
+        {
+            let searcher = example_searcher_with(sa, sparseness, Mapping::BitVec);
+
+            assert_eq!(searcher.search_bounds_scalar(b""), BoundSearchResult::NoMatches, "{label}: bounds");
+
+            // Every combination of the two flags, since they select different scan paths: the
+            // `!tryptic` fast path is where the subtraction lived, and the tryptic path is where
+            // the zero-length `TrypticQuery` would otherwise be built.
+            for equate_il in [false, true] {
+                for tryptic in [false, true] {
+                    assert_eq!(
+                        searcher.search_matching_suffixes_scalar(b"", usize::MAX, equate_il, tryptic),
+                        SearchAllSuffixesResult::NoMatches,
+                        "{label}: equate_il={equate_il} tryptic={tryptic}"
+                    );
+                }
+            }
+
+            // The release-mode path specifically: a `max_matches` small enough that a real range
+            // would be truncated is what selected the fabricated-suffix branch.
+            assert_eq!(
+                searcher.search_matching_suffixes_scalar(b"", 2, true, false),
+                SearchAllSuffixesResult::NoMatches,
+                "{label}: truncating max_matches"
+            );
+        }
+    }
 
     #[test]
     fn test_search_simple() {

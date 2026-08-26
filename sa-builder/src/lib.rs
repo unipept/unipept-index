@@ -182,8 +182,22 @@ fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static 
 
     let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
 
+    // `sample_sa` filters on the *full* sparseness factor, not on `sample_rate`.
+    //
+    // The two are not interchangeable here, because `sais64` has already discarded everything
+    // that is not a multiple of `libsais_sparseness` (it multiplies every entry by it before
+    // returning). Filtering that output on `sample_rate` leaves the multiples of
+    // `lcm(libsais_sparseness, sample_rate)`, which equals `sparseness_factor` only when the two
+    // are coprime. At `--sparseness-factor 8` they are not: `libsais_sparseness` is 4 and
+    // `sample_rate` is 2, every multiple of 4 is already even, and the pass removed nothing —
+    // leaving a stride of 4 under a header declaring 8. Factors 9, 16, 25 and 27 broke the same
+    // way, and each match was then found by two skip passes instead of one.
+    //
+    // Filtering on `sparseness_factor` is correct for every factor: it is a multiple of
+    // `libsais_sparseness`, so the surviving entries are exactly its own multiples. It is also
+    // what the `LibDivSufSort` path in `build_ssa` has always done.
     if sample_rate > 1 {
-        sample_sa(&mut sa, sample_rate as u8);
+        sample_sa(&mut sa, sparseness_factor as u8);
     }
 
     Ok(sa)
@@ -362,5 +376,39 @@ mod tests {
         let mut sa = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         sample_sa(&mut sa, 2);
         assert_eq!(sa, vec![0, 2, 4, 6, 8]);
+    }
+
+    /// The stride `libsais64` actually produces must equal the sparseness factor the header will
+    /// declare, for *every* factor — not only for those where `libsais_sparseness` and
+    /// `sample_rate` happen to be coprime.
+    ///
+    /// The five factors that regressed (8, 9, 16, 25, 27) are the ones where they share a divisor;
+    /// they are interleaved here with factors that were always correct, so a regression in either
+    /// direction fails. `sa-index`'s `Searcher::try_new` checks exactly this relation at load time,
+    /// which is how the mismatch surfaced: it turned such an index into a startup failure.
+    #[test]
+    fn test_libsais64_stride_matches_the_declared_sparseness_factor() {
+        let mut text = "ACDEFGHIKLMNPQRSTVWY".repeat(20).into_bytes();
+        translate_l_to_i(&mut text);
+        let text_len = text.len();
+
+        for factor in [1u8, 2, 3, 4, 5, 6, 8, 9, 10, 15, 16, 25, 27] {
+            let sa = libsais64(text.clone(), factor).unwrap();
+
+            assert_eq!(
+                sa.len(),
+                text_len.div_ceil(factor as usize),
+                "factor {factor}: entry count must be ceil(text_len / factor), or Searcher::try_new rejects it"
+            );
+            assert!(
+                sa.iter().all(|position| position % factor as i64 == 0),
+                "factor {factor}: every sampled position must be a multiple of the factor"
+            );
+
+            let mut sorted = sa.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), sa.len(), "factor {factor}: sampled positions must be distinct");
+        }
     }
 }

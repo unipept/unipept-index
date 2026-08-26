@@ -20,8 +20,6 @@ tempfile = "3"
 binary-traits = { path = "../binary-traits" }
 memmap2 = "0.9"
 rayon = "1.8.1"
-# For the streaming annotation decode in `peptide_search`: the server's JSON writer decodes each
-# hit's annotations straight into its output buffer instead of materialising a String per hit.
 fa-compression = { path = "../fa-compression" }
 serde = { version = "1.0.197", features = ["derive"] }
 memory-hints = { path = "../memory-hints" }

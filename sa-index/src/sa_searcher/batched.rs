@@ -137,6 +137,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         let mut ranges: Vec<Option<(usize, usize, usize)>> = vec![None; n];
         let mut min_streams: Vec<BsStream> = Vec::with_capacity(n);
         for (i, &ss) in strings.iter().enumerate() {
+            // Empty search string: rejected here for the reason `search_bounds_inner_scalar`
+            // spells out, and rejected *before* `opening_window` so both paths agree without
+            // depending on what the k-mer table does with a zero-length prefix.
+            if ss.is_empty() {
+                continue; // out[i] stays NoMatches
+            }
             let Some(range) = self.opening_window(ss) else {
                 continue; // out[i] stays NoMatches
             };
@@ -197,6 +203,26 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             })
             .collect();
         let mut done: Vec<Option<SearchAllSuffixesResult>> = (0..n).map(|_| None).collect();
+
+        // Empty peptides are resolved before the skip loop, matching the scalar path: the loop
+        // slices `strings[i][skip..]`, which panics on `""[1..]` at `sample_rate >= 2` before any
+        // bound search runs. Marking them done keeps them out of `active` for every pass, so one
+        // empty peptide cannot take the rest of its chunk with it.
+        for (i, ss) in strings.iter().enumerate() {
+            if ss.is_empty() {
+                done[i] = Some(SearchAllSuffixesResult::NoMatches);
+            } else {
+                // `sample - 1`, matching the scalar path: that is where `strings[i][skip..]` below
+                // goes out of range. See the note there for why completeness is not the bound.
+                debug_assert!(
+                    ss.len() + 1 >= sample,
+                    "peptide of length {} cannot be searched at sample rate {sample}: the skip loop \
+                     would slice out of range — see the length note on \
+                     search_all_matching_suffixes_batched",
+                    ss.len()
+                );
+            }
+        }
 
         // Mirrors the scalar path: for tryptic searches the skip = sample-1 pass is replaced by
         // left-extended searches, which cover the same positions with a ~20x smaller SA range.
@@ -354,7 +380,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Peptides are searched as given — callers that need length filtering or normalisation must do
     /// it before calling. `peptide_search` is where that lives, and it is not optional: the skip
     /// loop slices `peptide[skip..]` for `skip` up to `sample_rate - 1`, so a peptide shorter than
-    /// that **panics** on an out-of-range slice rather than returning `NoMatches`.
+    /// `sample_rate - 1` **panics** on an out-of-range slice rather than returning `NoMatches`, and
+    /// one of exactly `sample_rate - 1` returns a silently incomplete result. See the length note
+    /// on [`Searcher::search_matching_suffixes_scalar`] for the full statement.
+    ///
+    /// The empty peptide is the exception, answered rather than either: it is not a query and
+    /// returns no matches, without disturbing the other peptides in its chunk.
     pub fn search_all_matching_suffixes_batched(
         &self,
         peptides: &[&[u8]],
@@ -682,6 +713,34 @@ mod tests {
         let s = example_searcher();
         let none: Vec<&[u8]> = vec![];
         assert!(s.search_all_matching_suffixes_batched(&none, 1000, true, false).is_empty());
+    }
+
+    /// An empty *peptide* — as opposed to an empty peptide *list* above — must return `NoMatches`
+    /// for itself and leave every other peptide in its chunk untouched.
+    ///
+    /// That second half is the point. The kernel resolves an `MLP_BATCH`-sized chunk together, and
+    /// the empty peptide used to produce inverted bounds whose `max_bound - min_bound` panicked —
+    /// taking the results of the other fifteen peptides in the chunk with it, not just its own.
+    /// So the empty entry is placed *inside* a chunk here, with known-good peptides on both sides,
+    /// and the whole batch is compared against the scalar path.
+    #[test]
+    fn test_search_all_tolerates_an_empty_peptide_mid_chunk() {
+        for (label, sa, sparseness) in [("dense", None, 1u8), ("sparse", Some(&EXAMPLE_SA_SPARSE3[..]), 3u8)] {
+            let s = match sa {
+                Some(sa) => example_searcher_with(sa, sparseness, Mapping::BitVec),
+                None => example_searcher()
+            };
+            let peptides: Vec<&[u8]> = vec![b"AC", b"", b"VAA"];
+
+            let batched = s.search_all_matching_suffixes_batched(&peptides, 1000, true, false);
+
+            assert_eq!(batched.len(), 3, "{label}: one result per input, in order");
+            assert_eq!(batched[1], SearchAllSuffixesResult::NoMatches, "{label}: the empty peptide");
+            assert_ne!(batched[0], SearchAllSuffixesResult::NoMatches, "{label}: neighbour before must survive");
+            assert_ne!(batched[2], SearchAllSuffixesResult::NoMatches, "{label}: neighbour after must survive");
+
+            assert_eq!(scalar_reference(&s, &peptides, 1000, true, false), batched, "{label}: paths must agree");
+        }
     }
 
     // A peptide count that does not divide MLP_BATCH must still return one result per peptide in

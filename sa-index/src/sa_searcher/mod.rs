@@ -122,7 +122,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         if sa.len() != expected {
             return Err(format!(
                 "the suffix array holds {} entries, but the protein text is {text_len} characters at a \
-                 sample rate of {sample_rate}, which needs {expected}; these files are from different builds",
+                 sample rate of {sample_rate}, which needs {expected}; either these files are from \
+                 different builds, or sa.bin was built at a sparseness factor an older sa-builder \
+                 sampled incorrectly (8, 9, 16, 25 and 27 produced a smaller stride than their header \
+                 declared) and needs rebuilding",
                 sa.len()
             ));
         }

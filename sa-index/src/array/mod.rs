@@ -46,7 +46,7 @@ mod test_utils;
 pub use mmap::MmapBackedSA;
 pub use preloaded::{
     CompressedSA, InMemoryRangeIter, InMemorySA, OriginalRangeIter, OriginalSA, dump_compressed_suffix_array,
-    dump_suffix_array, load_compressed_suffix_array
+    dump_suffix_array
 };
 
 /// Writes the 10-byte header both packings share; see the module docs for the layout.

@@ -46,9 +46,15 @@ pub(super) enum TrypticQuery {
         last_is_kr: bool
     },
     /// Degenerate zero-length query: `match_start == match_end`, so neither substitution above
-    /// exists and we fall back to the original four-read formulation. Unreachable in production
-    /// (`search_proteins_for_peptide` drops peptides shorter than the sparseness factor), but
-    /// `search_matching_suffixes_scalar` is public, so stay bit-exact for it anyway.
+    /// exists and we fall back to the original four-read formulation.
+    ///
+    /// No search reaches this any more — the bound search rejects an empty string outright (see
+    /// `scalar::search_bounds_inner_scalar`), so the candidate loop that builds a `TrypticQuery`
+    /// never runs for one. It is kept rather than deleted because
+    /// [`Searcher::check_tryptic_boundaries`] is reachable on its own and this is the only arm
+    /// that makes it total; removing it would also strand
+    /// [`Searcher::check_start_of_protein`] and [`Searcher::check_end_of_protein`] with no callers
+    /// outside tests.
     ZeroLength
 }
 
@@ -119,6 +125,18 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Check if a cut is a tryptic cut, so check if the amino acid preceding the cut is K or R and the amino acid at the cut is not P.
     ///
+    /// Index 0 is not a tryptic cut: there is no preceding character to be K or R. The guard is
+    /// what makes that answer rather than underflowing on `text[-1]`. Every other caller in this
+    /// module short-circuits before reaching it — [`Self::check_start_of_protein`] tests
+    /// `cut_index == 0` on the left of its `||`, and the `ZeroLength` arm of
+    /// [`Self::check_tryptic_boundaries`] inherits that only for its N-terminal conjunct, not its
+    /// C-terminal one. Owning the bound here means neither of those has to stay in the right order
+    /// to keep this total.
+    ///
+    /// Note the asymmetry with [`Self::check_tryptic_c_term`], which returns `true` at
+    /// `text.len()`: the start of the text is a protein start and its end is a protein end, but
+    /// position 0 as a *C*-terminus is neither.
+    ///
     /// # Arguments
     /// * `cut_index` - The index of the cut in the text of proteins.
     ///
@@ -127,7 +145,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// Returns true if the cut is a tryptic cut.
     #[inline]
     fn check_tryptic_cut(&self, cut_index: usize) -> bool {
-        (self.proteins.text().get(cut_index - 1) == b'K' || self.proteins.text().get(cut_index - 1) == b'R')
+        cut_index != 0
+            && (self.proteins.text().get(cut_index - 1) == b'K' || self.proteins.text().get(cut_index - 1) == b'R')
             && self.proteins.text().get(cut_index) != b'P'
     }
 
@@ -321,9 +340,20 @@ mod tests {
         assert!(!searcher.check_tryptic_cut(2)); // preceded by A, not K/R
     }
 
+    // Index 0 has no preceding character, so it is not a cut — and asking must not underflow.
+    // The fixture starts with K precisely so that dropping the guard would make the K/R test
+    // read `text[-1]` rather than short-circuit on a cheaper clause.
+    #[test]
+    fn test_check_tryptic_cut_at_zero_is_not_a_cut() {
+        let searcher = searcher_over_text(BOUNDARY_TEXT, 1);
+        assert_eq!(searcher.proteins.text().get(0), b'K', "fixture must start with K");
+        assert!(!searcher.check_tryptic_cut(0));
+    }
+
     // The original four-text-read formulation, kept verbatim as the oracle for the equivalence
-    // test below. `check_start_of_protein` MUST stay on the left of the `||`: it is the only
-    // thing that stops `check_tryptic_cut(0)` from reading `text[-1]`.
+    // test below. The `||` order no longer carries the zero bound — `check_tryptic_cut` owns it —
+    // but it is kept as written because this is the oracle, and an oracle that has been tidied is
+    // no longer evidence about the code it was derived from.
     fn old_tryptic_predicate(searcher: &PreloadedSearcher, match_start: usize, match_end: usize) -> bool {
         (searcher.check_start_of_protein(match_start) || searcher.check_tryptic_cut(match_start))
             && (searcher.check_end_of_protein(match_end) || searcher.check_tryptic_cut(match_end))
@@ -399,18 +429,17 @@ mod tests {
 
     // The zero-length fallback keeps reading the text, so it must also match the oracle.
     //
-    // `cut == 0` is skipped because it panics identically in both formulations: with
-    // `match_start == match_end == 0`, `check_end_of_protein(0)` is false for a text that does
-    // not start with a separator, and the `check_tryptic_cut(0)` that follows it underflows on
-    // `text[-1]`. That is pre-existing behaviour of the degenerate zero-length path (only the
-    // N-terminal `||` has a `match_start == 0` guard, the C-terminal one does not), and it is
-    // unreachable in production, where empty peptides are dropped before the search.
+    // `cut == 0` is included. It used to be skipped, because both formulations underflowed there:
+    // with `match_start == match_end == 0`, `check_end_of_protein(0)` is false for a text that
+    // does not start with a separator, and the `check_tryptic_cut(0)` that followed it read
+    // `text[-1]`. Only the N-terminal `||` had a `match_start == 0` guard; the C-terminal one did
+    // not. `check_tryptic_cut` now owns that bound, so 0 is an ordinary case on both sides.
     #[test]
     fn test_tryptic_boundaries_zero_length_matches_original() {
         let searcher = searcher_over_text(BOUNDARY_TEXT, 1);
         let text = searcher.proteins.text();
 
-        for cut in 1..BOUNDARY_TEXT.len() {
+        for cut in 0..BOUNDARY_TEXT.len() {
             assert_eq!(
                 searcher.check_tryptic_boundaries(text, cut, cut, TrypticQuery::new(true, b"")),
                 old_tryptic_predicate(&searcher, cut, cut),

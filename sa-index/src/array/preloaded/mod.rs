@@ -15,7 +15,7 @@ pub mod original;
 #[cfg(test)]
 pub(super) mod test_utils;
 
-pub use compressed::{CompressedSA, dump_compressed_suffix_array, load_compressed_suffix_array};
+pub use compressed::{CompressedSA, dump_compressed_suffix_array};
 pub use original::{OriginalRangeIter, OriginalSA, dump_suffix_array};
 
 use self::{compressed::load_compressed, original::load_original};

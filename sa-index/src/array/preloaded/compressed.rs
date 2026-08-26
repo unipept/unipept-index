@@ -95,28 +95,6 @@ pub fn dump_compressed_suffix_array(
     Ok(())
 }
 
-/// Loads a compressed suffix array whose width has already been read, taking the sparseness factor
-/// and item count that follow it before the body.
-pub fn load_compressed_suffix_array(
-    reader: &mut impl BufRead,
-    bits_per_value: usize
-) -> Result<CompressedSA, Box<dyn Error>> {
-    let mut sample_rate_buffer = [0_u8; 1];
-    reader
-        .read_exact(&mut sample_rate_buffer)
-        .map_err(|_| "Could not read the sample rate from the binary file")?;
-    let sample_rate = sample_rate_buffer[0];
-
-    let mut size_buffer = [0_u8; 8];
-    reader
-        .read_exact(&mut size_buffer)
-        .map_err(|_| "Could not read the size of the suffix array from the binary file")?;
-    let size = u64::from_le_bytes(size_buffer) as usize;
-
-    let sa = load_compressed(reader, bits_per_value, size)?;
-    Ok(CompressedSA(sa, sample_rate))
-}
-
 /// Loads a compressed body, the header having already been read. Unlike its uncompressed
 /// counterpart the entry count is a capacity rather than a bound: `DynBitArray::read_binary`
 /// consumes the reader to its end.
@@ -183,10 +161,7 @@ mod tests {
         let mut buf = Vec::new();
         assert!(dump_compressed_suffix_array(vec![0, -1, 3], 1, 10, &mut buf).is_err());
     }
-    use super::{
-        super::test_utils::{FailingReader, FailingWriter},
-        *
-    };
+    use super::{super::test_utils::FailingWriter, *};
 
     #[test]
     fn test_dump_compressed_suffix_array() {
@@ -222,32 +197,8 @@ mod tests {
         dump_compressed_suffix_array(vec![1], 1, 8, &mut FailingWriter { valid_write_count: 10 }).unwrap();
     }
 
-    #[test]
-    fn test_load_compressed_suffix_array() {
-        let data = [1, 10, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 10, 9];
-        let mut reader = std::io::BufReader::new(&data[..]);
-        let sa = load_compressed_suffix_array(&mut reader, 8).unwrap();
-        assert_eq!(sa.sample_rate(), 1);
-        for i in 0..10 {
-            assert_eq!(sa.get(i), i as i64 + 1);
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not read the sample rate from the binary file")]
-    fn test_load_compressed_suffix_array_fail_sample_rate() {
-        load_compressed_suffix_array(&mut FailingReader { valid_read_count: 0 }, 8).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not read the size of the suffix array from the binary file")]
-    fn test_load_compressed_suffix_array_fail_size() {
-        load_compressed_suffix_array(&mut FailingReader { valid_read_count: 1 }, 8).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Could not read the compressed suffix array from the binary file")]
-    fn test_load_compressed_suffix_array_fail_compressed_suffix_array() {
-        load_compressed_suffix_array(&mut FailingReader { valid_read_count: 2 }, 8).unwrap();
-    }
+    // The header-truncation cases these tests used to cover — a file cut short before the sample
+    // rate, before the count field, or mid-body — moved with the loader. `InMemorySA::read_binary`
+    // is the live loader and carries them as `read_binary_rejects_malformed_input`, over a
+    // `Cursor` rather than a `FailingReader`, and it checks the width byte on top.
 }
