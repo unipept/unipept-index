@@ -89,7 +89,7 @@ impl SuffixToProteinMappingBackend for MmapBitVecSuffixToProtein {
     fn touch_all_pages(&self) -> u64 {
         // The bits and counts regions are contiguous from `bits_offset` to the end of the file.
         let end = self.mmap.len();
-        text_compression::mmap::touch_all_pages(&self.mmap, self.bits_offset..end)
+        memory_hints::warmup::touch_all_pages(&self.mmap, self.bits_offset..end)
     }
 }
 
@@ -141,7 +141,7 @@ pub(super) fn read_bitvec_mmap(mmap: Mmap) -> Result<MmapBitVecSuffixToProtein, 
 
 #[cfg(test)]
 mod tests {
-    use text_compression::{InMemoryProteinText, ProteinTextBackend};
+    use protein_text::{InMemoryProteinText, ProteinTextBackend};
 
     use crate::suffix_to_protein_index::{
         mmap::test_utils::write_and_map,

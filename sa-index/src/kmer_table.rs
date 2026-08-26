@@ -18,8 +18,8 @@ use std::{
 };
 
 use binary_traits::{LoadIndex, ReadBinary, WriteBinary};
+use protein_text::ProteinTextBackend;
 use rayon::prelude::*;
-use text_compression::ProteinTextBackend;
 
 use crate::array::SuffixArrayBackend;
 
@@ -269,7 +269,7 @@ impl LoadIndex for KmerTable {
 
 #[cfg(test)]
 mod tests {
-    use text_compression::InMemoryProteinText;
+    use protein_text::InMemoryProteinText;
 
     use crate::{
         array::{InMemorySA, OriginalSA},
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn structures_from_different_builds_are_rejected() {
         use protein_metadata::{InMemoryProteins, Protein};
-        use text_compression::InMemoryProteinText;
+        use protein_text::InMemoryProteinText;
 
         use crate::{
             array::{InMemorySA, OriginalSA},
@@ -344,7 +344,7 @@ mod tests {
     /// backend, a fabricated suffix position on the mmap one.
     #[test]
     fn a_table_from_a_different_index_is_rejected() {
-        use text_compression::InMemoryProteinText;
+        use protein_text::InMemoryProteinText;
 
         use crate::{
             array::{InMemorySA, OriginalSA},

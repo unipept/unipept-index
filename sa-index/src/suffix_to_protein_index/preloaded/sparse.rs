@@ -5,7 +5,7 @@ use std::{
 
 use binary_traits::WriteBinary;
 use protein_metadata::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::ProteinTextBackend;
+use protein_text::ProteinTextBackend;
 
 use super::super::SuffixToProteinMappingBackend;
 use crate::Nullable;

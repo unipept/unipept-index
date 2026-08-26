@@ -72,7 +72,7 @@ impl LoadIndex for InMemorySuffixToProteinMapping {
 #[cfg(test)]
 mod tests {
     use binary_traits::ReadBinary;
-    use text_compression::ProteinTextBackend;
+    use protein_text::ProteinTextBackend;
 
     use crate::suffix_to_protein_index::{
         preloaded::{

@@ -25,8 +25,8 @@ mod tryptic;
 mod tuning;
 
 use protein_metadata::ProteinsBackend;
+use protein_text::{ProteinTextBackend, ProteinTextSlice};
 pub use results::{BoundSearchResult, SearchAllSuffixesResult};
-use text_compression::{ProteinTextBackend, ProteinTextSlice};
 use tryptic::TrypticQuery;
 pub(crate) use tuning::{
     MAX_RESULT_PREALLOC, MLP_BATCH, PREFETCH_THRESHOLD, RETRIEVAL_PREFETCH_DISTANCE, VALIDATE_BATCH

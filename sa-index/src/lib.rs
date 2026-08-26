@@ -19,7 +19,7 @@
 //! | structure | owned | mapped |
 //! |---|---|---|
 //! | suffix array | [`array::InMemorySA`] | [`array::MmapBackedSA`] |
-//! | protein text | `text_compression::InMemoryProteinText` | `text_compression::MmapBackedProteinText` |
+//! | protein text | `protein_text::InMemoryProteinText` | `protein_text::MmapBackedProteinText` |
 //! | protein metadata | `protein_metadata::InMemoryProteins<T>` | `protein_metadata::MmapBackedProteins<T>` |
 //! | suffix→protein | [`suffix_to_protein_index::InMemorySuffixToProteinMapping`] | [`suffix_to_protein_index::MmapBackedSuffixToProteinMapping`] |
 //!
@@ -75,7 +75,7 @@
 //!
 //! One consequence shows up everywhere and is easy to undo by accident: because the workspace
 //! sets no `[profile.release]`, there is **no cross-crate LTO**, so a call into `bitarray`,
-//! `text-compression`, `protein-metadata` or `memory-hints` is a real cross-crate call unless the callee's
+//! `protein-text`, `protein-metadata` or `memory-hints` is a real cross-crate call unless the callee's
 //! body reaches the caller's codegen unit — which happens only when the callee is `#[inline]` or
 //! generic (both export their MIR). Those attributes on the small getters are load-bearing, not
 //! decoration.

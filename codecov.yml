@@ -18,6 +18,9 @@ coverage:
       protein-metadata:
         flags:
           - protein-metadata
+      protein-text:
+        flags:
+          - protein-text
       sa-builder:
         flags:
           - sa-builder
@@ -28,9 +31,6 @@ coverage:
       sa-server:
         flags:
           - sa-server
-      text-compression:
-        flags:
-          - text-compression
     patch: off
 
 flags:
@@ -54,6 +54,10 @@ flags:
     paths:
       - protein-metadata
     carryforward: true
+  protein-text:
+    paths:
+      - protein-text
+    carryforward: true
   sa-builder:
     paths:
       - sa-builder
@@ -65,10 +69,6 @@ flags:
   sa-server:
     paths:
       - sa-server
-    carryforward: true
-  text-compression:
-    paths:
-      - text-compression
     carryforward: true
 
 ignore:

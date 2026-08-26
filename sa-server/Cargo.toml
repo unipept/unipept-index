@@ -23,7 +23,7 @@ tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros"] }
 sa-index = { path = "../sa-index" }
 clap = { version = "4.5.1", features = ["derive"] }
 protein-metadata = { path = "../protein-metadata" }
-text-compression = { path = "../text-compression" }
+protein-text = { path = "../protein-text" }
 
 # Building the reference response the parity test compares against. Already in the graph via axum.
 [dev-dependencies]

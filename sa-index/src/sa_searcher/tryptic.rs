@@ -13,7 +13,7 @@
 //!   finding every match and filtering afterwards. `scalar.rs` and `batched.rs` drive that.
 
 use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::ProteinTextBackend;
+use protein_text::ProteinTextBackend;
 
 use super::Searcher;
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
@@ -221,7 +221,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 #[cfg(test)]
 mod tests {
     use protein_metadata::ProteinsBackend as _;
-    use text_compression::ProteinTextBackend as _;
+    use protein_text::ProteinTextBackend as _;
 
     use super::TrypticQuery;
     use crate::sa_searcher::test_utils::{PreloadedSearcher, example_searcher, searcher_over_text};

@@ -5,7 +5,7 @@ use std::{
 
 use binary_traits::WriteBinary;
 use protein_metadata::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::ProteinTextBackend;
+use protein_text::ProteinTextBackend;
 
 use super::super::SuffixToProteinMappingBackend;
 use crate::Nullable;
@@ -292,7 +292,7 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 mod tests {
     use std::io::Cursor;
 
-    use text_compression::ProteinTextBackend;
+    use protein_text::ProteinTextBackend;
 
     use super::{BitVecSuffixToProtein, read_bitvec_mapping};
     use crate::suffix_to_protein_index::test_utils::{

@@ -108,7 +108,7 @@ pub trait ProteinTextBackend {
     /// cache.
     ///
     /// Returns the number of bytes swept, so a caller can report a bandwidth; see
-    /// [`crate::mmap::touch_all_pages`].
+    /// [`memory_hints::warmup::touch_all_pages`].
     ///
     /// Default returns 0: an owned text is already resident, so there is nothing to fault.
     /// [`crate::MmapBackedProteinText`] overrides it. This lives on the *text* rather than only on

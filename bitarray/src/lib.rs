@@ -7,7 +7,7 @@
 //!
 //! Values are packed **most-significant-bit first within each little-endian `u64` word**, and a
 //! value may straddle a word boundary. Both implementations below and the mmap readers in
-//! `text-compression` and `sa-index` depend on that layout matching exactly.
+//! `protein-text` and `sa-index` depend on that layout matching exactly.
 //!
 //! # Two implementations
 //!
@@ -16,7 +16,7 @@
 //! width from 1 to 64. Which to use:
 //!
 //! * **[`BitArray<BITS>`] when the width is a property of the data.** The protein text is always
-//!   5 bits per residue, so `text-compression` uses `BitArray<5>`. See [`constant`] for the
+//!   5 bits per residue, so `protein-text` uses `BitArray<5>`. See [`constant`] for the
 //!   const-folding this buys — a mechanism, not a measurement: nothing in the workspace benchmarks
 //!   the two implementations against each other.
 //! * **[`DynBitArray`] when the width comes from a file header.** The compressed suffix array

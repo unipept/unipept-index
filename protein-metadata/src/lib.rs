@@ -3,7 +3,7 @@
 //! The suffix array resolves a peptide to positions in the concatenated protein text; the
 //! suffix-to-protein mapping turns those positions into protein indices; and this crate turns an
 //! index into the metadata a search result actually reports. The text itself is the other half of
-//! the same `proteins.bin` and lives in `text-compression`.
+//! the same `proteins.bin` and lives in `protein-text`.
 //!
 //! # Two backends
 //!
@@ -37,7 +37,7 @@ pub(crate) mod test_utils;
 use fa_compression::algorithm1::decode;
 pub use mmap::MmapBackedProteins;
 pub use preloaded::InMemoryProteins;
-pub use text_compression::ProteinTextBackend;
+pub use protein_text::ProteinTextBackend;
 
 /// Byte placed between consecutive protein sequences in the concatenated text.
 ///

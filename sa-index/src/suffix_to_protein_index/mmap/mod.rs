@@ -36,7 +36,7 @@ delegate_suffix_to_protein_mapping!(MmapBackedSuffixToProteinMapping {
 impl ReadBinaryMmap for MmapBackedSuffixToProteinMapping {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = std::fs::File::open(path)?;
-        // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
+        // SAFETY: see the note in `protein_text::mmap` — an index file is written once by
         // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
         // truncated or written underneath us.
         let mmap = unsafe { Mmap::map(&file)? };

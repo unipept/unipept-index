@@ -6,8 +6,8 @@
 //! `sa-server` reads.
 
 use binary_traits::{ReadBinaryMmap, WriteBinary};
+use protein_text::ProteinTextBackend;
 use tempfile::NamedTempFile;
-use text_compression::ProteinTextBackend;
 
 use super::MmapBackedSuffixToProteinMapping;
 use crate::suffix_to_protein_index::{

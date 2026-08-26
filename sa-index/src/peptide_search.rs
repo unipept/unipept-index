@@ -372,7 +372,7 @@ pub fn frame_chunks(chunks: &mut Vec<Vec<u8>>) {
 mod tests {
     // `ProteinsBackend` (for `proteins.text()`) comes in through `use super::*`.
     use protein_metadata::{InMemoryProteins, Protein};
-    use text_compression::InMemoryProteinText;
+    use protein_text::InMemoryProteinText;
 
     use super::*;
     use crate::{

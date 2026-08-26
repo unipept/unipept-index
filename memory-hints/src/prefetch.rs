@@ -30,7 +30,7 @@
 /// check. Those guards belong at the backend because they are not the same check — an element
 /// index, a byte offset, a 16-byte span and a residue count that indexes a *word* array are four
 /// different domains, and only the backend knows its own address arithmetic. See
-/// `text_compression::ProteinTextBackend::prefetch_at` for that contract.
+/// `protein_text::ProteinTextBackend::prefetch_at` for that contract.
 ///
 /// On architectures other than x86-64 and aarch64 this is a no-op. The function is always defined
 /// so that callers need no `cfg` guards.

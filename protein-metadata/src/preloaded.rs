@@ -19,7 +19,7 @@ use std::{
 use binary_traits::{LoadIndex, ReadBinary, WriteBinary};
 use bytelines::ByteLines;
 use fa_compression::algorithm1::encode;
-use text_compression::{InMemoryProteinText, ProteinTextBackend};
+use protein_text::{InMemoryProteinText, ProteinTextBackend};
 
 use crate::{Protein, ProteinRef, ProteinsBackend, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 
@@ -227,7 +227,7 @@ fn check_entry_lengths(proteins: &[Protein]) -> Result<(), String> {
 /// On-disk format for `proteins.bin` — written here, read by both backends.
 ///
 /// ```text
-/// [ protein text        ]  see text_compression::preloaded's WriteBinary
+/// [ protein text        ]  see protein_text::preloaded's WriteBinary
 /// [ protein_count: u64  ]
 /// [ uid_bytes_total: u64]
 /// [ fa_bytes_total: u64 ]
@@ -417,7 +417,7 @@ impl LoadIndex for InMemoryProteins<InMemoryProteinText> {
 
 #[cfg(test)]
 mod size_limit_tests {
-    use text_compression::InMemoryProteinText;
+    use protein_text::InMemoryProteinText;
 
     use super::*;
 
@@ -594,8 +594,8 @@ mod tests {
         assert_eq!(loaded.proteins[1].taxon_id, 562);
     }
 
+    use protein_text::ProteinTextBackend as _;
     use tempdir::TempDir;
-    use text_compression::ProteinTextBackend as _;
 
     use super::*;
     use crate::test_utils::{TEST_PROTEINS, write_database_file};

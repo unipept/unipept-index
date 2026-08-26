@@ -13,5 +13,5 @@ binary-traits = { path = "../binary-traits" }
 fa-compression = { path = "../fa-compression" }
 memory-hints = { path = "../memory-hints" }
 bytelines = "2.5.0"
-text-compression = { path = "../text-compression" }
+protein-text = { path = "../protein-text" }
 memmap2 = "0.9"

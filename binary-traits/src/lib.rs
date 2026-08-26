@@ -18,7 +18,7 @@
 //! preloaded types for exactly this reason: one writer per structure, whichever backend reads it
 //! later.
 //!
-//! These traits live in their own crate so that `sa-index`, `protein-metadata` and `text-compression`
+//! These traits live in their own crate so that `sa-index`, `protein-metadata` and `protein-text`
 //! can implement them for each other's types without a dependency cycle. Each of those crates
 //! depends on this one directly and names the traits as `binary_traits::…`, so that the crate a
 //! trait is imported from is the crate that defines it.
@@ -67,7 +67,7 @@ pub trait ReadBinary: Sized {
 ///
 /// Every implementation also has an `unsafe { Mmap::map(..) }` call to justify: the mapped file
 /// must not be modified or truncated for the lifetime of the mapping, or reads become undefined
-/// behaviour. That argument is written out once, at the mapping in `text_compression::mmap`, and
+/// behaviour. That argument is written out once, at the mapping in `protein_text::mmap`, and
 /// covers every `Mmap::map` in the workspace — it turns on how an index file is *replaced*
 /// (rename safe, `O_TRUNC` not), which is a deployment property rather than a per-structure one.
 /// New implementations should point at that note rather than restate it, and must not weaken it.

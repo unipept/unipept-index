@@ -6,10 +6,10 @@ use std::{
 };
 
 use clap::Parser;
+use protein_text::ProteinTextBackend;
 use rand::Rng;
 use sa_index::ProteinsBackend as _;
 use sa_server::load_proteins_file;
-use text_compression::ProteinTextBackend;
 
 /// Characters that delimit protein boundaries in the text.
 /// b'-' is SEPARATION_CHARACTER, b'$' is TERMINATION_CHARACTER.

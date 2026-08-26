@@ -35,7 +35,7 @@ pub trait Binary {
     /// * *It reads to the end of the stream.* Since the payload carries no length, there is
     ///   nothing to stop at. A bit array is therefore either the last section of its file — as in
     ///   the compressed suffix array — or the caller must hand over a bounded reader, as
-    ///   `text-compression` does with `Read::take` when the protein metadata follows the text in
+    ///   `protein-text` does with `Read::take` when the protein metadata follows the text in
     ///   the same file. Passing an unbounded reader for a non-final section silently swallows the
     ///   sections after it.
     /// * *It validates nothing.* The store ends up holding however many words the reader happened

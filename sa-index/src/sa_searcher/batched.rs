@@ -29,8 +29,8 @@
 use std::cmp::min;
 
 use protein_metadata::{ProteinsBackend, SEPARATION_CHARACTER};
+use protein_text::ProteinTextBackend;
 use rayon::prelude::*;
-use text_compression::ProteinTextBackend;
 
 use super::{
     BoundSearch,

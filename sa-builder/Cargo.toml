@@ -15,4 +15,4 @@ libsais64-rs = { path = "../libsais64-rs" }
 libdivsufsort-rs = "0.1.0"
 protein-metadata = { path = "../protein-metadata" }
 sa-index = { path = "../sa-index" }
-text-compression = { path = "../text-compression" }
+protein-text = { path = "../protein-text" }

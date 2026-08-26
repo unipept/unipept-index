@@ -6,7 +6,7 @@
 
 use binary_traits::WriteBinary;
 use protein_metadata::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
-use text_compression::{InMemoryProteinText, ProteinTextBackend};
+use protein_text::{InMemoryProteinText, ProteinTextBackend};
 
 use super::SuffixToProteinMappingBackend;
 use crate::Nullable;

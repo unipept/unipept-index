@@ -7,11 +7,11 @@ members = [ "binary-traits",
     "libsais64-rs",
     "memory-hints",
     "protein-metadata",
+    "protein-text",
     "sa-benchmarks",
     "sa-builder",
     "sa-index",
-    "sa-server",
-    "text-compression"
+    "sa-server"
 ]
 
 # `sa-benchmarks` is a dev-only measurement harness: it is a workspace member (so it resolves
@@ -26,8 +26,8 @@ default-members = [ "binary-traits",
     "libsais64-rs",
     "memory-hints",
     "protein-metadata",
+    "protein-text",
     "sa-builder",
     "sa-index",
-    "sa-server",
-    "text-compression"
+    "sa-server"
 ]

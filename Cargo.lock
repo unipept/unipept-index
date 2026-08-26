@@ -784,6 +784,7 @@ name = "memory-hints"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "memmap2",
 ]
 
 [[package]]
@@ -977,8 +978,19 @@ dependencies = [
  "fa-compression",
  "memmap2",
  "memory-hints",
+ "protein-text",
  "tempdir",
- "text-compression",
+]
+
+[[package]]
+name = "protein-text"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "bitarray",
+ "memmap2",
+ "memory-hints",
+ "tempfile",
 ]
 
 [[package]]
@@ -1157,6 +1169,7 @@ name = "sa-benchmarks"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "protein-text",
  "rand 0.8.5",
  "rayon",
  "sa-index",
@@ -1164,7 +1177,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
- "text-compression",
 ]
 
 [[package]]
@@ -1176,9 +1188,9 @@ dependencies = [
  "libdivsufsort-rs",
  "libsais64-rs",
  "protein-metadata",
+ "protein-text",
  "sa-index",
  "tempfile",
- "text-compression",
 ]
 
 [[package]]
@@ -1191,11 +1203,11 @@ dependencies = [
  "memmap2",
  "memory-hints",
  "protein-metadata",
+ "protein-text",
  "rayon",
  "serde",
  "serde_json",
  "tempfile",
- "text-compression",
 ]
 
 [[package]]
@@ -1206,10 +1218,10 @@ dependencies = [
  "binary-traits",
  "clap",
  "protein-metadata",
+ "protein-text",
  "sa-index",
  "serde",
  "serde_json",
- "text-compression",
  "tokio",
 ]
 
@@ -1362,17 +1374,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "text-compression"
-version = "0.1.0"
-dependencies = [
- "binary-traits",
- "bitarray",
- "memmap2",
- "memory-hints",
- "tempfile",
 ]
 
 [[package]]

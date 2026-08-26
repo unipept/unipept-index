@@ -18,7 +18,7 @@ use std::{error::Error, path::Path, sync::Arc};
 
 use binary_traits::{LoadIndex, ReadBinary, ReadBinaryMmap};
 use memmap2::Mmap;
-use text_compression::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, bit_array_byte_size};
+use protein_text::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend, bit_array_byte_size};
 
 use crate::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
 
@@ -97,7 +97,7 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
         // Everything from `warm_from` on: the entry table and both string blobs always, and the
         // text section too when the text is mapped rather than owned. See the field's doc.
         let end = self.mmap.len();
-        text_compression::mmap::touch_all_pages(&self.mmap, self.warm_from..end)
+        memory_hints::warmup::touch_all_pages(&self.mmap, self.warm_from..end)
     }
 
     /// Prefetches the fixed-size table entry for `index`.
@@ -288,7 +288,7 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
 fn map_file(path: &Path) -> Result<Arc<Mmap>, Box<dyn Error>> {
     use std::fs::File;
     let f = File::open(path)?;
-    // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
+    // SAFETY: see the note in `protein_text::mmap` — an index file is written once by
     // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
     // truncated or written underneath us.
     let mmap = Arc::new(unsafe { Mmap::map(&f)? });
@@ -323,7 +323,7 @@ impl ReadBinaryMmap for MmapBackedProteins<MmapBackedProteinText> {
 ///
 /// The text is read through the ordinary [`ReadBinary`] path with the mapping itself as the
 /// source — `&[u8]` is a `BufRead`, and the text section starts at byte 0 — so the 5-bit unpacking
-/// and the huge-page advice come from the one implementation in `text_compression::preloaded`
+/// and the huge-page advice come from the one implementation in `protein_text::preloaded`
 /// rather than a second copy here.
 impl ReadBinaryMmap for MmapBackedProteins<InMemoryProteinText> {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
@@ -369,7 +369,7 @@ impl ReadBinaryMmap for crate::InMemoryProteins<MmapBackedProteinText> {
         // `touch_all_pages` is the right helper and not just a convenient one: it brackets the walk
         // with `MADV_SEQUENTIAL` and restores `MADV_RANDOM` afterwards, which is exactly the
         // temporary reversal wanted for one bulk copy out of a mapping tuned for random access.
-        let _ = text_compression::mmap::touch_all_pages(&mmap, l.meta_offset..mmap.len());
+        let _ = memory_hints::warmup::touch_all_pages(&mmap, l.meta_offset..mmap.len());
         let proteins = read_metadata_section(&mut &mmap[l.meta_offset..])?;
 
         Ok(Self::new(text, proteins))
@@ -444,8 +444,8 @@ mod tests {
     use std::{fs::File, path::PathBuf};
 
     use binary_traits::{ReadBinaryMmap, WriteBinary};
+    use protein_text::{ProteinTextBackend as _, bit_array_byte_size};
     use tempdir::TempDir;
-    use text_compression::{ProteinTextBackend as _, bit_array_byte_size};
 
     use super::{InMemoryProteinText, MmapBackedProteinText, MmapBackedProteins};
     use crate::{

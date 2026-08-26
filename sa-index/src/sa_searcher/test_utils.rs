@@ -22,8 +22,8 @@ use std::{
 
 use binary_traits::{LoadIndex, WriteBinary};
 use protein_metadata::{InMemoryProteins, MmapBackedProteins, Protein, ProteinsBackend};
+use protein_text::{InMemoryProteinText, MmapBackedProteinText};
 use tempfile::NamedTempFile;
-use text_compression::{InMemoryProteinText, MmapBackedProteinText};
 
 use crate::{
     KmerTable,

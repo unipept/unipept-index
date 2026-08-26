@@ -48,10 +48,10 @@ pub type ActiveSa = sa_index::array::InMemorySA;
 
 /// The protein-text backend this build uses.
 #[cfg(all(feature = "mmap", not(feature = "preloaded-text")))]
-pub type ActiveText = text_compression::MmapBackedProteinText;
+pub type ActiveText = protein_text::MmapBackedProteinText;
 /// The protein-text backend this build uses.
 #[cfg(any(not(feature = "mmap"), feature = "preloaded-text"))]
-pub type ActiveText = text_compression::InMemoryProteinText;
+pub type ActiveText = protein_text::InMemoryProteinText;
 
 /// The protein-metadata backend this build uses, holding [`ActiveText`].
 #[cfg(all(feature = "mmap", not(feature = "preloaded-proteins")))]

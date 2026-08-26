@@ -41,7 +41,7 @@ impl SuffixToProteinMappingBackend for MmapDenseSuffixToProtein {
         // mapping, because the header is untrusted and `read_dense_mmap` does not check the body
         // against it.
         let end = (self.data_offset + self.count * 4).min(self.mmap.len());
-        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..end)
+        memory_hints::warmup::touch_all_pages(&self.mmap, self.data_offset..end)
     }
 }
 
@@ -78,7 +78,7 @@ pub(super) fn read_dense_mmap(mmap: Mmap) -> Result<MmapDenseSuffixToProtein, Bo
 
 #[cfg(test)]
 mod tests {
-    use text_compression::ProteinTextBackend;
+    use protein_text::ProteinTextBackend;
 
     use crate::suffix_to_protein_index::{
         mmap::test_utils::write_and_map,

@@ -228,11 +228,11 @@ silently ignores.
 | `sa-builder` | builds an index from a protein TSV |
 | `sa-index` | the search itself: suffix array, k-mer table, suffix→protein mapping |
 | `protein-metadata` | protein metadata — accessions, taxa, annotations |
-| `text-compression` | the concatenated protein text, packed at 5 bits per residue |
+| `protein-text` | the concatenated protein text, packed at 5 bits per residue |
 | `bitarray` | dense arrays of fixed-width values |
 | `fa-compression` | encoding for functional annotations |
 | `binary-traits` | the read/write/load traits every on-disk structure is written and read through |
-| `memory-hints` | prefetch and transparent-huge-page hints to the memory subsystem |
+| `memory-hints` | prefetch, transparent-huge-page and page-warmup hints to the memory subsystem |
 | `libsais64-rs` | bindings to the suffix-array construction library |
 | `sa-benchmarks` | measurement harness (see below) |
 

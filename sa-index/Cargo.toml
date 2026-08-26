@@ -26,6 +26,6 @@ fa-compression = { path = "../fa-compression" }
 serde = { version = "1.0.197", features = ["derive"] }
 memory-hints = { path = "../memory-hints" }
 protein-metadata = { path = "../protein-metadata" }
-text-compression = { path = "../text-compression" }
+protein-text = { path = "../protein-text" }
 bitarray = { path = "../bitarray" }
 serde_json = "1.0.116"

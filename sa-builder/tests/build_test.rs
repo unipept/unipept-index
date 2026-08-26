@@ -9,6 +9,7 @@ use std::{io::Write, path::Path, process::Command};
 
 use binary_traits::LoadIndex;
 use protein_metadata::{InMemoryProteins, MmapBackedProteins, ProteinsBackend};
+use protein_text::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend as _};
 use sa_index::{
     Nullable,
     array::{InMemorySA, MmapBackedSA, SuffixArrayBackend},
@@ -17,7 +18,6 @@ use sa_index::{
     }
 };
 use tempfile::TempDir;
-use text_compression::{InMemoryProteinText, MmapBackedProteinText, ProteinTextBackend as _};
 
 /// Four proteins used as test input, matching the fixture in protein-metadata unit tests.
 /// Text layout (L→I translation happens internally during SA construction):

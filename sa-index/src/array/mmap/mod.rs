@@ -75,13 +75,13 @@ impl super::SuffixArrayBackend for MmapBackedSA {
         }
     }
 
-    /// Warms the page cache over the SA data. See `text_compression::mmap::touch_all_pages` for
+    /// Warms the page cache over the SA data. See `memory_hints::warmup::touch_all_pages` for
     /// why the sweep is shaped the way it is.
     fn touch_all_pages(&self) -> u64 {
         // Only the SA data, not the whole mapping: the 10-byte header would otherwise skew the
         // range for no benefit.
         let byte_len = (self.len * self.bits_per_value).div_ceil(8);
-        text_compression::mmap::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len)
+        memory_hints::warmup::touch_all_pages(&self.mmap, self.data_offset..self.data_offset + byte_len)
     }
 
     // Do not add a `MADV_WILLNEED` over the SA range before scanning it. Tried twice, removed
@@ -111,7 +111,7 @@ impl ReadBinaryMmap for MmapBackedSA {
     /// ever emits whole words, so every file the builder produces already satisfies it.
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
-        // SAFETY: see the note in `text_compression::mmap` — an index file is written once by
+        // SAFETY: see the note in `protein_text::mmap` — an index file is written once by
         // sa-builder and is read-only for the lifetime of the process, so the mapping cannot be
         // truncated or written underneath us.
         let mmap = unsafe { Mmap::map(&file)? };

@@ -51,6 +51,7 @@ use std::{
 };
 
 use clap::Parser;
+use protein_text::ProteinTextBackend as _;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use sa_index::{
@@ -63,7 +64,6 @@ use sa_index::{
 use sa_server::{ActiveSearcher, load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, System};
-use text_compression::ProteinTextBackend as _;
 
 /// Schema version — increment when the output JSON format changes.
 /// v2: matrix records aggregate `runs` reps into one line and carry a `stats` spread.
