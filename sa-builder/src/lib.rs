@@ -166,19 +166,44 @@ pub fn build_ssa(
 /// step multiplies it by 32.
 const MAX_SPARSENESS: usize = 5;
 
-/// Builds the suffix array with `libsais`, splitting the sparseness factor between the sampling
-/// `libsais` performs itself and a second pass over the result.
-fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+/// How a requested sparseness factor is divided between the two passes that apply it.
+///
+/// The product of the two fields is the requested factor. See [`split_sparseness`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SparsenessSplit {
+    /// The part `libsais` applies itself, by folding that many characters into one symbol.
+    pub libsais_sparseness: usize,
+    /// The part left to a second pass over the result. 1 when `libsais` handles all of it.
+    pub sample_rate: usize
+}
+
+/// Splits a sparseness factor between the sampling `libsais` performs itself and a second pass
+/// over its output.
+///
+/// `libsais` can only sample at a factor it folds into its symbols, so this takes the largest
+/// such factor that divides the requested sparseness and leaves the remainder to [`sample_sa`].
+/// The walk down from [`MAX_SPARSENESS`] always terminates because 1 divides everything.
+///
+/// Only the `LibSais` construction algorithm splits the factor this way; `LibDivSufSort` builds
+/// the dense array and samples it at the full factor.
+pub fn split_sparseness(sparseness_factor: u8) -> SparsenessSplit {
     let sparseness_factor = sparseness_factor as usize;
 
-    // libsais can only sample at a factor it folds into its symbols, so take the largest such
-    // factor that divides the requested sparseness and leave the remainder to `sample_sa`. The
-    // walk down from MAX_SPARSENESS always terminates because 1 divides everything.
     let mut libsais_sparseness = MAX_SPARSENESS;
     while !sparseness_factor.is_multiple_of(libsais_sparseness) {
         libsais_sparseness -= 1;
     }
-    let sample_rate = sparseness_factor / libsais_sparseness;
+
+    SparsenessSplit {
+        libsais_sparseness,
+        sample_rate: sparseness_factor / libsais_sparseness
+    }
+}
+
+/// Builds the suffix array with `libsais`, splitting the sparseness factor between the sampling
+/// `libsais` performs itself and a second pass over the result.
+fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+    let SparsenessSplit { libsais_sparseness, sample_rate } = split_sparseness(sparseness_factor);
 
     let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
 
@@ -197,7 +222,7 @@ fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static 
     // `libsais_sparseness`, so the surviving entries are exactly its own multiples. It is also
     // what the `LibDivSufSort` path in `build_ssa` has always done.
     if sample_rate > 1 {
-        sample_sa(&mut sa, sparseness_factor as u8);
+        sample_sa(&mut sa, sparseness_factor);
     }
 
     Ok(sa)
@@ -376,6 +401,34 @@ mod tests {
         let mut sa = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         sample_sa(&mut sa, 2);
         assert_eq!(sa, vec![0, 2, 4, 6, 8]);
+    }
+
+    /// The two halves of the split must multiply back to the requested factor, and the `libsais`
+    /// half must be one it can actually fold into a symbol.
+    ///
+    /// The factors where the two share a divisor (8, 9, 16, 25, 27) are the ones that broke the
+    /// sampling pass; they are interleaved with factors that were always correct.
+    #[test]
+    fn test_split_sparseness() {
+        for factor in [1u8, 2, 3, 4, 5, 6, 8, 9, 10, 15, 16, 25, 27] {
+            let SparsenessSplit { libsais_sparseness, sample_rate } = split_sparseness(factor);
+
+            assert!(
+                (1..=MAX_SPARSENESS).contains(&libsais_sparseness),
+                "factor {factor}: libsais cannot fold {libsais_sparseness} characters into a symbol"
+            );
+            assert_eq!(
+                libsais_sparseness * sample_rate,
+                factor as usize,
+                "factor {factor}: the two passes together must apply the requested factor"
+            );
+        }
+
+        // The largest divisor wins, so `libsais` does as much of the work as it can.
+        assert_eq!(split_sparseness(10), SparsenessSplit { libsais_sparseness: 5, sample_rate: 2 });
+        assert_eq!(split_sparseness(8), SparsenessSplit { libsais_sparseness: 4, sample_rate: 2 });
+        // 7 is prime and above MAX_SPARSENESS, so the walk falls all the way to 1.
+        assert_eq!(split_sparseness(7), SparsenessSplit { libsais_sparseness: 1, sample_rate: 7 });
     }
 
     /// The stride `libsais64` actually produces must equal the sparseness factor the header will

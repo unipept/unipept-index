@@ -17,7 +17,9 @@ use binary_traits::WriteBinary;
 use clap::Parser;
 use protein_metadata::{InMemoryProteins, ProteinsBackend as _};
 use protein_text::ProteinTextBackend as _;
-use sa_builder::{Arguments, SuffixToProteinMappingStyle, build_ssa};
+use sa_builder::{
+    Arguments, SAConstructionAlgorithm, SparsenessSplit, SuffixToProteinMappingStyle, build_ssa, split_sparseness
+};
 use sa_index::{
     KmerTable,
     array::{dump_compressed_suffix_array, dump_suffix_array},
@@ -46,6 +48,15 @@ fn main() {
     // Not the most efficient way to get the text, but still acceptable
     let text: Vec<u8> = proteins.text().iter().collect();
     let sa = timed("building the suffix array", || {
+        eprintln!("\tSparseness factor: {}", sparseness_factor);
+        // Only `libsais` divides the factor over two passes; `libdivsufsort` builds the dense
+        // array and samples it at the full factor, where neither number means anything.
+        if construction_algorithm == SAConstructionAlgorithm::LibSais {
+            let SparsenessSplit { libsais_sparseness, sample_rate } = split_sparseness(sparseness_factor);
+            eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
+            eprintln!("\tSample rate: {}", sample_rate);
+        }
+
         build_ssa(text, &construction_algorithm, sparseness_factor)
             .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
     });
