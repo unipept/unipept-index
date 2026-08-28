@@ -64,11 +64,11 @@ pub(super) enum TrypticQuery {
 /// Searching `X + peptide` for each of these — instead of truncating the peptide — is what makes
 /// the tryptic path cheap; see `search_matching_suffixes_scalar` for the derivation. Ordered K, R,
 /// separator so the two common cases run first.
-pub(super) const TRYPTIC_EXTENSION_CHARS: [u8; 3] = [b'K', b'R', b'-'];
+pub(super) const TRYPTIC_EXTENSION_CHARS: [u8; 3] = *b"KR-";
 
 /// The separator-only subset, used when the peptide starts with proline: `K|R` followed by P is
 /// not a trypsin cut site, so those two searches are guaranteed empty and are skipped entirely.
-const TRYPTIC_EXTENSION_CHARS_PROLINE: [u8; 1] = [b'-'];
+const TRYPTIC_EXTENSION_CHARS_PROLINE: [u8; 1] = *b"-";
 
 /// Left-extension characters to search for this peptide.
 #[inline]

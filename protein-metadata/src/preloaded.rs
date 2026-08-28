@@ -337,7 +337,7 @@ pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Pr
         .try_reserve_exact(protein_count)
         .map_err(|_| format!("The proteins header declares {protein_count} proteins, which cannot be allocated"))?;
 
-    for (index, entry) in table.chunks_exact(16).enumerate() {
+    for (index, entry) in table.as_chunks::<16>().0.iter().enumerate() {
         let taxon_id = u32::from_le_bytes(entry[0..4].try_into()?);
         let uid_offset = u32::from_le_bytes(entry[4..8].try_into()?) as usize;
         let uid_len = u16::from_le_bytes(entry[8..10].try_into()?) as usize;
@@ -592,7 +592,6 @@ mod tests {
         assert_eq!(loaded.proteins[1].taxon_id, 562);
     }
 
-    use protein_text::ProteinTextBackend as _;
     use tempdir::TempDir;
 
     use super::*;

@@ -13,7 +13,7 @@ use sa_server::load_proteins_file;
 
 /// Characters that delimit protein boundaries in the text.
 /// b'-' is SEPARATION_CHARACTER, b'$' is TERMINATION_CHARACTER.
-const BOUNDARY_CHARS: [u8; 2] = [b'-', b'$'];
+const BOUNDARY_CHARS: [u8; 2] = *b"-$";
 
 /// Sample real protein subsequences from proteins.bin for use as benchmark peptides.
 ///

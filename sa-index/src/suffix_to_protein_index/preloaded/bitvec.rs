@@ -260,8 +260,8 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
         let words = words_left.min(buffer.len() / 8);
         let chunk = &mut buffer[..words * 8];
         reader.read_exact(chunk)?;
-        for word in chunk.chunks_exact(8) {
-            blocks.push(u64::from_le_bytes(word.try_into().unwrap()));
+        for word in chunk.as_chunks::<8>().0 {
+            blocks.push(u64::from_le_bytes(*word));
         }
         words_left -= words;
     }
@@ -275,7 +275,7 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
         let cells = cells_left.min(buffer.len() / 16);
         let chunk = &mut buffer[..cells * 16];
         reader.read_exact(chunk)?;
-        for cell in chunk.chunks_exact(16) {
+        for cell in chunk.as_chunks::<16>().0 {
             counts.push(Superblock {
                 level1: u64::from_le_bytes(cell[0..8].try_into().unwrap()),
                 packed_level2: u64::from_le_bytes(cell[8..16].try_into().unwrap())

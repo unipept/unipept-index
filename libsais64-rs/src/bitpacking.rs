@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn every_alphabet_byte_fits_the_field() {
         let max = (1u8 << BITS_PER_CHAR) - 1;
-        for c in [b'$', b'-'].into_iter().chain(b'A'..=b'Z') {
+        for c in (*b"$-").into_iter().chain(b'A'..=b'Z') {
             let rank = get_rank(c).unwrap_or_else(|| panic!("{} should be in the alphabet", c as char));
             assert!(rank <= max, "{} -> rank {rank} does not fit in {BITS_PER_CHAR} bits", c as char);
         }
@@ -130,7 +130,7 @@ mod tests {
     /// the field and spilled into the neighbouring residue.
     #[test]
     fn every_other_byte_is_rejected() {
-        let alphabet: Vec<u8> = [b'$', b'-'].into_iter().chain(b'A'..=b'Z').collect();
+        let alphabet: Vec<u8> = (*b"$-").into_iter().chain(b'A'..=b'Z').collect();
         for c in 0..=255u8 {
             if alphabet.contains(&c) {
                 continue;
