@@ -42,6 +42,11 @@ PORT="${PORT:-3999}"
 [ -n "$PEP" ] || { echo "ERROR: no peptide file — set PEP= or add [peptides].mixed to the profile"; exit 1; }
 
 mkdir -p "$OUT"
+# Cleared, not merely written into. A configuration whose build fails is skipped below, and its
+# answer file from a PREVIOUS run would otherwise take part in the comparison — matching the others
+# and reporting PASS for a configuration this invocation never built, never started and never
+# queried. The count check at the end is the other half of that: nine files, or the gate says so.
+rm -f "$OUT"/*.json
 [ -d "$IDX" ] || { echo "ERROR: index dir not found: $IDX"; exit 1; }
 for f in sa.bin proteins.bin mapping.bin; do
   [ -s "$IDX/$f" ] || { echo "ERROR: missing $IDX/$f"; exit 1; }
@@ -79,12 +84,21 @@ for f in "${CONFIGS[@]}"; do
   pid=$!
 
   # Index loads are slow on the full DB; wait until the endpoint answers rather than guessing.
+  ready=0
   for _ in $(seq 1 1800); do
     sleep 2
-    curl -s -o /dev/null "http://127.0.0.1:$PORT/search" -X POST \
-      -H 'content-type: application/json' -d '{"peptides":[]}' && break
+    if curl -s -o /dev/null "http://127.0.0.1:$PORT/search" -X POST \
+      -H 'content-type: application/json' -d '{"peptides":[]}'; then ready=1; break; fi
     kill -0 $pid 2>/dev/null || { echo "  SERVER DIED — see $OUT/$tag.log"; break; }
   done
+  # Querying a server that never came up leaves an empty file, which the comparison at the end
+  # reports as "the configurations disagree" — the wrong diagnosis for a server that died on
+  # startup. Leave no file instead: the count check names this configuration as the missing one.
+  if [ "$ready" != "1" ]; then
+    echo "  NOT READY — no answer recorded for $tag"
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    continue
+  fi
 
   curl -s "http://127.0.0.1:$PORT/search" -H 'content-type: application/json' -d "$BODY" \
     | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin), sort_keys=True, indent=1))' \
@@ -97,6 +111,17 @@ done
 
 echo "===== comparison ====="
 sha1sum "$OUT"/*.json 2>/dev/null || shasum "$OUT"/*.json
+
+# Every configuration must have produced an answer THIS run. Comparing only the files that happen
+# to be there would report PASS on a subset — a build that failed or a server that never came up
+# leaves no file, and a gate that is silent about the arm it could not test is not a gate.
+answers=$(ls -1 "$OUT"/*.json 2>/dev/null | wc -l | tr -d ' ')
+echo "answers recorded: $answers of ${#CONFIGS[@]}"
+[ "$answers" = "${#CONFIGS[@]}" ] || {
+  echo "FAIL: ${#CONFIGS[@]} configurations were asked for, $answers answered — see the log above"
+  exit 1
+}
+
 n=$( { sha1sum "$OUT"/*.json 2>/dev/null || shasum "$OUT"/*.json; } | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
 echo "distinct answer hashes: $n  (must be 1)"
 [ "$n" = "1" ] || { echo "FAIL: configurations disagree"; exit 1; }

@@ -20,6 +20,7 @@ from ..config import Suite
 from ..records import Record, delta_pct, load_dir, median
 from ..report import Report, Table, band, count, pct, qps
 from .shared import (
+    order_buckets,
     DEPLOYED_ARM,
     GRID_KEYS,
     fmt_tune,
@@ -33,11 +34,6 @@ from .shared import (
     varying,
 )
 
-#: The order peptide files are reported in, whichever order they were measured in. It runs from the
-#: whole-picture views to the length regimes, so a reader meets the summary before the detail:
-#: `summary` is the cross-file overview, `mixed` the unbucketed 5..50 file, then the three buckets
-#: short to long. A file not named here follows, alphabetically.
-BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
 
 #: The file `defaults.toml` calls "the query mix a server actually sees, and the one number to
 #: quote" — the unbucketed 5..50 peptides. Where a figure has room for one regime rather than four,
@@ -61,7 +57,7 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
     _verdict_tiles(report, cells, arms)
     _summary(report, cells, arms, loaded)
 
-    sources = _ordered(sorted({key[0] for key in cells}))
+    sources = order_buckets(sorted({key[0] for key in cells}))
     report.heading("by length regime", level=3)
     # Figure first, grid folded underneath: the chart is what points at something, the grid is what
     # you open once it has. One grid for every regime rather than a section each — the regimes are
@@ -82,11 +78,6 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
         report.note(suite.notes)
 
 
-def _ordered(sources: list[str]) -> list[str]:
-    known = [name for name in BUCKET_ORDER if name in sources]
-    return known + [name for name in sources if name not in BUCKET_ORDER]
-
-
 def _label(key: str, value) -> str:
     return FORMATTERS.get(key, fmt_tune)(value)
 
@@ -104,7 +95,7 @@ def _summary(report: Report, cells: dict, arms: list[str], loaded: list[Record])
     # The headline cell: production search options, whatever else this suite happens to hold. Found
     # by matching the two options rather than by naming a full coordinate tuple, so narrowing the
     # grid further does not silently empty this chart.
-    buckets = _ordered(sorted({key[0] for key in cells}))
+    buckets = order_buckets(sorted({key[0] for key in cells}))
     production: dict[str, list[float | None]] = {arm: [] for arm in arms}
     for source in buckets:
         match = next(
@@ -218,7 +209,7 @@ def _share_heatmap(report: Report, rows: list[tuple]) -> None:
     look; as a column of percentages between 2% and 94% it is a lookup.
 
     Sequential, not diverging: this is a magnitude with no meaningful midpoint. Averaged over the
-    arms, because the share is a property of the workload — the three storage arms agree on it to
+    arms, because the share is a property of the workload — the storage arms agree on it to
     well within the noise, and the table below carries each of them.
     """
     from ..charts import sequential_heatmap
@@ -236,7 +227,7 @@ def _share_heatmap(report: Report, rows: list[tuple]) -> None:
     if not buckets:
         return
 
-    files = _ordered(sorted({source for source, _ in buckets}))
+    files = order_buckets(sorted({source for source, _ in buckets}))
     columns = sorted({options for _, options in buckets})
     grid = {}
     for row, source in enumerate(files):
@@ -684,7 +675,7 @@ def _phase_split_chart(report: Report, cells: dict, columns: list[str]) -> None:
                 Series("iter (range scan)", per_regime[regime][2], 1, tip={"phase": "iter"}),
             ],
         )
-        for regime in _ordered(list(per_regime))
+        for regime in order_buckets(list(per_regime))
     ]
 
     caption = "Where search thread-time goes: binary search against range scan"

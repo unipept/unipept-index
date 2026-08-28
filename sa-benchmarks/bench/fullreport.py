@@ -109,7 +109,7 @@ def run_all(args, repo: Path) -> int:
 
     report = _assemble(plan, profile, repo, state, session, outcomes, facts)
     # Three renderings of one report object: the page to read, the markdown to paste into a PR, and
-    # the JSON a later run consumes as its baseline.
+    # the JSON that records what this session was (see `_machine_readable` — not the baseline).
     (session / "report.html").write_text(
         render_page(
             f"Suffix-array index — {state.short}",
@@ -347,12 +347,6 @@ def _provenance(
 
 
 
-
-
-
-
-
-
 def _settings_line(name: str, args, repo: Path) -> str:
     """What this suite was actually run with — the other half of reproducing a number."""
     try:
@@ -369,7 +363,7 @@ def _settings_line(name: str, args, repo: Path) -> str:
         f"{defaults.get('runs', '?')} reps x {defaults.get('amount', '?'):,} peptides",
         f"arms {'/'.join(arm.name for arm in suite.arms)}",
     ]
-    for key, label in (("peptides", "queries"), ("kmer_table", "kmer"), ("warmup", "warmup")):
+    for key, label in (("peptides", "queries"), ("kmer", "kmer"), ("warmup", "warmup")):
         if defaults.get(key):
             parts.append(f"{label} {defaults[key]}")
     if suite.measure:
@@ -385,7 +379,13 @@ def _settings_line(name: str, args, repo: Path) -> str:
 
 
 def _machine_readable(state: rig.GitState, outcomes: list[SuiteOutcome]) -> dict:
-    """`report.json`: the same facts without the prose, so a later run can use this as a baseline."""
+    """`report.json`: what this session WAS, without the prose — commit, and each suite's outcome.
+
+    Not the baseline, despite the name being the obvious candidate for one. `--baseline` names a
+    session DIRECTORY and every suite reads its own jsonl out of it (see `__main__.apply_overrides`
+    and `defaults._regressions`), because a comparison is per cell and this file holds no cells. It
+    is provenance and status: which commit, which suites ran, what each cost.
+    """
     return {
         "commit": state.commit,
         "branch": state.branch,

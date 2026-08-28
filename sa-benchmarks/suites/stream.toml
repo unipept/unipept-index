@@ -9,9 +9,9 @@ mode = "matrix"
 # a per-invocation offset being read as an arm difference (`pprot` vs `preloaded` flipped sign
 # between suites while each suite was internally one-sided — the signature of exactly that).
 #
-# Note the asymmetry the ordering has: with three arms the slots run a b c c b a, so the FIRST arm's
-# two invocations straddle the suite while the last arm's are adjacent. The first arm therefore
-# carries the widest spread, and since `floor_of` takes the widest across both cells of a
+# Note the asymmetry the ordering has: the slots run forward then reversed (a b c … c b a), so the
+# FIRST arm's two invocations straddle the suite while the last arm's are adjacent. The first arm
+# therefore carries the widest spread, and since `floor_of` takes the widest across both cells of a
 # comparison, that is the one that governs. Declare the arm whose stability is most in question
 # first.
 ordering = "palindrome"

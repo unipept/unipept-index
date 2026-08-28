@@ -452,7 +452,7 @@ _STYLE = """
      legend — five hues rather than ten, and small/preloaded sits next to small/mmap instead of
      next to whatever happened to be slot 2. */
   --s1-lt: #93bcee; --s2-lt: #f5b499; --s3-lt: #86dabd; --s4-lt: #f6d180; --s5-lt: #f4bdd2;
-  /* The three storage arms, one hue each. They were a single-hue ordinal ramp — the arms ARE an
+  /* The five storage arms, one hue each. They were a single-hue ordinal ramp — the arms ARE an
      ordinal axis, how much is resident — but three lightness steps of one blue are what the eye is
      worst at: telling mmap from pprot meant judging which of two blues was darker, on the
      comparison this report exists to make, in every legend on the page. Three hues are told apart
@@ -476,9 +476,6 @@ _STYLE = """
   --arm-1: #2a78d6; --arm-2: #eb6834; --arm-3: #1baf7a; --arm-4: #4a3aa7; --arm-5: #eda100;
   --grid: #e3e6ea; --axisink: #6b7280;
   /* Diverging: blue and red poles reading as opposite, three steps each, neutral gray midpoint. */
-  --div-mid: #f0efec;
-  --div-pos-1: #b7d3f6; --div-pos-2: #5598e7; --div-pos-3: #1c5cab;
-  --div-neg-1: #f7c9c8; --div-neg-2: #e88b8a; --div-neg-3: #a82b2a;
   /* Sequential: one hue, more-is-further-from-the-surface. */
   --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #5598e7; --seq-4: #256abf; --seq-5: #104281;
 }
@@ -496,9 +493,6 @@ _STYLE = """
        move AWAY from the surface in both modes, so preloaded is the lightest step here. */
     --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #9085e9; --arm-5: #c98500;
     --grid: #262b33; --axisink: #9aa3af;
-    --div-mid: #383835;
-    --div-pos-1: #184f95; --div-pos-2: #2a78d6; --div-pos-3: #9ec5f4;
-    --div-neg-1: #7a1f1e; --div-neg-2: #cf4a49; --div-neg-3: #f0a9a8;
     --seq-1: #0d366b; --seq-2: #184f95; --seq-3: #2a78d6; --seq-4: #6da7ec; --seq-5: #b7d3f6;
   }
 }
@@ -510,9 +504,6 @@ _STYLE = """
   --s1-lt: #86b6ef; --s2-lt: #eaa084; --s3-lt: #74cbaf; --s4-lt: #e2bf6d; --s5-lt: #e9a1bb;
   --arm-1: #3987e5; --arm-2: #d95926; --arm-3: #199e70; --arm-4: #9085e9; --arm-5: #c98500;
   --grid: #262b33; --axisink: #9aa3af;
-  --div-mid: #383835;
-  --div-pos-1: #184f95; --div-pos-2: #2a78d6; --div-pos-3: #9ec5f4;
-  --div-neg-1: #7a1f1e; --div-neg-2: #cf4a49; --div-neg-3: #f0a9a8;
   --seq-1: #0d366b; --seq-2: #184f95; --seq-3: #2a78d6; --seq-4: #6da7ec; --seq-5: #b7d3f6;
 }
 * { box-sizing: border-box; }

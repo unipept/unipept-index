@@ -16,10 +16,10 @@ scratch = "target/bench-results"
 
 # Query files, one peptide per line. Relative paths resolve against index_dir.
 #
-#   mixed              the general-purpose file, used by ram / threads / detail
+#   mixed              the general-purpose file, and the query mix a server actually sees
 #   small/medium/large the length-bucketed files the `defaults` grid sweeps, so it can tell the
 #                      retrieval-bound regime (short peptides) from the search-bound one (long).
-#                      Produce them with bucket_peptides.sh.
+#                      Produce each with `generate-peptides --min-len/--max-len`; see the README.
 #
 # Each file needs at least `runs * amount` lines for the suite that reads it — the harness consumes
 # them sequentially, so a short file shortens the later reps instead of failing. `run.sh` checks.
@@ -29,12 +29,18 @@ small = "../peptides/small.txt"
 medium = "../peptides/medium.txt"
 large = "../peptides/large.txt"
 
-# Pre-built k-mer bound tables (sa-builder --output-kmer-table). Optional: a suite naming a table
-# this profile does not have fails at startup with the list of what it does have.
+# Pre-built k-mer bound tables (sa-builder --output-kmer-table). Optional, and optional in a
+# specific way: a suite naming a table this profile does not have does NOT fail — the harness builds
+# the same table in-process instead and says so, because dropping it would quietly measure a
+# different index while building it only costs startup time. That is minutes per process at
+# full-database scale, and the preflight names which k it will have to build. (A missing PEPTIDE
+# file is the one that fails, with the list of what this profile has — a query file cannot be
+# reconstructed.)
 #
-# k6 is the production default (3.06 GB), chosen for the capped regime — see the `ram` suite's
-# notes. k5 is 127 MB and is what a guaranteed-resident deployment would use; the `kmer` suite
-# sweeps both against no table, so both have to be here for a full run.
+# k5 is the shipped default, mirroring `sa-builder --kmer-size` (127 MB). k6 is 3.06 GB and is a
+# documented tuning step for memory-constrained deployments, where the table's value is working-set
+# size rather than probe count — see the `kmer` and `ram` suites' notes. The `kmer` suite sweeps both
+# against no table, so both have to be here for a full run.
 [kmer_tables]
 k5 = "kmer-tables/5mer_table.bin"
 k6 = "kmer-tables/6mer_table.bin"

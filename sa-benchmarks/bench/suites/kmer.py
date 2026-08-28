@@ -19,6 +19,7 @@ from ..config import Suite
 from ..records import Record, delta_pct
 from ..report import Report, Table, band, gb, pct, qps
 from .shared import (
+    order_buckets,
     GRID_KEYS,
     by_cell,
     cell_band,
@@ -34,8 +35,6 @@ from .shared import (
     varying,
 )
 
-#: Length regimes short to long; anything else follows alphabetically.
-BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
 
 KMER_INDEX = GRID_KEYS.index("kmer_k")
 NO_TABLE = 0
@@ -56,7 +55,7 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
     # long enough that the machine moves under it. The cadence is in `kmer.toml`.
     cells = by_cell(loaded, correct_drift=True)
     arms = [arm.name for arm in suite.arms]
-    buckets = _ordered(sorted({key[0] for key in cells}))
+    buckets = order_buckets(sorted({key[0] for key in cells}))
     sizes = sorted({key[KMER_INDEX] for key in cells})
     # Everything else the suite varies — the two search options, and the query count that follows
     # tryptic. Each becomes a row of its own rather than three of the four being dropped on the
@@ -91,11 +90,6 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
 
     if suite.notes:
         report.note(suite.notes)
-
-
-def _ordered(sources: list[str]) -> list[str]:
-    known = [name for name in BUCKET_ORDER if name in sources]
-    return known + [name for name in sources if name not in BUCKET_ORDER]
 
 
 def _curve(report: Report, points: dict, buckets: list[str], sizes: list[int], arms: list[str], extra: list[str]) -> None:

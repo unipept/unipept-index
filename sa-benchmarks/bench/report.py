@@ -279,15 +279,6 @@ def count(value: float | None) -> str:
     return "-" if value is None else f"{value:,.0f}"
 
 
-def cell_qps(summary: Summary | None) -> str:
-    """A cell's throughput, or why there is no number to show."""
-    if summary is None:
-        return "(not run)"
-    if summary.void_reason:
-        return "VOID"
-    return qps(summary.qps)
-
-
 def delta_cell(new: Summary | None, base: Summary | None) -> tuple[str, str]:
     """(delta, verdict) for one comparison, never showing a delta without its floor."""
     from .records import delta_pct, noise_floor

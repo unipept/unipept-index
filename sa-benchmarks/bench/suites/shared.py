@@ -4,9 +4,9 @@ Two things live here. The first is stating what configuration a set of records r
 vocabulary — a report where two suites word the same fact differently is a report whose reader has
 to learn both.
 
-The second is reading a matrix-mode grid. `defaults`, `kmer` and `mlp` are the same experiment
+The second is reading a matrix-mode grid. `defaults`, `kmer` and `stream` are the same experiment
 pointed at different coordinates: one process per arm, a grid swept inside it, one row per cell with
-both arms side by side. What differs between them is which coordinate is the subject and what the
+every arm side by side. What differs between them is which coordinate is the subject and what the
 extra column says, which is little enough that each suite builds its own table — so what is shared
 is the primitives underneath, not a table builder with three modes.
 """
@@ -33,9 +33,13 @@ GRID_KEYS = ("peptide_source", "equate_il", "tryptic", "kmer_k", "amount_of_pept
 CONTEXT_KEYS = ("peptide_source", "amount_of_peptides", "kmer_k", "equate_il", "tryptic", "max_matches")
 
 
+def kmer_label(k) -> str:
+    return {0: "none", 5: "5-mer", 6: "6-mer"}.get(k, str(k))
+
+
 #: How a coordinate's value is printed in the configuration table.
 _COORD_LABELS = {
-    "kmer_k": lambda k: {0: "none", 5: "5-mer", 6: "6-mer"}.get(k, str(k)),
+    "kmer_k": kmer_label,
     "amount_of_peptides": lambda n: f"{n:,} queries",
     "peptide_source": str,
 }
@@ -47,8 +51,11 @@ _COORD_LABELS = {
 #: summary and hide the real one.
 _WORKLOAD_KEYS = ("peptide_source", "amount_of_peptides")
 
-#: Length regimes short to long, matching the order the sections appear in.
-_BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
+#: The order peptide files are reported in, whichever order they were measured in. It runs from the
+#: whole-picture views to the length regimes, so a reader meets the summary before the detail:
+#: `summary` is the cross-file overview, `mixed` the unbucketed 5..50 file, then the three buckets
+#: short to long. A file not named here follows, alphabetically.
+BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
 
 
 def held_and_swept(report: Report, loaded: list[Record]) -> None:
@@ -91,7 +98,7 @@ def held_and_swept(report: Report, loaded: list[Record]) -> None:
     overridden, mixed = [], []
     for name, values, default in rows:
         label = _COORD_LABELS.get(name, fmt_tune)
-        order = _bucket_order(values) if name == "peptide_source" else _in_order(values)
+        order = order_buckets(values) if name == "peptide_source" else _in_order(values)
         shown = ", ".join(label(value) for value in order)
         swept = False
         if len(values) > 1:
@@ -137,12 +144,6 @@ def held_and_swept(report: Report, loaded: list[Record]) -> None:
 def fmt_tune(value) -> str:
     """TOML/JSON booleans read better lowercase, matching how the knob is written in Rust."""
     return str(value).lower() if isinstance(value, bool) else str(value)
-
-
-def _bucket_order(values: set) -> list:
-    """Length regimes short to long; anything the order does not name follows alphabetically."""
-    known = [name for name in _BUCKET_ORDER if name in values]
-    return known + sorted(value for value in values if value not in _BUCKET_ORDER)
 
 
 def _in_order(values: set):
@@ -493,21 +494,24 @@ def ratio_of(values: list[dict | None]) -> str:
     return f"{values[1]['p50'] / values[0]['p50']:.2f}x"
 
 
-def kmer_label(k) -> str:
-    return {0: "none", 5: "5-mer", 6: "6-mer"}.get(k, str(k))
-
-
 #: The arm a composition figure is drawn for, when only one can be. The deployed configuration, so
 #: the split shown is the split production actually pays.
 DEPLOYED_ARM = "pprot"
 
-#: The k-mer size that ships, mirrored from `sa-builder`'s `--kmer-size` default.
+#: The k-mer size that ships, mirrored from `sa-builder`'s `--kmer-size` default (see its
+#: `Arguments::kmer_size`, which is 5 and has a test asserting it).
 #:
 #: Nothing in a record says which k is production — the table is a build-time artefact chosen by
 #: `sa-builder`, not something the searcher reads. It is written here instead of at each
 #: use, so changing the shipped table is one edit rather than a hunt — and the `kmer = [...]` lines
 #: in `suites/*.toml` have to be moved with it, since those are what actually pin the background.
-SHIPPED_KMER_K = 6
+#:
+#: Read by nothing at present: every suite pins `kmer` in its own file — `[5]` in the `[[sweep]]`
+#: blocks of `defaults` and `stream`, `5` in the `[defaults]` of `ram`, `startup` and `threads`, and
+#: `[0, 5, 6]` in `kmer`, which is the suite that asks the question. It said 6 while `sa-builder`
+#: said 5, which is exactly the disagreement this constant exists to prevent, so it is kept and
+#: corrected rather than deleted.
+SHIPPED_KMER_K = 5
 
 
 def phase_switch(
@@ -599,9 +603,9 @@ def phase_switch(
     # the rest of the report describes.
     #
     # Drawn for ONE arm. Composition is a property of the workload rather than of the storage
-    # backend — the three arms' phase splits differ by less than the noise on any of them — so
-    # putting all three in would spend a second categorical channel, on top of the three phases, to
-    # redraw the same shape three times. Which backend is faster is what the other three readings
+    # backend — the arms' phase splits differ by less than the noise on any of them — so putting the
+    # whole ladder in would spend a second categorical channel, on top of the three phases, to
+    # redraw the same shape once per arm. Which backend is faster is what the other three readings
     # are for.
     split_arm = DEPLOYED_ARM if DEPLOYED_ARM in arms else (arms[0] if arms else "")
     phases = (
@@ -719,8 +723,6 @@ def tips_for(headers) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 #: Length regimes short to long; anything else follows alphabetically.
-BUCKET_ORDER = ("summary", "mixed", "small", "medium", "large")
-
 #: Per-value formatting for the coordinates that read better as words than as numbers.
 KNOB_LABELS = {"kmer_k": kmer_label}
 
@@ -754,6 +756,7 @@ def column_label(name: str, value) -> str:
 
 
 def order_buckets(sources) -> list[str]:
+    """Length regimes short to long; anything `BUCKET_ORDER` does not name follows alphabetically."""
     known = [name for name in BUCKET_ORDER if name in sources]
     return known + sorted(name for name in sources if name not in BUCKET_ORDER)
 

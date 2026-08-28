@@ -284,7 +284,7 @@ def _storage_checks(profile: Profile, facts: dict[str, str]) -> list[Check]:
     swap = facts["swap_gb"]
     checks.append(Check("memory", OK, f"{facts['ram_gb']} GB RAM, swap {swap if not swap.isdigit() else swap + ' GB'}"))
 
-    counts = ", ".join(f"{name} {_lines(path):,}" for name, path in sorted(profile.peptides.items()))
+    counts = ", ".join(f"{name} {rig.count_lines(path):,}" for name, path in sorted(profile.peptides.items()))
     checks.append(Check("peptides", OK, f"{len(profile.peptides)} file(s): {counts} lines"))
     checks.append(
         Check("kmer tables", OK, ", ".join(sorted(profile.kmer_tables)) or "none in this profile — a suite that asks for one builds it in-process")
@@ -353,6 +353,9 @@ def _plan_suite(name: str, args, repo: Path, profile: Profile, session: Path, op
 
     plan.notes += _supply_notes(runner, cells, profile, plan)
     plan.notes += _table_notes(suite, profile)
+    # Not a warning status: the file still runs, and runs correctly. It is said here because this
+    # block is the one place every suite in a session prints something about itself.
+    plan.notes += [f"deprecated: {note}" for note in suite.deprecations]
 
     if plan.status != "run":
         return plan
@@ -378,7 +381,7 @@ def _supply_notes(runner: Runner, cells: list[Cell], profile: Profile, plan: Sui
             plan.status = FAIL
             plan.reason = str(error)
             continue
-        have = _lines(path)
+        have = rig.count_lines(path)
         if have < needed:
             plan.status = FAIL
             plan.reason = (
@@ -401,12 +404,15 @@ def _table_notes(suite: Suite, profile: Profile) -> list[str]:
     """
     if not profile.kmer_tables:
         return []
+    # One spelling on both sides now: a block's `kmer = [0, 5, 6]` and a suite's `kmer = 6` are the
+    # same integer k, so this reads them the same way. It used to parse the digits off a `k<N>`
+    # profile key for the second — two parsers for one question, which is what the unification was
+    # for. `config._normalise_kmer` has already rewritten any deprecated spelling by this point.
     wanted: set[int] = set()
     for block in suite.sweeps:
         wanted |= {int(k) for k in block.get("kmer", []) if int(k)}
-    table = suite.defaults.get("kmer_table")
-    if table and str(table) != "none" and str(table).startswith("k") and str(table)[1:].isdigit():
-        wanted.add(int(str(table)[1:]))
+    for values in (suite.axes.get("kmer", []), [suite.defaults.get("kmer")]):
+        wanted |= {int(k) for k in values if k}
 
     built = sorted(k for k in wanted if not profile.kmer_table(f"k{k}"))
     if not built:
@@ -416,11 +422,6 @@ def _table_notes(suite: Suite, profile: Profile) -> list[str]:
         + ", ".join(f"k={k}" for k in built)
         + " in this profile — built in-process, paid at every process startup"
     ]
-
-
-def _lines(path: Path) -> int:
-    """Lines in a peptide file. `rig.count_lines` caches, so asking per suite costs one `wc -l`."""
-    return rig.count_lines(path)
 
 
 # ---------------------------------------------------------------------------

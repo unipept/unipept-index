@@ -173,7 +173,9 @@ class Runner:
         several times longer than it is.
         """
         jsonl = self.out_dir / f"{cell.label}.jsonl"
-        return (jsonl.exists() and jsonl.stat().st_size > 0) or (self.out_dir / f"{cell.label}.oom").exists()
+        return (jsonl.exists() and jsonl.stat().st_size > 0) or _is_oom_marker(
+            self.out_dir / f"{cell.label}.oom"
+        )
 
     def run(self, cells: list[Cell]) -> list[CellResult]:
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -199,9 +201,15 @@ class Runner:
         if jsonl.exists() and jsonl.stat().st_size > 0:
             self.echo(f"  skip {cell.label} (results exist)")
             return CellResult(cell, "skipped", detail="results exist")
-        if marker.exists():
+        if _is_oom_marker(marker):
             self.echo(f"  skip {cell.label} (recorded as did-not-fit)")
             return CellResult(cell, "did-not-fit", detail="recorded earlier")
+        if marker.exists():
+            # A marker left by an older driver, which wrote one for every non-zero exit. It records
+            # a crash, not a ceiling, so the cell is retried rather than being skipped forever as a
+            # measurement nobody made.
+            self.echo(f"  retrying {cell.label} (its marker records exit {_marker_exit(marker)}, not an OOM)")
+            marker.unlink()
 
         if self.suite.drop_caches and is_root():
             drop_caches()
@@ -220,16 +228,25 @@ class Runner:
         if completed.returncode == 0:
             return CellResult(cell, "ok", elapsed)
 
-        # The marker carries the cell's dims, not just its exit code: a cell that produced no
-        # records still has to appear in the report as "this arm cannot run at this ceiling", and
-        # recovering that from the file name would reintroduce the parsing the dims envelope
-        # exists to remove.
-        marker.write_text(
-            json.dumps({"exit": completed.returncode, "dims": cell.dims, "label": cell.label}) + "\n"
-        )
         if completed.returncode == OOM_EXIT:
+            # ONLY an OOM writes a marker, and the distinction is load-bearing twice over. A marker
+            # is a RESULT — `records.unfit_cells` turns it into "this arm cannot run at this
+            # ceiling" in the `ram` and `threads` tables — and it is also what `completed()` reads,
+            # so a cell that has one is never attempted again. Writing one for every non-zero exit
+            # meant a panic or a bad path was reported as a fact about the arm's memory behaviour
+            # and then permanently skipped on resume, silently, with no warning the second time.
+            #
+            # The marker carries the cell's dims, not just its exit code: a cell that produced no
+            # records still has to appear in the report, and recovering that from the file name
+            # would reintroduce the parsing the dims envelope exists to remove.
+            marker.write_text(
+                json.dumps({"exit": completed.returncode, "dims": cell.dims, "label": cell.label}) + "\n"
+            )
             self.echo(f"  -> killed under its ceiling; recorded as did-not-fit (see {log.name})")
             return CellResult(cell, "did-not-fit", elapsed, "OOM-killed under its ceiling")
+
+        # Anything else is a failure, not an answer. Nothing is written, so the cell is retried on
+        # the next run rather than being frozen into the session as a measurement nobody made.
         self.echo(f"  -> exit {completed.returncode} (see {log})")
         return CellResult(cell, "failed", elapsed, f"exit {completed.returncode}, see {log}")
 
@@ -332,20 +349,19 @@ class Runner:
     def _kmer_args(self, settings: dict[str, Any]) -> list[str]:
         """Attaches the k-mer table this suite asked for, loading it or building it.
 
-        A named table the profile does not have is built in-process instead. Running without it
+        A table the profile does not have is built in-process instead. Running without it
         would quietly measure a different index — the table removes most of the binary search's
         probes — whereas building it only costs startup time. The warning says which happened,
         because it makes the `startup` suite's `kmer` column mean something different.
         """
-        name = _table_name(settings.get("kmer_table"))
-        if name is None:
+        k = int(settings.get("kmer") or 0)
+        if k == 0:
             return []
-        table = self.profile.kmer_table(name)
+        table = self.profile.kmer_table(f"k{k}")
         if table:
             return ["--kmer-table-file", str(table)]
-        k = _kmer_k(name)
         self.echo(
-            f"  note: profile '{self.profile.name}' has no pre-built '{name}' table, so a k={k} "
+            f"  note: profile '{self.profile.name}' has no pre-built 'k{k}' table, so a k={k} "
             f"table is built in-process instead (same table, paid at startup)"
         )
         return ["--build-kmer-table", str(k)]
@@ -423,6 +439,32 @@ class Runner:
         return lines
 
 
+def _marker_exit(marker: Path) -> int | None:
+    """The exit status a did-not-fit marker recorded, or None when it cannot be read.
+
+    A marker predating the `exit` field is read as an OOM, which is what it meant when it was
+    written: at that point the runner only reached the marker path from an OOM branch.
+    """
+    try:
+        return int(json.loads(marker.read_text()).get("exit", OOM_EXIT))
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _is_oom_marker(marker: Path) -> bool:
+    """True when this marker is a RESULT — a cell killed under its ceiling — rather than a crash.
+
+    The distinction decides both whether the cell is ever retried and whether the report says "this
+    arm cannot run at this ceiling" about it, so an unreadable marker is treated as an OOM: it was
+    written by a run that only wrote them for OOMs, and re-running a cell on the strength of a
+    truncated file would discard a real answer. `records.unfit_cells` applies the same rule.
+    """
+    if not marker.exists():
+        return False
+    recorded = _marker_exit(marker)
+    return recorded is None or recorded == OOM_EXIT
+
+
 def _warmup_for(cell: Cell, warmup: Any) -> str | None:
     """Translates a suite's warmup setting for this arm.
 
@@ -440,23 +482,6 @@ def _warmup_for(cell: Cell, warmup: Any) -> str | None:
     if warmup == "all":
         return str(PRELOADED_FALLBACK_WARMUP)
     return warmup
-
-
-def _table_name(value: Any) -> str | None:
-    """`kmer_table = "none"` (or absent) means run with no table attached."""
-    if value in (None, "", "none"):
-        return None
-    return str(value)
-
-
-def _kmer_k(name: str) -> int:
-    """The k in a table name. Names are `k<N>` precisely so a missing file can still be rebuilt."""
-    if not (name.startswith("k") and name[1:].isdigit()):
-        raise ValueError(
-            f"k-mer table name '{name}' must be 'k<N>' (e.g. k5, k6) so the k is recoverable when "
-            f"the profile has no pre-built file"
-        )
-    return int(name[1:])
 
 
 def _bool(value: Any) -> str:

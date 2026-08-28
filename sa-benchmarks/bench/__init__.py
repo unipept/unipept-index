@@ -18,7 +18,7 @@ Modules, in dependency order:
 * `suites/`  — per-suite cell definitions and analysis.
 * `fullreport` — `run.sh all`: every suite in one session, one report.
 
-Stdlib only (`tomllib` included), except `plot.py`, which needs matplotlib and is optional.
+Stdlib only, `tomllib` included: no third-party dependency anywhere in the driver.
 """
 
 __all__ = ["build", "config", "profile", "records", "report", "rig", "runner"]

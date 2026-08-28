@@ -4,11 +4,11 @@ Generated as SVG text rather than drawn by a library, for the same reason the pa
 everything else: these reports get scp'd off a benchmark server and opened from disk, where a CDN
 script is a blank rectangle. No runtime, no dependencies, no layout shift.
 
-Colours come from CSS custom properties defined once in the page (`--s1`…`--s5`, the diverging
-poles, the chrome tokens), so a chart re-themes with the rest of the page instead of baking in hex.
+Colours come from CSS custom properties defined once in the page (`--s1`…`--s5`, the sequential
+ramp, the chrome tokens), so a chart re-themes with the rest of the page instead of baking in hex.
 The palette is the validated default from the data-viz reference: categorical slots blue/orange/
 aqua/yellow/magenta, which pass the lightness, chroma, CVD-separation and normal-vision gates in
-both modes; diverging blue↔red with a neutral gray midpoint.
+both modes.
 
 Two rules from that reference matter more than the rest here:
 
@@ -19,8 +19,8 @@ Two rules from that reference matter more than the rest here:
   additional reading of data that is also printed, never the only place a number appears.
 
 One rule of this project's own: a difference below the measured noise floor is not a result. The
-heatmap paints those cells the neutral midpoint rather than a faint tint, so the picture cannot
-claim more than the statistics do.
+heatmap key prints the grid's own spread against that floor, so a ramp stretched over a plane that
+varies by less than its noise cannot claim more than the statistics do.
 
 Marks carry their value in a `data-tip` attribute rather than an SVG `<title>` child. Native
 `<title>` tooltips wait about a second, are styled by the OS, and are shadowed by the root `<title>`
@@ -90,15 +90,6 @@ FACET = Frame(
     width=360, height=200, pad_l=48, pad_r=10, pad_t=12, pad_b=40,
     bar_max=14, dot_r=3, hit_r=10, css=" facet",
 )
-#: A plane in a grid of planes. Wider left margin than `FACET` — a heatmap's row labels are knob
-#: values, not tick numbers — and no bottom band, because it has no x axis to title.
-FACET_PLANE = Frame(
-    width=360, height=200, pad_l=58, pad_r=8, pad_t=10, pad_b=8,
-    bar_max=14, dot_r=3, hit_r=10, css=" facet",
-)
-
-WIDTH, PAD_L, PAD_R, PAD_T, PAD_B = FULL.width, FULL.pad_l, FULL.pad_r, FULL.pad_t, FULL.pad_b
-BAR_MAX, DOT_R, HIT_R = FULL.bar_max, FULL.dot_r, FULL.hit_r
 
 
 def series_color(slot: int, light: bool = False) -> str:
@@ -111,7 +102,7 @@ def series_color(slot: int, light: bool = False) -> str:
 
     `light` is the paired tint, for a genuine PAIR of things: two lightnesses of one hue read as
     related where two hues read as unrelated. It is not a general second axis — it has exactly two
-    steps. The storage arms outgrew it (there are three) and now use `arm_color` instead.
+    steps. The storage arms outgrew it (there are five) and now use `arm_color` instead.
     """
     return f"var({SERIES_VARS[slot % len(SERIES_VARS)]}{'-lt' if light else ''})"
 
@@ -153,10 +144,10 @@ def by_residency(arms: list[str]) -> list[str]:
 def arm_color(arm: str) -> str:
     """A storage arm's own hue.
 
-    One hue per arm, not three lightness steps of one. The arms are an ordinal axis — how much is
+    One hue per arm, not lightness steps of one. The arms are an ordinal axis — how much is
     resident — and were painted as a ramp to show it, but reading a ramp means judging which of two
     blues is darker, and telling `mmap` from `pprot` is the single comparison this report exists to
-    make. Three hues separate at a glance, at facet size, and in a screenshot. The ordering still
+    make. Separate hues separate at a glance, at facet size, and in a screenshot. The ordering still
     lives in `ARM_ORDER`, which is where it can be read exactly rather than estimated from a tint.
 
     An arm the scale does not name falls back to the neutral axis ink rather than to a hue that
@@ -860,14 +851,8 @@ def stacked_rows(
 
 
 # ---------------------------------------------------------------------------
-# Diverging heatmap — which of two arms is ahead, across a grid of configurations
+# Sequential heatmap — one magnitude, across a grid of configurations
 # ---------------------------------------------------------------------------
-
-#: Bin edges for |delta| as a percentage, above the per-cell noise floor. Discrete steps rather than
-#: a continuous ramp: the eye reads three levels reliably and cannot be fooled into ranking two
-#: cells that differ by a percent.
-HEAT_BINS = (10.0, 25.0)
-
 
 #: Steps of the one-hue sequential ramp, for absolute magnitude. Light-to-dark in light mode and
 #: the other way in dark: "more" always moves away from the surface.
@@ -893,9 +878,9 @@ def sequential_heatmap(
 ) -> str:
     """A grid of absolute magnitudes on one hue, light to dark.
 
-    Used for "how fast is this backend here", where there is no polarity to encode — the diverging
-    form is for the comparison between two backends, and using it here would invent a midpoint that
-    means nothing.
+    Used for "how fast is this backend here", where there is no polarity to encode. A comparison
+    between two backends is a signed delta and belongs in a table beside its noise floor, not on a
+    ramp that would have to invent a midpoint.
 
     `low`/`high` are the caller's, which lets one scale serve several grids that must be compared —
     the four grids of one peptide file — or one grid be scaled to itself, which is what a knob plane
@@ -935,63 +920,6 @@ def sequential_heatmap(
     )
 
 
-def heatmap(
-    columns: list[str],
-    rows: list[str],
-    cells: dict[tuple[int, int], tuple[float, float, str]],
-    caption: str,
-    pos_label: str,
-    neg_label: str,
-    *,
-    frame: Frame = FULL,
-    legend: bool = True,
-    ridge: list[tuple[int, int]] | None = None,
-    x_title: str = "",
-    y_title: str = "",
-) -> str:
-    """A grid of signed deltas, diverging from a neutral midpoint.
-
-    `cells` maps (row, column) to (delta percent, noise floor percent, hover text). A positive delta
-    takes the blue pole and is labelled `pos_label`; a negative one takes red and `neg_label`. A
-    delta that does not clear its own floor is painted the neutral midpoint — the same rule the
-    tables apply, so the picture and the numbers cannot disagree.
-    """
-    if not cells:
-        return ""
-    painted = {}
-    for key, (delta, floor, hover) in cells.items():
-        resolved = abs(delta) > floor
-        painted[key] = ((_heat_color(delta, floor), _heat_is_dark(delta, floor)), f"{delta:+.0f}%", hover)
-        if not resolved:
-            # A cell inside its floor keeps its number but wears the muted ink, so it reads as
-            # "measured, not resolved" rather than as a small effect.
-            painted[key] = ((("var(--div-mid)"), False), f"{delta:+.0f}%", hover)
-
-    # The key reads as a scale, ends inward, with the neutral step named rather than left to be
-    # guessed at — it is the step that says "this run cannot tell these two apart".
-    key = "".join(
-        f'<span class="key"><span class="swatch" style="background:{fill}"></span>{label}</span>'
-        for fill, label in (
-            ("var(--div-neg-3)", f"{html.escape(neg_label)} by &gt;25%"),
-            ("var(--div-neg-1)", "past the floor"),
-            ("var(--div-mid)", "within the noise floor"),
-            ("var(--div-pos-1)", "past the floor"),
-            ("var(--div-pos-3)", f"{html.escape(pos_label)} by &gt;25%"),
-        )
-    )
-    return _grid_svg(
-        columns,
-        rows,
-        painted,
-        caption,
-        f'<div class="legend heatkey">{key}</div>' if legend else "",
-        frame,
-        ridge,
-        x_title,
-        y_title,
-    )
-
-
 def _grid_svg(
     columns: list[str],
     rows: list[str],
@@ -1003,7 +931,7 @@ def _grid_svg(
     x_title: str = "",
     y_title: str = "",
 ) -> str:
-    """The grid itself, shared by both heatmap flavours.
+    """The grid itself, under `sequential_heatmap`.
 
     `cells` maps (row, column) to ((fill, needs-light-ink), label, hover text). A missing key draws
     as absent — a hatched blank — because a configuration that was never measured must not look
@@ -1127,15 +1055,3 @@ def _seq_key(low: float, high: float, unit: str, floor: float | None = None) -> 
         f'<span class="key">{_fmt(high)}{unit}</span>{note}</div>'
     )
 
-
-def _heat_is_dark(delta: float, floor: float) -> bool:
-    """Whether this cell's fill is dark enough that the value needs light ink."""
-    return abs(delta) > floor and 1 + sum(abs(delta) > edge for edge in HEAT_BINS) >= 3
-
-
-def _heat_color(delta: float, floor: float) -> str:
-    """Neutral inside the noise floor, then three steps out along whichever pole applies."""
-    if abs(delta) <= floor:
-        return "var(--div-mid)"
-    step = 1 + sum(abs(delta) > edge for edge in HEAT_BINS)
-    return f"var(--div-{'pos' if delta > 0 else 'neg'}-{step})"

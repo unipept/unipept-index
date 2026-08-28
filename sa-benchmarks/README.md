@@ -18,7 +18,7 @@ sudo ./sa-benchmarks/run.sh all          # every suite, into one report.md
 |---|---|---|
 | `defaults` | What this version does at production defaults, across the length regimes and every storage arm, varying only `equate_il` and `tryptic`. Carries one instrumented arm for the phase split and the candidate acceptance rate. The regression gate. | no |
 | `kmer` | What each k-mer table buys against attaching none, per length regime, with the table's resident cost beside the win. | no |
-| `startup` | What each of the three storage configurations costs before it can answer the first query, from cold. | yes |
+| `startup` | What each storage arm costs before it can answer the first query, from cold. | yes |
 | `ram` | How the storage arms scale as the RAM ceiling falls, and where they cross over. | yes |
 | `threads` | Whether thread oversubscription pays, by how much, and what it costs when RAM is ample. | yes |
 | `stream` | How throughput depends on the number of peptides in one call — the only suite that varies the query count, which every other one holds fixed. | no |
@@ -61,8 +61,12 @@ explicit `not run — needs root` for `startup`, `ram` and `threads`.
 ## The report
 
 Every run — a single suite or the whole session — writes **`report.html`** next to its results, plus
-`report.md` for pasting into a PR. `all` additionally writes `report.json`, which is what a later run
-consumes as its `--baseline`.
+`report.md` for pasting into a PR. `all` additionally writes `report.json`: which commit, which
+suites ran, and what each cost.
+
+`--baseline` names the session **directory**, not that file. Each suite reads its own jsonl out of
+it and diffs cell against cell, so the comparison is per cell and needs the records rather than the
+summary.
 
 The page is one self-contained file with no external references, so it survives being `scp`'d off
 the benchmark server and opened from disk.
@@ -77,8 +81,8 @@ the grid it came from, folded.
 small-multiple grid sharing one scale and one legend. They used to be four sibling sections, each
 scaled to its own maximum — 176 of the page's 204 figures, and the one comparison the split invites
 was the one it made impossible. Knob curves facet the same way, at (regime x context), so no panel
-carries more than the three storage arms; the old single-axes version drew twenty-four lines, three
-times what the palette can tell apart.
+carries more than the storage arms themselves; the old single-axes version drew twenty-four lines,
+three times what the palette can tell apart.
 
 **A plane is drawn twice.** A knob plane carries a switch choosing what a cell says. `throughput` is what the pair measured, on a ramp scaled to that plane;
 `vs shipped` is the signed difference against the shipped pair, neutral inside the noise floor. The
@@ -127,19 +131,21 @@ suites already emit, so there is still one analysis behind the terminal, the mar
 
 ### Colour
 
-The three storage arms take **one hue each** (`--arm-1..3` in `bench/html.py`): `mmap` blue,
-`pprot` orange, `preloaded` green, assigned in residency order and never reassigned, so an arm keeps
-its colour whatever a filter leaves on screen. Everything else categorical takes `--s1..s5` in fixed
-order. `bench/selftest.py` fails if any legend shows two series in one colour.
+The storage arms take **one hue each** (`--arm-1..5` in `bench/html.py`): `mmap` blue, `pprot`
+orange, `preloaded` green, `ptext` purple, `pmap` amber. The hue is keyed by arm NAME in
+`charts.ARM_HUE`, not by position, so inserting an arm into the residency ladder cannot silently
+recolour the ones after it — an arm keeps its colour across releases and whatever a filter leaves on
+screen. Everything else categorical takes `--s1..s5` in fixed order. `bench/selftest.py` fails if any
+legend shows two series in one colour.
 
 They were a single-hue ordinal ramp, because the arms genuinely are an ordinal axis — how much is
 resident. It did not survive contact: reading a ramp means judging which of two blues is darker, and
-`mmap` against `pprot` is the one comparison this report exists to make. Three hues separate at a
+`mmap` against `pprot` is the one comparison this report exists to make. Separate hues separate at a
 glance, at facet size, and in a screenshot; the residency ORDER still lives in `charts.ARM_ORDER`,
 where it can be read exactly instead of estimated from a tint.
 
-There are five arms now, and the hues for the two newest are taken from the data-viz reference
-palette rather than invented — no ordering of five hand-picked ones cleared the gates.
+The hues for the two newest arms are taken from the data-viz reference palette rather than
+invented — no ordering of five hand-picked ones cleared the gates.
 
 Before substituting any of them, re-run the data-viz validator — the arms are a categorical palette,
 so they face the categorical gates (lightness band, chroma floor, CVD separation, normal-vision
@@ -171,9 +177,25 @@ Suites name peptide files and k-mer tables (`mixed`, `small`, `k6`), never paths
 definition runs anywhere a profile exists. Every path is validated at startup, because a sweep that
 discovers a missing bucket four hours in has wasted four hours.
 
-The length-bucketed peptide files come from `bucket_peptides.sh`; the peptide files themselves come
-from the `generate-peptides` binary, which samples real subsequences out of `proteins.bin` so every
-query is a guaranteed hit.
+Every peptide file comes from the `generate-peptides` binary, which samples real subsequences out
+of `proteins.bin` so every query is a guaranteed hit. The length band is an argument, so the
+bucketed files are four invocations rather than a post-processing step — and each one gets the
+count it was asked for, instead of however many happened to fall in the band:
+
+```bash
+cargo build --release -p sa-benchmarks --bin generate-peptides
+GP=target/release/generate-peptides
+IDX=<index_dir>                                 # the same one the profile names
+
+$GP -i $IDX -o $IDX/../peptides/peptides_5_50.txt --amount 1000000               # mixed
+$GP -i $IDX -o $IDX/../peptides/small.txt        --amount 200000 --min-len 5  --max-len 9
+$GP -i $IDX -o $IDX/../peptides/medium.txt       --amount 200000 --min-len 15 --max-len 25
+$GP -i $IDX -o $IDX/../peptides/large.txt        --amount 200000 --min-len 35 --max-len 50
+```
+
+`mixed` needs `runs * amount` lines because the single-mode suites read it sequentially — a million
+covers `runs = 100, amount = 10000`. The three buckets are only read by the matrix suites, which
+re-read the same prefix per cell, so they need the largest single `amount` and no more.
 
 `profiles/local.toml` is gitignored. Results never go in the repo — they land under the profile's
 `scratch`.
@@ -184,7 +206,7 @@ Every run — one suite or `all` — starts by printing what it is about to do a
 do it. Nothing is built until that block is on screen, and a `FAIL` in it aborts the session.
 
 ```
-== preflight — 11 suites ==
+== preflight — 6 suites ==
 
   ok    host         AMD EPYC 7502P · 64 cores · Linux 6.1.0 x86_64
   warn  tree         DIRTY — these numbers are not attributable to that commit
@@ -199,7 +221,7 @@ do it. Nothing is built until that block is on screen, and a `FAIL` in it aborts
        queries (needs/has): mixed 10,000/1,000,000 · small 10,000/138,062 · ...
   ...
   ram                  24           24     24,000,000   skip   needs root (cgroup ceilings ...)
-  total                28         1006    184,335,500   9 suite(s) to run
+  total                28         1006    184,335,500   4 suite(s) to run
 
   ok to run, with the warnings above
 ```
@@ -450,11 +472,5 @@ Two things to check before starting a long run: the tree is clean (a dirty tree 
 unattributable, and the driver says so), and nothing else is running on the box (a co-tenant job
 invalidates every comparison — the driver warns when the load average is high).
 
-## Plotting
-
-```bash
-python3 sa-benchmarks/bench/plot.py --stat median <results>/*.jsonl
-```
-
-Needs matplotlib. Nothing else here has third-party dependencies, so the driver runs on a benchmark
-server without a virtualenv.
+Every suite renders its own charts into `report.html`; there is nothing extra to run and no
+third-party dependency, so the driver works on a benchmark server without a virtualenv.

@@ -98,15 +98,6 @@ def as_user(command: list[str]) -> list[str]:
     return command
 
 
-def warn_if_root_without_sudo_user() -> str | None:
-    if is_root() and not os.environ.get("SUDO_USER"):
-        return (
-            "running as root with no SUDO_USER: builds and git checks will run as root, leaving "
-            "root-owned files in target/. Prefer 'sudo ./sa-benchmarks/run.sh ...' from your account."
-        )
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Capabilities
 # ---------------------------------------------------------------------------
@@ -286,9 +277,15 @@ _LINE_COUNTS: dict[Path, int] = {}
 
 
 def count_lines(path: Path) -> int:
+    """Lines in a file, counted once. 0 when `wc` could not read it.
+
+    Unreadable is reported as empty rather than raised, because both callers say something better
+    about it than a traceback would: the profile summary prints the count beside the path, and
+    `check_peptide_supply` names the file and what it was short of.
+    """
     if path not in _LINE_COUNTS:
-        result = subprocess.run(["wc", "-l", str(path)], capture_output=True, text=True, check=True)
-        _LINE_COUNTS[path] = int(result.stdout.split()[0])
+        result = subprocess.run(["wc", "-l", str(path)], capture_output=True, text=True, check=False)
+        _LINE_COUNTS[path] = int(result.stdout.split()[0]) if result.returncode == 0 else 0
     return _LINE_COUNTS[path]
 
 

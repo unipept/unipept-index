@@ -80,7 +80,7 @@ syscall cost or noise.
 runs = 100
 amount = 10000
 peptides = "mixed"
-kmer_table = "k6"
+kmer = 5
 warmup = "all:1000000"
 no_theoretical_memory = true
 
@@ -88,8 +88,8 @@ no_theoretical_memory = true
 # GB; 0 = unconstrained. Adjust to the box — these bracket a ~223 GB index on a 295 GB machine.
 ceiling_gb = [0, 223, 167, 140, 112, 78]
 
-# Declared preloaded-first: with three arms the palindrome runs a b c c b a, so the first arm's two
-# invocations straddle the sweep while the last arm's are adjacent — and the first arm therefore
+# Declared preloaded-first: the palindrome runs forward then reversed (a b c … c b a), so the first
+# arm's two invocations straddle the sweep while the last arm's are adjacent — and the first arm therefore
 # carries the widest slot spread, which is the floor every comparison against it is judged on. The
 # arm whose stability is most in question goes first, and here that is the one holding 241 GB of
 # non-evictable anonymous memory under a cap.

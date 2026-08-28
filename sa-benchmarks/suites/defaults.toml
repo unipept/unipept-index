@@ -1,8 +1,8 @@
-description = "What this version does at production defaults, across the length regimes and both backends"
+description = "What this version does at production defaults, across the length regimes and every storage arm"
 
 # Matrix mode: ONE process per backend loads the index once and sweeps the whole grid in-process.
 # Index loads dominate everything else at full-database scale (37e9 suffixes), so a process per
-# configuration would spend the entire run loading. Two index loads total, not one per cell.
+# configuration would spend the entire run loading. One index load per arm per slot, not one per cell.
 mode = "matrix"
 # Palindrome, not sequential: every arm runs the whole grid twice, forward then reversed. A matrix
 # invocation emits EVERY cell of an arm, so its reps are one sample repeated rather than n samples —
@@ -12,9 +12,9 @@ mode = "matrix"
 # a per-invocation offset being read as an arm difference (`pprot` vs `preloaded` flipped sign
 # between suites while each suite was internally one-sided — the signature of exactly that).
 #
-# Note the asymmetry the ordering has: with three arms the slots run a b c c b a, so the FIRST arm's
-# two invocations straddle the suite while the last arm's are adjacent. The first arm therefore
-# carries the widest spread, and since `floor_of` takes the widest across both cells of a
+# Note the asymmetry the ordering has: the slots run forward then reversed (a b c … c b a), so the
+# FIRST arm's two invocations straddle the suite while the last arm's are adjacent. The first arm
+# therefore carries the widest spread, and since `floor_of` takes the widest across both cells of a
 # comparison, that is the one that governs. Declare the arm whose stability is most in question
 # first.
 ordering = "palindrome"
@@ -63,7 +63,12 @@ not measuring the defaults.
 """
 
 [defaults]
-# 20 reps matches the measured 3.9% noise floor; do not lower it without re-checking that floor.
+# Fixed, and deliberately high. The 3.9% full-database noise floor that `records.NOISE_FLOOR_PCT`
+# carries was measured at 20 reps; this suite ran 20 until 3bb32710f0, which raised it to 100 in the
+# same change that added the `pmap` arm. 100 buys precision below that floor rather than re-deriving
+# it. Do not lower it without re-checking the floor — and note that `NOISE_FLOOR_PCT` and the rep
+# count quoted in `src/main.rs` (`--runs-target-band`) both still describe the 20-rep measurement.
+#
 # This is the one suite where precision is the point, so there is no `runs_target_band` here — a
 # cell that stops early stops at a band this suite exists to resolve.
 runs = 100
@@ -73,7 +78,7 @@ max_matches = 10000
 # preloads a structure the one thing that arm exists to buy goes into the first timed cell cold —
 # and `ram`/`threads`, which do warm the pipeline, put `pprot` +14-16% over `mmap` on the mixed file
 # where this suite put the same pair at +0.3-9.6%. 200k rather than the million those suites use:
-# this is a grid of 16 cells at 20 reps each, so the steady state is reached inside the measurement
+# this is a grid of 16 cells at 100 reps each, so the steady state is reached inside the measurement
 # anyway and the warmup only has to stop the FIRST cells paying for the rest.
 warmup = "all:200000"
 

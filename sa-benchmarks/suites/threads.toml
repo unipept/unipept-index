@@ -64,7 +64,7 @@ bracket it more finely, or add ceilings, at the cost of roughly an hour per cell
 runs = 100
 amount = 10000
 peptides = "mixed"
-kmer_table = "k6"
+kmer = 5
 warmup = "all:1000000"
 no_theoretical_memory = true
 

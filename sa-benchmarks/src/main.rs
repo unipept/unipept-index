@@ -285,8 +285,10 @@ struct Args {
     /// A fixed rep count spends the worst cell's budget on every cell, and most cells are quiet.
     /// With a target band each cell runs `--min-runs` reps, then keeps going only while it is still
     /// too noisy to read, up to `--runs`. The reps actually taken are recorded in `stats.runs`, so
-    /// a cell that hit the cap is visible rather than merely noisy. Off by default: `defaults`
-    /// measured its 3.9% floor at a fixed 20 reps and must keep doing so.
+    /// a cell that hit the cap is visible rather than merely noisy. Off by default: `defaults` is
+    /// the regression gate and wants a fixed rep count, so that two sessions are comparable rather
+    /// than each stopping wherever its own noise let it. (The 3.9% floor was measured at 20 reps;
+    /// `defaults.toml` now runs 100 fixed, and says why.)
     #[arg(long)]
     runs_target_band: Option<f64>,
 
@@ -552,7 +554,6 @@ fn band_of(results: &[BenchmarkResult]) -> f64 {
     (percentile(&qps, 0.90) - percentile(&qps, 0.10)) / 2.0 / median * 100.0
 }
 
-/// Linear-interpolated percentile of an already-sorted (ascending) slice. `p` in [0, 1].
 /// Median of one field across a cell's reps, in nanoseconds.
 ///
 /// Sorts a copy rather than the results themselves: the caller still needs them in their original
@@ -567,6 +568,7 @@ fn median_ns(results: &[BenchmarkResult], field: impl Fn(&BenchmarkResult) -> u6
     percentile(&values, 0.50) as u64
 }
 
+/// Linear-interpolated percentile of an already-sorted (ascending) slice. `p` in [0, 1].
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     match sorted.len() {
         0 => 0.0,
@@ -1084,6 +1086,19 @@ fn run_cell(
                 break;
             }
         }
+    }
+
+    // A cell with no reps has nothing to summarise, and every statistic below indexes into `qps`.
+    // Reachable from a grid cell (or a `--runs` override) of zero, which is a mistake in a suite
+    // file rather than a measurement — so it is named as one here, before the sweep has spent
+    // hours reaching whichever cell carries it.
+    if results.is_empty() {
+        return Err(format!(
+            "{} {}: runs = 0, so this cell measures nothing — give it a positive rep count",
+            spec.source,
+            cell.describe()
+        )
+        .into());
     }
 
     let mut qps: Vec<f64> = results.iter().map(|r| r.throughput_qps).collect();

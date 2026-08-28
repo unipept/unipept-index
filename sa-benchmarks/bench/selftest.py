@@ -123,13 +123,8 @@ def build_threads(root: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# a process whose machine drifts
+# fabricated grid records
 # ---------------------------------------------------------------------------
-
-#: How much slower the fabricated machine gets from the first cell of a process to the last.
-#: Linear, so the drift cadence can cancel it exactly and any residual is a bug in the analysis
-#: rather than in the fixture.
-DRIFT_END = 0.70
 
 
 def _grid_record(suite: str, dims: dict, config: dict, qps: float) -> dict:
@@ -172,38 +167,6 @@ def _grid_record(suite: str, dims: dict, config: dict, qps: float) -> dict:
             "qps_max": qps * 1.02,
         },
     }
-
-
-def _write_drifting(out_dir: Path, suite: str, plan: list[tuple[dict, float]], cadence: int) -> Path:
-    """One process's jsonl, with the drift cadence interleaved and a linear slowdown applied.
-
-    The slowdown is the point of the fixture. A real win placed late in a process that is getting
-    slower only reads as a win if the cadence was actually applied — so a check that passes here
-    could not pass against an analysis that merely *recorded* drift instead of removing it.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dims = {"arm": "mmap", "threads": "default", "ceiling_gb": 0, "features": "mmap"}
-
-    reference = {
-        "sweep": "drift",
-        "kmer_k": 5,
-        "equate_il": True,
-        "tryptic": False,
-        "amount_of_peptides": 10_000,
-    }
-    lines, marks = [], 0
-    for index, cell in enumerate(plan):
-        if index % cadence == 0:
-            lines.append(({**reference, "grid_slot": f"z{marks}"}, 100_000.0))
-            marks += 1
-        lines.append(cell)
-    lines.append(({**reference, "grid_slot": f"z{marks}"}, 100_000.0))
-
-    with (out_dir / "ceiling_gb-0__threads-default__mmap__a.jsonl").open("w") as handle:
-        for position, (config, true_qps) in enumerate(lines):
-            slowdown = 1.0 - (1.0 - DRIFT_END) * (position / max(1, len(lines) - 1))
-            handle.write(json.dumps(_grid_record(suite, dims, config, true_qps * slowdown)) + "\n")
-    return out_dir
 
 
 # ---------------------------------------------------------------------------
@@ -366,11 +329,6 @@ def build_kmer(root: Path) -> Path:
                 ))
         _write_grid(out_dir, "kmer", arm, cells)
     return out_dir
-
-
-#: The fabricated curve: rises to the shipped batch, then falls away inside the floor. `1` is the
-#: scalar path. Nothing above 16 beats it, which is the reading that leaves the default alone.
-MLP_CURVE = {1: 0.70, 4: 0.85, 8: 0.96, 16: 1.00, 32: 0.995, 64: 0.99, 128: 0.98}
 
 
 def _check_defaults_baseline(root: Path, repo) -> list[str]:
@@ -668,7 +626,7 @@ def _check_charts() -> list[str]:
     """
     from html.parser import HTMLParser
 
-    from .charts import Series, grouped_columns, heatmap, lines, stacked_columns, stacked_rows
+    from .charts import Series, grouped_columns, lines, sequential_heatmap, stacked_columns, stacked_rows
 
     forms = {
         "grouped_columns": grouped_columns(
@@ -696,18 +654,20 @@ def _check_charts() -> list[str]:
             [Series("sa", [0.2, 0.0], 0), Series("proteins", [0.1, 0.0], 1), Series("mapping", [0.6, 0.0], 2)],
             "stack",
         ),
-        "heatmap": heatmap(
+        "heatmap": sequential_heatmap(
             ["batch 16 · 5-mer", "scalar · none"],
             ["il=True tryptic=False", "il=False tryptic=True"],
             {
-                (0, 0): (12.0, 3.9, "resolved, positive"),
-                (0, 1): (-30.0, 3.9, "resolved, negative"),
-                (1, 0): (1.0, 3.9, "inside the floor"),
+                (0, 0): (2_100_000.0, "top of the ramp"),
+                (0, 1): (1_400_000.0, "mid"),
+                (1, 0): (900_000.0, "bottom of the ramp"),
                 # (1, 1) deliberately absent: a cell with no data must draw as absent, not as zero.
             },
             "heat",
-            pos_label="mmap",
-            neg_label="preloaded",
+            900_000.0,
+            2_100_000.0,
+            unit=" qps",
+            floor=3.9,
         ),
     }
 

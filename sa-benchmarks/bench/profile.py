@@ -27,10 +27,11 @@ so the same suite definition runs on any machine that has a profile.
 
 from __future__ import annotations
 
-import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .rig import count_lines
 
 #: Files a suffix-array index directory must contain. `warmup.txt` is included because every suite
 #: warms up before timing, and a missing warmup file fails deep inside a run rather than here.
@@ -89,7 +90,7 @@ class Profile:
         rows.append(("  index total", _size(total)))
 
         for name, path in sorted(self.peptides.items()):
-            rows.append((f"  peptides:{name}", f"{_size(path.stat().st_size)}  ({_lines(path):,} lines)  {path}"))
+            rows.append((f"  peptides:{name}", f"{_size(path.stat().st_size)}  ({count_lines(path):,} lines)  {path}"))
         if self.kmer_tables:
             for name, path in sorted(self.kmer_tables.items()):
                 rows.append((f"  kmer:{name}", f"{_size(path.stat().st_size)}  {path}"))
@@ -105,18 +106,6 @@ def _size(byte_count: int) -> str:
         if byte_count >= scale:
             return f"{byte_count / scale:,.2f} {unit}"
     return f"{byte_count} B"
-
-
-#: Line counts are the same for the whole run, and `wc -l` on a multi-gigabyte peptide file is not
-#: free, so each file is counted once.
-_LINE_CACHE: dict[Path, int] = {}
-
-
-def _lines(path: Path) -> int:
-    if path not in _LINE_CACHE:
-        result = subprocess.run(["wc", "-l", str(path)], capture_output=True, text=True, check=False)
-        _LINE_CACHE[path] = int(result.stdout.split()[0]) if result.returncode == 0 else 0
-    return _LINE_CACHE[path]
 
 
 def profiles_dir(repo: Path) -> Path:

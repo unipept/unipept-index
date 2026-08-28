@@ -11,9 +11,16 @@ unrecognised name is an error rather than a silently inert extra dimension:
     ceiling_gb   cgroup v2 MemoryMax for this cell, in GB. 0 = unconstrained.
     threads      RAYON_NUM_THREADS. "default" leaves it unset.
     peptides     profile peptide-file key -> --peptide-file.
-    kmer_table   profile k-mer-table key -> --kmer-table-file. "none" attaches no table.
+    kmer         k of the k-mer table to attach. 0 attaches none.
     equate_il    --equate-il true|false.
     tryptic      --tryptic true|false.
+
+`kmer` is spelled the same here as in a `[[sweep]]` block, and means the same thing: the integer k.
+It used to be `kmer_table = "k6"` on this side and `kmer = [6]` on the other — the same fact in two
+vocabularies, which meant anything asking about both (`preflight._table_notes`) carried two parsers
+for one question. The profile key is derived from k where the file is actually needed, which is what
+the `k<N>` naming convention in `[kmer_tables]` is for. `kmer_table` is still accepted and
+normalised to `kmer`, with a deprecation note in the preflight; see `_normalise_kmer`.
 
 A matrix-mode suite is different: it loads the index once and sweeps in-process, so an axis there
 would cost a whole index load per value. Only `threads` and `ceiling_gb` may be axes (see
@@ -57,7 +64,7 @@ KNOWN_AXES = {
     "ceiling_gb": "cgroup MemoryMax in GB (0 = unconstrained)",
     "threads": "RAYON_NUM_THREADS ('default' = unset)",
     "peptides": "profile peptide-file key",
-    "kmer_table": "profile k-mer-table key ('none' = no table)",
+    "kmer": "k of the k-mer table to attach (0 = none)",
     "equate_il": "true | false",
     "tryptic": "true | false",
 }
@@ -168,6 +175,10 @@ class Suite:
     #: Results directory of a previous run of this suite, for the regression comparison. Set from
     #: `--baseline` rather than from the suite file: it names a past run, not a property of the suite.
     baseline: Path | None = None
+    #: Spellings this file used that still work but should be changed. Carried rather than printed,
+    #: because `load` has no output of its own and a warning printed from here would arrive before
+    #: the preflight block it belongs in — see `preflight._plan_suite`.
+    deprecations: list[str] = field(default_factory=list)
 
     def expand(self) -> list[Cell]:
         """Expands arms x axes into the ordered list of cells this suite runs."""
@@ -229,6 +240,9 @@ def load(name: str, repo: Path) -> Suite:
         raise ConfigError(f"{path}: two arms share a name; arm names become file names")
 
     axes = raw.get("axes", {})
+    defaults = raw.get("defaults", {})
+    deprecations = _normalise_kmer(axes, path) + _normalise_kmer(defaults, path)
+
     for axis, values in axes.items():
         if axis not in KNOWN_AXES:
             known = "\n    ".join(f"{key:<12} {why}" for key, why in KNOWN_AXES.items())
@@ -266,10 +280,11 @@ def load(name: str, repo: Path) -> Suite:
         # boolean in sync with it — a mismatch there fails the run rather than the edit.
         needs_root=bool(raw.get("needs_root", False)) or drop_caches or capped,
         drop_caches=drop_caches,
-        defaults=raw.get("defaults", {}),
+        defaults=defaults,
         sweeps=raw.get("sweep", []),
         measure=bool(raw.get("measure", False)),
         notes=raw.get("notes", "").strip(),
+        deprecations=deprecations,
     )
 
     if mode == "matrix":
@@ -280,6 +295,42 @@ def load(name: str, repo: Path) -> Suite:
             f"which only mode='matrix' does. In single mode use [axes] instead."
         )
     return suite
+
+
+def _normalise_kmer(table: dict, path: Path) -> list[str]:
+    """Rewrites a deprecated `kmer_table = "k6"` into `kmer = 6`, in place.
+
+    One vocabulary downstream. `[[sweep]]` blocks have always named the integer k, because a matrix
+    process keeps a pool of tables keyed by k and swaps them per cell; `[axes]` and `[defaults]`
+    named the profile key instead, so the same fact was spelled two ways and every reader of both
+    needed two parsers. The profile key is now derived from k at the one place the file is opened.
+
+    Accepted rather than rejected, because a suite file is also a record of past runs and breaking
+    every archived one to rename a key is a poor trade. The `k<N>` convention is what makes the
+    rewrite possible at all — the same convention that lets a missing table be rebuilt from its
+    name — so a table named anything else is an error here rather than a silent misreading.
+    """
+    if "kmer_table" not in table:
+        return []
+    value = table.pop("kmer_table")
+
+    def k_of(name) -> int:
+        if name in (None, "", "none"):
+            return 0
+        name = str(name)
+        if not (name.startswith("k") and name[1:].isdigit()):
+            raise ConfigError(
+                f"{path}: kmer_table = '{name}' cannot be read as a k. Names are 'k<N>' (k5, k6) or "
+                f"'none'. This spelling is deprecated in favour of `kmer = <N>` — write that instead."
+            )
+        return int(name[1:])
+
+    table["kmer"] = [k_of(item) for item in value] if isinstance(value, list) else k_of(value)
+    shown = table["kmer"]
+    return [
+        f"`kmer_table` is deprecated: write `kmer = {shown}` instead (same meaning, and the same "
+        f"spelling a [[sweep]] block uses)"
+    ]
 
 
 def _check_matrix(suite: Suite, path: Path) -> None:

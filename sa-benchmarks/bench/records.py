@@ -99,21 +99,36 @@ def load_dir(path: Path) -> list[Record]:
     return records
 
 
+#: Exit status of a process killed by SIGKILL, which under a cgroup ceiling means the OOM killer.
+#: Mirrors `runner.OOM_EXIT`; kept here too so a marker can be judged without importing the runner.
+OOM_EXIT = 137
+
+
 def unfit_cells(path: Path) -> list[dict[str, str]]:
-    """Dims of the cells the runner recorded as did-not-fit.
+    """Dims of the cells that were OOM-killed under their ceiling.
 
     A cell killed under its ceiling produces no records, but "this arm cannot run at this ceiling"
     is an answer about the arm and has to reach the report. The runner therefore writes the cell's
     dims into the marker, so this needs no file-name parsing.
+
+    The exit status is checked rather than trusted from the file extension. The runner now writes a
+    marker only for an OOM, but a session started under an older driver has markers for every
+    non-zero exit in it, and reading one of those would report a panic or a bad path as a fact about
+    the arm's memory behaviour — a claim no measurement was made for. A marker that says otherwise
+    is skipped; the cell then has neither records nor a marker, which is what "did not run" looks
+    like everywhere else.
     """
     unfit = []
     for marker in sorted(path.glob("*.oom")):
         try:
-            unfit.append(json.loads(marker.read_text())["dims"])
-        except (json.JSONDecodeError, KeyError, OSError):
-            # A marker from an older run, or a truncated write. Better a cell with no dims than a
-            # silently dropped one.
+            recorded = json.loads(marker.read_text())
+        except (json.JSONDecodeError, OSError):
+            # A truncated write. Better a cell with no dims than a silently dropped one.
             unfit.append({"label": marker.stem})
+            continue
+        if recorded.get("exit", OOM_EXIT) != OOM_EXIT:
+            continue
+        unfit.append(recorded.get("dims") or {"label": marker.stem})
     return unfit
 
 
@@ -186,9 +201,6 @@ class Summary:
     minor_faults: float
     rss_gb: float
     startup: dict[str, float] = field(default_factory=dict)
-    #: Per-phase timings and candidate counters, filled in by suites that need the breakdown.
-    #: Empty for most suites: without the `measure` feature these counters are all zero anyway.
-    phases: dict[str, float] = field(default_factory=dict)
     #: Set when a ceiling was requested but the cell's RSS shows it never bound.
     void_reason: str | None = None
 
