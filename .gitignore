@@ -8,3 +8,8 @@ libsais64-rs/libsais-packed
 
 *.iml
 .idea/
+
+# Benchmark harness leftovers (see sa-benchmarks/README.md).
+sa-benchmarks/profiles/local.toml
+report*.html
+__pycache__/

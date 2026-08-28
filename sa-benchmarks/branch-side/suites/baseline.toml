@@ -1,0 +1,78 @@
+description = "This commit against fbc9328, the pre-mmap baseline — the defaults grid with the k-mer table held out"
+
+# UNTRACKED, and meant to stay that way unless the comparison becomes a recurring one. It exists to
+# answer a one-off question — what did `feature/preloaded-sa-improvements` change against the commit
+# before it — and it is `defaults` with a single axis moved: `kmer = [0]` instead of `[5]`.
+#
+# Why the k-mer table is held out: it arrived WITH the branch, so fbc9328 has no cell that can sit
+# opposite a `kmer = 5` one. Comparing across it would fold "the branch added a bound table" into
+# every other number the branch changed. Run `run.sh kmer` for what the table buys on top.
+#
+# The matching side is in the fbc9328 worktree, whose suite file is this one with a single arm.
+mode = "matrix"
+ordering = "palindrome"
+
+notes = """
+Read this next to `defaults`, not instead of it. `defaults` is the gate and runs at the shipped
+5-mer table; this is the same grid with no table, which is the only configuration fbc9328 can also
+occupy.
+
+The fbc9328 arm is merged in from a separate run — it is a different tree and cannot be built from
+here — so it is absent until those records are copied into this session's results directory and the
+report is re-rendered with `--report-only`. A run of this suite with no `fbc9328` column has not
+failed; it has not been merged yet.
+
+WHICH COLUMN TO COMPARE. fbc9328 holds every structure in owned memory, so `preloaded` is its
+counterpart. Reading it against `mmap` compares the branch's search changes and its storage change
+at once, which is two answers in one column.
+
+The two trees were checked for answer equivalence before these numbers were taken — identical
+results over 2,000 peptides at both `equate_il` settings. Re-run that check before trusting any
+re-run of this suite: a faster tree that answers differently is not faster.
+"""
+
+[defaults]
+runs = 100
+amount = 10000
+max_matches = 10000
+warmup = "all:200000"
+files = ["mixed", "small", "medium", "large"]
+
+[[sweep]]
+name = "baseline"
+# On, because the response phase is one of the places the branch changed most: it borrows the
+# accession and streams the annotation decode into the serialiser, where fbc9328 clones and decodes
+# into an owned String per hit. Throughput alone would not show that.
+response = true
+arms = ["fbc9328", "preloaded", "mmap"]
+kmer = [0]
+equate_il = [true, false]
+tryptic = [true, false]
+
+# The baseline. Its binary is NOT built from this tree and cannot be — it is the harness ported to
+# fbc9328, living in a worktree of that commit. It is STAGED into the session's `bin/` before the
+# run (see the runbook), which is what makes the driver treat it as already built and run it like
+# any other arm, in the same session, in the same palindrome ordering, against the same index.
+#
+# Declared first on purpose: `palindrome` ordering straddles the first arm's two invocations across
+# the whole suite, giving it the widest between-invocation spread — and `floor_of` takes the widest
+# across a comparison, so the arm whose stability is most in question should be the one that
+# governs. That is this one: it is the arm nothing else in this repo exercises.
+#
+# `features = []` is honest rather than a placeholder — fbc9328 has one build and no storage
+# selection to make. The staged binary is what stops that colliding with `preloaded`'s empty feature
+# set in the distinctness check: the two really are different binaries, from different commits.
+[[arms]]
+name = "fbc9328"
+features = []
+
+# The like-for-like arm from THIS commit: everything in owned memory, as fbc9328 is. This is the
+# column the fbc9328 one should be read against.
+[[arms]]
+name = "preloaded"
+features = []
+
+# The deployed-mapped case, for context. Not the fbc9328 comparison — see the notes.
+[[arms]]
+name = "mmap"
+features = ["mmap"]

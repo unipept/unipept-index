@@ -1,0 +1,61 @@
+description = "What fbc9328 does at production defaults — the pre-mmap baseline, measured with the branch's instrument"
+
+# Identical in shape to the branch's `defaults` suite, and deliberately so: this is that grid with
+# the one axis fbc9328 cannot occupy removed. Everything else — rep count, query count, cutoff,
+# warmup, the four length regimes, both search options — is held at the branch's values, because a
+# baseline measured at different settings is not a baseline.
+#
+# THE ONE DIFFERENCE: `kmer = [0]`. The k-mer bound table arrived with the branch, so fbc9328 cannot
+# run the `kmer = [5]` cells `defaults` pins. The harness REJECTS a cell asking for a table rather
+# than running it untabled, so this cannot drift by accident.
+mode = "matrix"
+ordering = "palindrome"
+
+notes = """
+This suite exists to answer one question: what did the branch change, measured against the commit
+before it rather than against an earlier revision of itself.
+
+HOW TO READ IT. fbc9328 has one storage configuration — every structure is read into owned memory
+at startup — so its arm is directly comparable with the branch's `preloaded` arm and with nothing
+else. Against `mmap` it is comparing two things at once.
+
+WHAT IS NOT COMPARABLE, and is recorded anyway:
+
+  * `load_proteins_ms` — fbc9328 parses a ~293 MB TSV, uppercases and concatenates every sequence,
+    fa-compresses every annotation and bit-packs the text. The branch reads a prebuilt
+    `proteins.bin`. Different operations, not a fast one and a slow one.
+  * `load_mapping_ms` — fbc9328 builds the mapping from the text; the branch reads `mapping.bin`.
+  * The `warmup_*_bytes` columns — nothing is mapped here, so the page sweep touches nothing and
+    reports zero. That is the same zero the branch's `preloaded` arm reports, for the same reason.
+
+Throughput, the search/retrieval phase split, `response_*` and the fault counters ARE comparable.
+
+WHAT THE DELTA CONTAINS. Everything the branch did to the search path, together: the batched
+search orchestrator and its MLP interleaving, the borrowed `ProteinInfo` and per-peptide JSON
+serialisation, the retrieval and suffix-to-protein work, and the tuning constants. It does NOT
+contain the k-mer table — that is held out at 0 on both sides. Read `run.sh kmer` for what the
+table buys on top of this.
+"""
+
+[defaults]
+runs = 100
+amount = 10000
+max_matches = 10000
+warmup = "all:200000"
+files = ["mixed", "small", "medium", "large"]
+
+[[sweep]]
+name = "baseline"
+# Time what happens after retrieval as well. Kept on because it is one of the places the branch
+# changed the most — fbc9328 clones the accession and decodes the annotations into an owned String
+# per hit, where the branch borrows both — and a throughput number alone would not show it.
+response = true
+arms = ["fbc9328"]
+kmer = [0]
+equate_il = [true, false]
+tryptic = [true, false]
+
+# One arm, because this commit has one build. There is no storage selection to make.
+[[arms]]
+name = "fbc9328"
+features = []

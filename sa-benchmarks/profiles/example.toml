@@ -1,0 +1,27 @@
+# Machine profile TEMPLATE for standalone runs of this tree. Copy to `local.toml` and edit.
+#
+#     cp sa-benchmarks/profiles/example.toml sa-benchmarks/profiles/local.toml
+#
+# NOT needed for the real comparison. That is driven from the BRANCH checkout, which uses ITS OWN
+# profile for every arm including the staged fbc9328 one — which is precisely what makes the cells
+# line up: one driver, one set of paths, so `peptide_source` is identical by construction rather
+# than by two profiles agreeing.
+#
+# This file is only for running the fbc9328 side alone, to debug the port.
+
+# The index directory. fbc9328 reads `sa.bin` and `proteins.tsv` from it; `mapping.bin` is opened
+# for its type byte alone, to learn which mapping to rebuild.
+index_dir = "/path/to/uniprot-2026-01/suffix-array"
+
+# Binaries and results. Never inside a repo: results are machine-specific and large.
+scratch = "/path/to/scratch"
+
+# Query files, one peptide per line. Relative paths resolve against index_dir.
+[peptides]
+mixed = "../peptides/peptides_5_50.txt"
+small = "../peptides/small.txt"
+medium = "../peptides/medium.txt"
+large = "../peptides/large.txt"
+
+# No [kmer_tables]: there is no k-mer table at this commit, and the harness rejects a cell that asks
+# for one rather than building a table this tree has no code for.
