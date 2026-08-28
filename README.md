@@ -206,8 +206,7 @@ fixtures build each combination by naming its types, and
 sixteen give identical answers:
 
 ```bash
-cargo test                                  # everything, both backends
-cargo test -p sa-index --features measure   # the one remaining feature
+cargo test   # everything, both backends
 ```
 
 CI additionally checks that all nine of `sa-server`'s feature combinations typecheck. Lints:
@@ -265,9 +264,10 @@ for cgroup ceilings and `drop_caches`; `run.sh all` skips them without it and sa
 Every run writes a self-contained `report.html` — sidebar, row filter, sortable columns — next to
 its results, plus `report.md` and, for `all`, a `report.json` a later run can use as its baseline.
 
-Measurement code stays out of what ships. The hot-path instrumentation is behind `sa-index`'s
-`measure` feature, which compiles to nothing when off and which CI proves `sa-server` and
-`sa-builder` never enable; run-level measurement lives in `sa-benchmarks`, which never ships at all.
+Measurement code stays out of what ships. Nothing in the search path reads a clock or bumps a
+counter — the `measure` feature that used to gate that instrumentation is gone, and its findings
+are recorded in `sa-index`'s crate docs. Run-level measurement lives in `sa-benchmarks`, which
+never ships at all.
 
 ## Further reading
 

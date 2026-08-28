@@ -16,7 +16,7 @@ sudo ./sa-benchmarks/run.sh all          # every suite, into one report.md
 
 | Suite | Answers | Needs root |
 |---|---|---|
-| `defaults` | What this version does at production defaults, across the length regimes and every storage arm, varying only `equate_il` and `tryptic`. Carries one instrumented arm for the phase split and the candidate acceptance rate. The regression gate. | no |
+| `defaults` | What this version does at production defaults, across the length regimes and every storage arm, varying only `equate_il` and `tryptic`. The regression gate. | no |
 | `kmer` | What each k-mer table buys against attaching none, per length regime, with the table's resident cost beside the win. | no |
 | `startup` | What each storage arm costs before it can answer the first query, from cold. | yes |
 | `ram` | How the storage arms scale as the RAM ceiling falls, and where they cross over. | yes |
@@ -40,9 +40,10 @@ structure is worth. `ptext` and `pmap` tie at the top and `pprot` is a stopping 
 not a deployment target — it closes the retrieval gap and none of the search one.
 
 `tryptic` is swept in every suite; `equate_il` only in `defaults`. Both are what the caller asked
-for rather than tuning, but only one of them changes the WORK: the instrumented arm shows tryptic
-examining 9x fewer candidates, accepting ~2% of them against ~11%, and inverting the
-binary-search/range-scan split, while equate_il moves none of the three. So a knob's answer has to
+for rather than tuning, but only one of them changes the WORK: instrumented runs (since removed,
+along with the `measure` feature that produced them) showed tryptic examining 9x fewer candidates,
+accepting ~2% of them against ~11%, and inverting the binary-search/range-scan split, while
+equate_il moved none of the three. So a knob's answer has to
 hold across tryptic before it is an answer about the default, and `defaults` is where the
 caller-visible cost of equate_il is priced. Crossing it everywhere cost 45% of the sweep and changed
 a resolved verdict in 2 of 23 contexts.
@@ -422,9 +423,11 @@ error rather than a silently different sweep.
 
 ## Measurement code and shipping binaries
 
-`measure` (on `sa-index`) is the only gate for hot-path instrumentation, and nothing that ships
-enables it: with the feature off the counters are zero-sized and every write compiles away. CI
-resolves `sa-server`'s and `sa-builder`'s feature graphs on every push to prove it stays that way.
+There is no hot-path instrumentation. `sa-index` used to carry a `measure` feature that swapped the
+searcher's zero-sized counters for real atomics; it perturbed throughput by ~2% wherever it was on,
+so only one arm of one suite ever used it, and it was removed once the two questions it answered —
+the binary-search/range-scan split, and tryptic's candidate acceptance rate — were settled. Both
+findings are recorded above and in `sa-index`'s crate docs.
 
 Measurement that is a property of a whole run rather than of the hot path — load timings, page-fault
 counts — lives in this crate instead, which never ships at all.

@@ -5,14 +5,6 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-# Hot-path instrumentation (phase timings + candidate acceptance counters on `Searcher`).
-# Off by default: the clock reads and the atomic RMWs on searcher-wide cache lines perturb
-# the very measurement they exist to produce (~2% at mlp_batch=1). With the feature off the
-# counters are zero-sized and every write compiles away; `drain_timing_ns()` /
-# `drain_candidate_counts()` stay callable and return zeros.
-measure = []
-
 [dev-dependencies]
 tempfile = "3"
 

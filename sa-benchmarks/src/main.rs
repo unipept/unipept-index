@@ -32,9 +32,6 @@
 //!     --peptide-file <peptides.txt> --amount-of-peptides 10000 --runs 20 --warmup all
 //! ```
 //!
-//! The `measure` feature adds the per-candidate counters and the internal phase breakdown, at
-//! the cost of perturbing what it measures — keep it off for timing runs.
-//!
 //! This binary measures **one** configuration per invocation and knows nothing about sweeps. The
 //! coordinates of a cell within a sweep — cgroup ceiling, thread count, storage arm, ABBA slot —
 //! come from the driver via `--suite` and `--dim key=value`, and are written straight through to
@@ -69,7 +66,7 @@ use sysinfo::{Pid, System};
 /// v2: matrix records aggregate `runs` reps into one line and carry a `stats` spread.
 /// v3: every `SearchTuning` field is recorded in `config` (was previously implicit/default),
 ///   plus a `phase` tag so records from different sweeps are groupable in one jsonl file;
-///   `result` gains `candidates_examined` / `candidates_accepted`.
+///   `result` gains `candidates_examined` / `candidates_accepted` (removed again in v15).
 /// v12: `SearchTuning` is gone — its fields are compile-time constants now — so `config.tuning`
 ///   and `config.tuning_defaults` are no longer written. A reader that wants to know what a
 ///   record ran at reads the commit, not the record.
@@ -131,7 +128,13 @@ use sysinfo::{Pid, System};
 ///   so the two could disagree, and on the mixed file they disagreed in direction. Records
 ///   written before v14 have no such fields and readers must fall back to `result`, which is
 ///   what they always did.
-const SCHEMA_VERSION: u32 = 14;
+/// v15: `result` loses `search_bounds_ns`, `match_iter_ns`, `candidates_examined` and
+///   `candidates_accepted`. They came from `sa-index`'s `measure` feature, which has been
+///   removed: the counters were atomics on cache lines every rayon worker shared, so the only
+///   builds that carried them measured themselves ~2% slower than the ones that shipped. The
+///   questions they settled — the binary-search/range-scan split, and tryptic's candidate
+///   acceptance rate — are recorded in `sa-index`'s crate docs and in this crate's README.
+const SCHEMA_VERSION: u32 = 15;
 
 /// Canonical 20 amino acids used for random peptide generation
 const AMINO_ACIDS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
@@ -458,17 +461,6 @@ struct BenchmarkResult {
     cutoff_reached: bool,
     total_memory: u64,
     theoretical_max_memory: u64,
-    /// Nanoseconds spent exclusively inside `search_bounds_scalar()` (binary search + k-mer lookup).
-    search_bounds_ns: u64,
-    /// Nanoseconds spent iterating over the matched suffix range after `search_bounds_scalar()` returns.
-    match_iter_ns: u64,
-    /// Candidate suffixes `iterate_sa_range` examined during the search phase (0 without the
-    /// `measure` feature). Settles whether tryptic's ~12.5x slowdown is a low acceptance rate
-    /// (work already minimal) or unbounded exhaustive scanning (needs a scan cap) — see
-    /// `candidates_accepted` and `Searcher::candidates_accepted`'s doc comment.
-    candidates_examined: u64,
-    /// Candidate suffixes `iterate_sa_range` accepted as real matches (0 without `measure`).
-    candidates_accepted: u64,
     /// Nanoseconds for everything between "we have the proteins" and "the client has bytes":
     /// decoding each hit's functional annotations, allocating its accession, and serialising the
     /// whole answer to JSON. 0 unless the cell set `response`.
@@ -731,10 +723,6 @@ fn run_benchmark(
     // Memory snapshot before any timing starts — captures index-resident pages only
     let index_memory = measure_process_memory().saturating_sub(baseline_memory);
 
-    // Reset per-run timing/candidate accumulators before the search phase.
-    searcher.drain_timing_ns();
-    searcher.drain_candidate_counts();
-
     // Fault counters bracket the timed region only, so index loading and warmup are excluded.
     let (minflt_before, majflt_before) = page_faults();
 
@@ -745,10 +733,6 @@ fn run_benchmark(
     let search_start = Instant::now();
     let suffix_results = searcher.search_all_matching_suffixes_batched(&refs, max_matches, equate_il, tryptic);
     let search_duration_ns = search_start.elapsed().as_nanos() as u64;
-
-    // Read internal timing/candidate breakdown accumulated during the search phase above.
-    let (search_bounds_ns, match_iter_ns) = searcher.drain_timing_ns();
-    let (candidates_examined, candidates_accepted) = searcher.drain_candidate_counts();
 
     // Phase 2: protein retrieval — per query via `retrieve_proteins`, which is exactly what
     // production's `search_all_peptides` does. Keeping these two in step is what makes this
@@ -841,10 +825,6 @@ fn run_benchmark(
         cutoff_reached,
         total_memory: index_memory,
         theoretical_max_memory,
-        search_bounds_ns,
-        match_iter_ns,
-        candidates_examined,
-        candidates_accepted,
         response_duration_ns,
         response_bytes,
         major_faults: majflt_after.saturating_sub(majflt_before),
@@ -1120,24 +1100,12 @@ fn run_cell(
     };
     let band = if stats.qps_p50 > 0.0 { (stats.qps_p90 - stats.qps_p10) / 2.0 / stats.qps_p50 * 100.0 } else { 0.0 };
 
-    // Representative rep = the one nearest the median throughput; also carries the detailed
-    // per-phase measurements (search_bounds_ns / match_iter_ns / candidate counts) printed below.
+    // Representative rep = the one nearest the median throughput.
     results.sort_by(|a, b| a.throughput_qps.partial_cmp(&b.throughput_qps).unwrap());
     let representative = results.remove(results.len() / 2);
 
-    // Acceptance rate settles whether tryptic's slowdown is "already minimal work, just a low
-    // hit rate" or "unbounded exhaustive scanning" (see BenchmarkResult::candidates_examined).
-    // Only meaningful with `measure` — without it both counters are always 0.
-    let accept_note = if cfg!(feature = "measure") {
-        let (ex, ac) = (representative.candidates_examined, representative.candidates_accepted);
-        let rate = if ex > 0 { ac as f64 / ex as f64 * 100.0 } else { 0.0 };
-        format!("  |  candidates: {} examined, {} accepted ({:.1}% accept)", ex, ac, rate)
-    } else {
-        String::new()
-    };
-
     eprintln!(
-        "  {} {} {}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}, {} reps){}",
+        "  {} {} {}  ->  {:.0} qps  (±{:.1}%, p10 {:.0} .. p90 {:.0}, {} reps)",
         spec.source,
         spec.phase,
         cell.describe(),
@@ -1146,7 +1114,6 @@ fn run_cell(
         stats.qps_p10,
         stats.qps_p90,
         stats.runs,
-        accept_note,
     );
 
     let record = BenchmarkRecord {
@@ -1830,32 +1797,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         let line = serde_json::to_string(&record)?;
         writeln!(output_file, "{}", line)?;
 
-        // Acceptance rate is only meaningful with `measure` (both counters are always 0
-        // without it) — see BenchmarkResult::candidates_examined for what it settles.
-        let accept_note = if cfg!(feature = "measure") {
-            let (ex, ac) = (record.result.candidates_examined, record.result.candidates_accepted);
-            let rate = if ex > 0 { ac as f64 / ex as f64 * 100.0 } else { 0.0 };
-            format!("  |  candidates: {} examined, {} accepted ({:.1}% accept)", ex, ac, rate)
-        } else {
-            String::new()
-        };
-
         eprintln!(
-            "Run {:>3}/{}: {:.1} qps  |  total {:.1} ms  (search {:.1} ms [bounds {:.1} ms + iter {:.1} ms] + retrieval {:.1} ms)  \
-             |  hits: {} queries, {} suffixes, {} proteins{}{}{}",
+            "Run {:>3}/{}: {:.1} qps  |  total {:.1} ms  (search {:.1} ms + retrieval {:.1} ms)  \
+             |  hits: {} queries, {} suffixes, {} proteins{}{}",
             run,
             args.runs,
             record.result.throughput_qps,
             record.result.total_duration_ns as f64 / 1e6,
             record.result.search_duration_ns as f64 / 1e6,
-            record.result.search_bounds_ns as f64 / 1e6,
-            record.result.match_iter_ns as f64 / 1e6,
             record.result.retrieval_duration_ns as f64 / 1e6,
             record.result.query_hit_count,
             record.result.suffix_hit_count,
             record.result.protein_hit_count,
             if record.result.cutoff_reached { "  [cutoff reached]" } else { "" },
-            accept_note,
             if record.result.major_faults > 0 {
                 format!("  |  {} major faults", record.result.major_faults)
             } else {

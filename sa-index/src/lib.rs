@@ -53,21 +53,16 @@
 //!   change to one cannot perturb the other. Where that produces near-duplicate code it is marked
 //!   as intentional at the site.
 //!
-//! # The `measure` feature
+//! # Measurement code
 //!
-//! The one feature this crate has. Off by default. It swaps the counters on
-//! [`sa_searcher::Searcher`] from zero-sized no-ops to real atomics, so the benchmark harness can
-//! attribute time and count candidates. Enabling it costs throughput; see `sa_searcher::measure`.
+//! This crate has no features and carries no instrumentation: nothing in the search path reads a
+//! clock or bumps a counter. It used to, behind a `measure` feature whose atomics and clock reads
+//! perturbed the very numbers they produced (~2% at mlp_batch=1); the findings it settled are
+//! recorded below and in `sa-benchmarks`, and the code was removed once they were.
 //!
-//! **This is the only gate for measurement code in this workspace.** Anything that reads a clock or
-//! bumps a counter to describe how the search behaves belongs behind it — or, if it is a property of
-//! a whole run rather than of the hot path (load timings, page-fault counts), in the `sa-benchmarks`
-//! crate, which is excluded from the workspace's `default-members` and never ships.
-//!
-//! Nothing that ships may turn it on. `sa-server` and `sa-builder` deliberately have no `measure`
-//! passthrough, and CI resolves their feature graphs on every push to prove none appears — adding
-//! one would compile cleanly and produce a slower server that nothing else would complain about.
-//! See `.github/workflows/test.yml`.
+//! Measurement that is a property of a whole run rather than of the hot path — load timings,
+//! page-fault counts — lives in the `sa-benchmarks` crate, which is excluded from the workspace's
+//! `default-members` and never ships.
 //!
 //! # Why this crate is written the way it is
 //!
@@ -179,7 +174,7 @@
 //! ceiling while search goes 135 ms → 1127 ms, so the two-pass prefetch pipeline in
 //! `sa_searcher::retrieval` keeps working under paging and needs nothing. Within search, the split
 //! is roughly even between the dependent binary-search chain and the contiguous SA range scan
-//! (52% / 48% of thread-time, `measure` build at a 167 GB ceiling).
+//! (52% / 48% of thread-time, measured at a 167 GB ceiling by instrumentation since removed).
 //!
 //! Two further ideas were measured and rejected. **`MADV_WILLNEED` over the SA range about to be
 //! scanned does not pay**: the advice lands (major faults -23-25% under a ceiling) but the

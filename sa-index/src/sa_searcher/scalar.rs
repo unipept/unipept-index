@@ -11,7 +11,6 @@ use super::{
     BoundSearch,
     BoundSearch::{Maximum, Minimum},
     BoundSearchResult, MAX_RESULT_PREALLOC, SearchAllSuffixesResult, Searcher,
-    measure::Timer,
     tryptic::tryptic_extension_chars
 };
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
@@ -247,15 +246,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             let il_locations_from_skip = &il_locations[il_locations.partition_point(|&x| x < skip)..];
             let current_search_string_prefix = &search_string[..skip];
             let current_search_string_suffix = &search_string[skip..];
-            let t_bounds = Timer::start();
             let search_bound_result = self.search_bounds_scalar(&search_string[skip..]);
-            self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
             // if the shorter part is matched, see if what goes before the matched suffix matches
             // the unmatched part of the prefix
             if let BoundSearchResult::SearchResult((min_bound, max_bound)) = search_bound_result {
-                let t_iter = Timer::start();
-
                 // Fast-path: when equate_il=true, !tryptic, and skip=0, every entry in the SA
                 // range is a valid match — no per-entry filtering needed.
                 //
@@ -275,7 +270,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         // The tight collect() loop lets the compiler emit efficient
                         // (potentially SIMD) code for the Vec fill.
                         let result: Vec<i64> = self.sa.iter_range(min_bound, min_bound + max_matches).collect();
-                        self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                         return SearchAllSuffixesResult::MaxMatches(result);
                     }
                     // range_size <= max_matches: collect all entries and continue to the next
@@ -283,7 +277,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     for s in self.sa.iter_range(min_bound, max_bound) {
                         matching_suffixes.push(s);
                     }
-                    self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                 } else {
                     // Generic path: tryptic filtering, IL checking, or skip > 0.
                     let text = self.proteins.text();
@@ -301,7 +294,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         &mut matching_suffixes,
                         max_matches
                     );
-                    self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
                         return SearchAllSuffixesResult::truncated(matching_suffixes, max_matches);
                     }
@@ -324,15 +316,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 extended.push(prefix_char);
                 extended.extend_from_slice(search_string);
 
-                let t_bounds = Timer::start();
                 // No special case for the separator variant: the k-mer table cannot represent `-`
                 // and says so, and `opening_window` turns that abstention into a full-range search
                 // rather than into `NoMatches`.
                 let bounds = self.search_bounds_scalar(&extended);
-                self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
                 if let BoundSearchResult::SearchResult((min_bound, max_bound)) = bounds {
-                    let t_iter = Timer::start();
                     let hit_max = self.iterate_extended_sa_range(
                         self.sa.iter_range(min_bound, max_bound),
                         max_bound.saturating_sub(min_bound),
@@ -344,7 +333,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                         &mut matching_suffixes,
                         max_matches
                     );
-                    self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
                     if hit_max {
                         return SearchAllSuffixesResult::truncated(matching_suffixes, max_matches);
                     }

@@ -18,7 +18,7 @@ import subprocess
 from filecmp import cmp as file_cmp
 from pathlib import Path
 
-from .config import Arm, Suite
+from .config import Suite
 from .rig import RigError, as_user, dropping_privileges
 
 
@@ -33,7 +33,7 @@ def build_arms(suite: Suite, repo: Path, bin_dir: Path, echo=print) -> dict[str,
 
     for arm in suite.arms:
         target = bin_dir / arm.name
-        features = _features(arm, suite)
+        features = arm.feature_string
         # The manifest is what makes sharing one bin/ across suites safe: two suites may both call
         # an arm "mmap", and reusing a binary built from a different feature set would measure the
         # wrong configuration under the right name.
@@ -52,14 +52,6 @@ def build_arms(suite: Suite, repo: Path, bin_dir: Path, echo=print) -> dict[str,
 
     _assert_distinct(suite, binaries)
     return binaries
-
-
-def _features(arm: Arm, suite: Suite) -> str:
-    """The feature string for this arm, with `measure` folded in when either level asks for it."""
-    features = list(arm.features)
-    if (suite.measure or arm.measure) and "measure" not in features:
-        features.append("measure")
-    return ",".join(features)
 
 
 def _cargo_build(repo: Path, features: str) -> None:
@@ -87,8 +79,8 @@ def _assert_distinct(suite: Suite, binaries: dict[str, Path]) -> None:
     for index, left in enumerate(names):
         for right in names[index + 1 :]:
             if file_cmp(binaries[left], binaries[right], shallow=False):
-                left_features = _features(next(a for a in suite.arms if a.name == left), suite)
-                right_features = _features(next(a for a in suite.arms if a.name == right), suite)
+                left_features = next(a for a in suite.arms if a.name == left).feature_string
+                right_features = next(a for a in suite.arms if a.name == right).feature_string
                 raise RigError(
                     f"arms '{left}' and '{right}' produced byte-identical binaries\n"
                     f"  '{left}'  = features {left_features or 'none'}\n"

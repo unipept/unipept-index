@@ -46,10 +46,7 @@ FORMATTERS = {"kmer_k": kmer_label, "amount_of_peptides": lambda n: f"{n:,}q"}
 
 def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -> None:
     cells = by_cell(loaded)
-    # Instrumented arms are excluded from every throughput table, chart and verdict below. Their
-    # counters perturb the very number those are about; they exist for `_inside_the_search`.
-    arms = [arm.name for arm in suite.arms if not arm.measure]
-    instrumented = [arm.name for arm in suite.arms if arm.measure]
+    arms = [arm.name for arm in suite.arms]
     # Everything except the peptide file, which is not a column — it is what the tables are split by.
     columns = [key for key in varying(cells) if key != "peptide_source"]
 
@@ -66,9 +63,6 @@ def analyse(report: Report, suite: Suite, loaded: list[Record], out_dir: Path) -
     _regime_table(report, cells, sources, arms, columns)
 
     _response_share(report, cells, arms)
-
-    if instrumented:
-        _inside_the_search(report, loaded, instrumented, columns)
 
     baseline = getattr(suite, "baseline", None)
     if baseline:
@@ -167,8 +161,8 @@ def _phase_cost_figure(report: Report, rows: list[tuple], arms: list[str]) -> No
     if not picked:
         return
     keys = sorted(picked)
-    # `a · b` under an axis titled `equate_il · tryptic`, the way `_phase_split_chart` labels the
-    # same four cells. The heatmap below spells both names out on two lines because its columns are
+    # `a · b` under an axis titled `equate_il · tryptic`, one label per cell.
+    # The heatmap below spells both names out on two lines because its columns are
     # wide enough; a column chart's slot is not, and `stacked_columns` puts an x label in one
     # `<text>`, where a newline collapses to a space and the label overruns its neighbours.
     groups = [" · ".join((_label("equate_il", key[1]), _label("tryptic", key[2]))) for key in keys]
@@ -555,185 +549,6 @@ def _regressions(
         f"{moved} of {len(set(cells) & set(previous)) * len(arms)} comparable cells moved by more "
         f"than their own noise floor."
     )
-
-
-# ---------------------------------------------------------------------------
-# Inside the search — the instrumented arm
-# ---------------------------------------------------------------------------
-
-#: Column explanations for the counters. Only this section has them, so they live here.
-PHASE_TIPS = {
-    "search": "Share of the timed region spent finding matching suffixes.",
-    "retrieval": "Share of the timed region spent resolving those suffixes to proteins.",
-    "bounds": (
-        "Share of search THREAD-time in the binary search — a dependent chain of probes that no "
-        "prefetch can help and only the k-mer table shortens."
-    ),
-    "iter": (
-        "Share of search thread-time scanning the matched suffix range. Contiguous, so readahead "
-        "and the prefetch distance both reach it."
-    ),
-    "examined": "Candidate suffixes the range scan looked at.",
-    "accept%": (
-        "Candidates accepted as real matches, over candidates examined. A LOW rate with a low "
-        "examined count means the work is already minimal and the hit rate is simply low; a low "
-        "rate with a high examined count means exhaustive scanning. The two need opposite fixes, "
-        "and this is the only column in the report that separates them."
-    ),
-    "parallelism": (
-        "Search thread-time over search wall-time — how many cores the search phase actually kept "
-        "busy. Well below the core count means the work did not spread."
-    ),
-}
-
-
-def _inside_the_search(report: Report, loaded: list[Record], arms: list[str], columns: list[str]) -> None:
-    """What the counters say, from the one instrumented arm.
-
-    This was the `detail` suite. It is here because its two useful numbers are both about the search
-    OPTIONS — the acceptance rate is the answer to "what is tryptic actually costing", and that
-    question only exists in the tryptic rows this grid already runs — and because a separate suite
-    meant a separate index load and a second, redundant MLP batch sweep that no longer exists
-    on an uninstrumented build.
-    """
-    report.heading("inside the search (instrumented)", level=3, folded=True)
-    report.warn(
-        f"the {', '.join(arms)} arm is built with `measure`, whose counters perturb throughput by "
-        "~2%. Its qps is shown for scale only and is excluded from every table above."
-    )
-
-    cells = _phase_cells(loaded, arms)
-    _phase_split_chart(report, cells, columns)
-
-    table = Table(
-        headers=[*columns, "arm", "file", "qps", "search", "retrieval", "bounds", "iter", "examined", "accept%", "parallelism"],
-        aligns=["<"] * len(columns) + ["<", "<"] + [">"] * 7,
-        chips=[*columns, "arm", "file"],
-        tips={**tips_for([*columns, "arm", "qps"]), **PHASE_TIPS},
-    )
-    for key, per_arm in sorted(cells.items(), key=str):
-        source, coords = key[0], key[1:]
-        for arm, phases in sorted(per_arm.items()):
-            total = phases["total_ns"]
-            thread_time = phases["bounds_ns"] + phases["iter_ns"]
-            table.row(
-                *(_label(name, value) for name, value in zip(columns, coords)),
-                arm,
-                source,
-                qps(phases["qps"]),
-                _share(phases["search_ns"], total),
-                _share(phases["retrieval_ns"], total),
-                _share(phases["bounds_ns"], thread_time),
-                _share(phases["iter_ns"], thread_time),
-                count(phases["examined"]),
-                _accept(phases),
-                f"{thread_time / phases['search_ns']:.1f}x" if phases["search_ns"] else "-",
-            )
-    report.table(table, raw=True)
-    report.para(
-        "`bounds` and `iter` are shares of search THREAD-time, which is summed across every rayon "
-        "thread and so exceeds wall time by the parallelism factor in the last column — they are "
-        "meaningful against each other, not against the clock. Which of the two dominates is what "
-        "decides how much of the work the retrieval prefetch pipeline has to hide."
-    )
-
-
-def _phase_split_chart(report: Report, cells: dict, columns: list[str]) -> None:
-    """Where search thread-time goes: the binary search, or the range scan.
-
-    Drawn as shares summing to 100% rather than as two absolute bars, because the question is which
-    of the two DOMINATES — that is what decides whether a prefetch distance ever had a phase to work
-    on, and it is the split the README says tryptic inverts. Two bars of absolute nanoseconds put
-    the four length regimes two orders of magnitude apart and hide the very ratio being asked about.
-    """
-    from ..charts import Series, facets, stacked_columns
-
-    # One panel per length regime, not one axis carrying all sixteen cells. Every coordinate on one
-    # x axis made a label like `large · false · true` sixteen times over in 618px: each one was
-    # about three times its own slot, so all fifteen adjacent pairs overlapped and the axis was a
-    # smear. The regime is the panel, which is how every other figure in this report is cut.
-    per_regime: dict[str, tuple[list[str], list[float], list[float]]] = {}
-    for key, per_arm in sorted(cells.items(), key=str):
-        source, coords = key[0], key[1:]
-        for _arm, phases in sorted(per_arm.items()):
-            thread_time = phases["bounds_ns"] + phases["iter_ns"]
-            if not thread_time:
-                continue
-            groups, bounds, iters = per_regime.setdefault(source, ([], [], []))
-            groups.append(" · ".join(_label(name, value) for name, value in zip(columns, coords)))
-            bounds.append(phases["bounds_ns"] / thread_time * 100)
-            iters.append(phases["iter_ns"] / thread_time * 100)
-    if not per_regime:
-        return
-
-    groups_of = {regime: groups for regime, (groups, _, _) in per_regime.items()}
-    built = [
-        (
-            regime,
-            [
-                Series("bounds (binary search)", per_regime[regime][1], 0, tip={"phase": "bounds"}),
-                Series("iter (range scan)", per_regime[regime][2], 1, tip={"phase": "iter"}),
-            ],
-        )
-        for regime in order_buckets(list(per_regime))
-    ]
-
-    caption = "Where search thread-time goes: binary search against range scan"
-    report.figures(
-        facets(
-            built,
-            lambda name, series, frame, top, legend: stacked_columns(
-                groups_of[name], [""], series, name, unit="%",
-                x_title=" · ".join(columns), y_title="share of search thread-time (%)",
-                frame=frame, y_max=top, legend=legend,
-            ),
-            # Already shares of their own cell, so the axis is 100% by construction.
-            extent=lambda series: 100.0,
-        ),
-        caption,
-    )
-
-
-def _phase_cells(loaded: list[Record], arms: list[str]) -> dict[tuple, dict[str, dict]]:
-    """`(source, *coords) -> arm -> counters`, median across each cell's reps."""
-    grouped: dict[tuple, dict[str, list[Record]]] = {}
-    for record in loaded:
-        arm = record.dims.get("arm", "?")
-        if arm not in arms or record.config.get("sweep") == "drift":
-            continue
-        config = record.config
-        key = (config.get("peptide_source"), config.get("equate_il"), config.get("tryptic"))
-        grouped.setdefault(key, {}).setdefault(arm, []).append(record)
-
-    out: dict[tuple, dict[str, dict]] = {}
-    for key, per_arm in grouped.items():
-        for arm, records in per_arm.items():
-            def field(name: str) -> float:
-                return median(record.result.get(name, 0) for record in records)
-
-            out.setdefault(key, {})[arm] = {
-                "qps": median(record.qps for record in records),
-                "total_ns": field("total_duration_ns"),
-                "search_ns": field("search_duration_ns"),
-                "retrieval_ns": field("retrieval_duration_ns"),
-                "bounds_ns": field("search_bounds_ns"),
-                "iter_ns": field("match_iter_ns"),
-                "examined": field("candidates_examined"),
-                "accepted": field("candidates_accepted"),
-            }
-    return out
-
-
-def _share(part: float, whole: float) -> str:
-    return "-" if not whole else f"{part / whole * 100:.0f}%"
-
-
-def _accept(phases: dict[str, float]) -> str:
-    """Candidate acceptance rate; zero counters mean the build had no `measure`."""
-    examined = phases["examined"]
-    if not examined:
-        return "n/a"
-    return f"{phases['accepted'] / examined * 100:.1f}%"
 
 
 def _response_share(report: Report, cells: dict, arms: list[str]) -> None:

@@ -90,22 +90,15 @@ class Arm:
 
     name: str
     features: tuple[str, ...]
-    #: Build this arm with sa-index's `measure` feature. Per arm rather than per suite, so a suite
-    #: can carry ONE instrumented arm alongside its uninstrumented ones — the counters perturb
-    #: throughput (~2%), so an instrumented arm is a different measurement sitting in
-    #: the same run, and every analysis has to keep it out of its throughput tables.
-    measure: bool = False
 
     @property
     def feature_string(self) -> str:
         """Comma-separated features, i.e. what goes after `--features`. Empty = default build.
 
-        `measure` is included, because this string is what every record reports as the binary that
-        produced it — and an instrumented arm sharing a storage configuration with an uninstrumented
-        one would otherwise be indistinguishable in the records.
+        This string is what every record reports as the binary that produced it, so two arms that
+        differ only in their features stay distinguishable in the records.
         """
-        features = list(self.features) + (["measure"] if self.measure else [])
-        return ",".join(features)
+        return ",".join(self.features)
 
 
 @dataclass(frozen=True)
@@ -167,9 +160,6 @@ class Suite:
     #: harness sweeps in-process. This is the only way a matrix suite says what it measures — the
     #: harness has no built-in grid of its own, so a sweep cannot be described in two places.
     sweeps: list[dict[str, Any]] = field(default_factory=list)
-    #: Build EVERY arm with sa-index's `measure` feature. Prefer the per-arm flag: a suite where
-    #: every arm is instrumented can report no throughput at all.
-    measure: bool = False
     #: Prose printed under this suite's tables, explaining how to read them.
     notes: str = ""
     #: Results directory of a previous run of this suite, for the regression comparison. Set from
@@ -282,7 +272,6 @@ def load(name: str, repo: Path) -> Suite:
         drop_caches=drop_caches,
         defaults=defaults,
         sweeps=raw.get("sweep", []),
-        measure=bool(raw.get("measure", False)),
         notes=raw.get("notes", "").strip(),
         deprecations=deprecations,
     )
@@ -361,4 +350,4 @@ def _arm(entry: dict, path: Path) -> Arm:
     features = entry.get("features", [])
     if not isinstance(features, list):
         raise ConfigError(f"{path}: arm '{name}': features must be a list")
-    return Arm(name=name, features=tuple(features), measure=bool(entry.get("measure", False)))
+    return Arm(name=name, features=tuple(features))

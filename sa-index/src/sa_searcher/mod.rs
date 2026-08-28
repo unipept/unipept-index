@@ -13,10 +13,8 @@
 //! * `tryptic` — the trypsin-cut filter the candidate scan applies.
 //! * `tuning` — the constants the hot paths are fixed at, and what measured them;
 //!   `results` — what a search returns.
-//! * `measure` — the instrumentation, which costs nothing unless the `measure` feature is on.
 
 mod batched;
-pub(crate) mod measure;
 mod results;
 mod retrieval;
 mod scalar;
@@ -37,10 +35,7 @@ use crate::{
     KmerTable,
     array::SuffixArrayBackend,
     kmer_table::KmerLookup,
-    sa_searcher::{
-        BoundSearch::{Maximum, Minimum},
-        measure::SearchMeasurements
-    },
+    sa_searcher::BoundSearch::{Maximum, Minimum},
     suffix_to_protein_index::SuffixToProteinMappingBackend
 };
 
@@ -70,10 +65,7 @@ pub struct Searcher<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToPr
     /// Optional accelerator narrowing the opening binary search; see [`KmerTable`]. Attached
     /// through [`Searcher::with_kmer_table`] or [`Searcher::build_kmer_table`], never at
     /// construction.
-    pub kmer_table: Option<KmerTable>,
-    /// Instrumentation counters, drained through [`Searcher::drain_timing_ns`] and
-    /// [`Searcher::drain_candidate_counts`]. Zero-sized without the `measure` feature.
-    pub(crate) measurements: SearchMeasurements
+    pub kmer_table: Option<KmerTable>
 }
 
 impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend> Searcher<SA, P, STPM> {
@@ -138,13 +130,7 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             ));
         }
 
-        Ok(Self {
-            sa,
-            proteins,
-            suffix_index_to_protein,
-            kmer_table: None,
-            measurements: SearchMeasurements::new()
-        })
+        Ok(Self { sa, proteins, suffix_index_to_protein, kmer_table: None })
     }
 
     /// Attaches a pre-built k-mer bounds table to this searcher.
@@ -475,65 +461,53 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ) -> bool {
         let needs_span = !equate_il && !il_locations.is_empty();
 
-        let mut examined = 0u64;
-        let mut accepted = 0u64;
-
-        let hit_max = 'scan: {
-            if range_size < PREFETCH_THRESHOLD {
-                for raw in sa_iter {
-                    examined += 1;
-                    if let Some(v) =
-                        self.validate_extended_candidate(text, raw, search_string, il_locations, equate_il, last_is_kr)
-                    {
-                        accepted += 1;
-                        matching_suffixes.push(v);
-                        if matching_suffixes.len() > max_matches {
-                            break 'scan true;
-                        }
+        if range_size < PREFETCH_THRESHOLD {
+            for raw in sa_iter {
+                if let Some(v) =
+                    self.validate_extended_candidate(text, raw, search_string, il_locations, equate_il, last_is_kr)
+                {
+                    matching_suffixes.push(v);
+                    if matching_suffixes.len() > max_matches {
+                        return true;
                     }
                 }
-                break 'scan false;
             }
+            return false;
+        }
 
-            let mut raw_batch = [0i64; VALIDATE_BATCH];
+        let mut raw_batch = [0i64; VALIDATE_BATCH];
 
-            loop {
-                let mut batch_len = 0usize;
-                for s in &mut sa_iter {
-                    let ms = s as usize + 1;
-                    text.prefetch_at(ms + search_string.len());
-                    if needs_span {
-                        text.prefetch_at(ms);
-                    }
-                    raw_batch[batch_len] = s;
-                    batch_len += 1;
-                    if batch_len == VALIDATE_BATCH {
-                        break;
-                    }
+        loop {
+            let mut batch_len = 0usize;
+            for s in &mut sa_iter {
+                let ms = s as usize + 1;
+                text.prefetch_at(ms + search_string.len());
+                if needs_span {
+                    text.prefetch_at(ms);
                 }
-                if batch_len == 0 {
+                raw_batch[batch_len] = s;
+                batch_len += 1;
+                if batch_len == VALIDATE_BATCH {
                     break;
                 }
+            }
+            if batch_len == 0 {
+                break;
+            }
 
-                for &raw in &raw_batch[..batch_len] {
-                    examined += 1;
-                    if let Some(v) =
-                        self.validate_extended_candidate(text, raw, search_string, il_locations, equate_il, last_is_kr)
-                    {
-                        accepted += 1;
-                        matching_suffixes.push(v);
-                        if matching_suffixes.len() > max_matches {
-                            break 'scan true;
-                        }
+            for &raw in &raw_batch[..batch_len] {
+                if let Some(v) =
+                    self.validate_extended_candidate(text, raw, search_string, il_locations, equate_il, last_is_kr)
+                {
+                    matching_suffixes.push(v);
+                    if matching_suffixes.len() > max_matches {
+                        return true;
                     }
                 }
             }
-            false
-        };
+        }
 
-        self.measurements.candidates_examined.add(examined);
-        self.measurements.candidates_accepted.add(accepted);
-        hit_max
+        false
     }
 
     /// Iterates the SA range and validates each candidate suffix.
@@ -568,84 +542,70 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // than once per candidate — this loop runs `max_matches / acceptance_rate` times.
         let tryptic = TrypticQuery::new(tryptic, search_string);
 
-        // Local counters, folded into the shared atomics exactly once below. A per-candidate
-        // RMW on a cache line every rayon worker shares would dominate the loop it measures.
-        let mut examined = 0u64;
-        let mut accepted = 0u64;
-
-        let hit_max = 'scan: {
-            if range_size < PREFETCH_THRESHOLD {
-                for raw in sa_iter {
-                    examined += 1;
-                    if let Some(v) = self.validate_candidate(
-                        text,
-                        raw,
-                        skip,
-                        search_string,
-                        prefix,
-                        suffix_str,
-                        il_locations,
-                        equate_il,
-                        tryptic
-                    ) {
-                        accepted += 1;
-                        matching_suffixes.push(v);
-                        if matching_suffixes.len() > max_matches {
-                            break 'scan true;
-                        }
+        if range_size < PREFETCH_THRESHOLD {
+            for raw in sa_iter {
+                if let Some(v) = self.validate_candidate(
+                    text,
+                    raw,
+                    skip,
+                    search_string,
+                    prefix,
+                    suffix_str,
+                    il_locations,
+                    equate_il,
+                    tryptic
+                ) {
+                    matching_suffixes.push(v);
+                    if matching_suffixes.len() > max_matches {
+                        return true;
                     }
                 }
-                break 'scan false;
             }
+            return false;
+        }
 
-            let mut raw_batch = [0i64; VALIDATE_BATCH];
+        let mut raw_batch = [0i64; VALIDATE_BATCH];
 
-            loop {
-                // --- Pass 1: fill batch and prefetch text positions ---
-                let mut batch_len = 0usize;
-                for s in &mut sa_iter {
-                    let su = s as usize;
-                    if su >= skip {
-                        Self::prefetch_match_positions(text, su - skip, su + search_string.len() - skip);
-                    }
-                    raw_batch[batch_len] = s;
-                    batch_len += 1;
-                    if batch_len == VALIDATE_BATCH {
-                        break;
-                    }
+        loop {
+            // --- Pass 1: fill batch and prefetch text positions ---
+            let mut batch_len = 0usize;
+            for s in &mut sa_iter {
+                let su = s as usize;
+                if su >= skip {
+                    Self::prefetch_match_positions(text, su - skip, su + search_string.len() - skip);
                 }
-                if batch_len == 0 {
+                raw_batch[batch_len] = s;
+                batch_len += 1;
+                if batch_len == VALIDATE_BATCH {
                     break;
                 }
+            }
+            if batch_len == 0 {
+                break;
+            }
 
-                // --- Pass 2: validate (prefetches have had time to complete) ---
-                for &raw in &raw_batch[..batch_len] {
-                    examined += 1;
-                    if let Some(v) = self.validate_candidate(
-                        text,
-                        raw,
-                        skip,
-                        search_string,
-                        prefix,
-                        suffix_str,
-                        il_locations,
-                        equate_il,
-                        tryptic
-                    ) {
-                        accepted += 1;
-                        matching_suffixes.push(v);
-                        if matching_suffixes.len() > max_matches {
-                            break 'scan true;
-                        }
+            // --- Pass 2: validate (prefetches have had time to complete) ---
+            for &raw in &raw_batch[..batch_len] {
+                if let Some(v) = self.validate_candidate(
+                    text,
+                    raw,
+                    skip,
+                    search_string,
+                    prefix,
+                    suffix_str,
+                    il_locations,
+                    equate_il,
+                    tryptic
+                ) {
+                    matching_suffixes.push(v);
+                    if matching_suffixes.len() > max_matches {
+                        return true;
                     }
                 }
             }
-            false
-        };
+        }
 
-        self.measurements.candidates_examined.add(examined);
-        self.measurements.candidates_accepted.add(accepted);
-        hit_max
+        false
     }
 }
 

@@ -177,10 +177,6 @@ def _grid_record(suite: str, dims: dict, config: dict, qps: float) -> dict:
 #: Counter fields belong in `result`, not `config`; the fixtures pass them alongside the config and
 #: this is where they are moved across.
 COUNTERS = (
-    "search_bounds_ns",
-    "match_iter_ns",
-    "candidates_examined",
-    "candidates_accepted",
     "response_duration_ns",
     "response_bytes",
 )
@@ -189,8 +185,8 @@ COUNTERS = (
 def _write_grid(out_dir: Path, suite: str, arm: str, cells: list[tuple[dict, float]]) -> None:
     """One process's jsonl: an arm, and the cells it swept in the order it swept them."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    dims = {"arm": arm, "features": "measure" if arm.endswith("+m") else arm, "slot": "a"}
-    with (out_dir / f"{arm.replace('+', '_')}__a.jsonl").open("w") as handle:
+    dims = {"arm": arm, "features": arm, "slot": "a"}
+    with (out_dir / f"{arm}__a.jsonl").open("w") as handle:
         for config, qps in cells:
             counters = {name: config.pop(name) for name in COUNTERS if name in config}
             record = _grid_record(suite, dims, dict(config), qps)
@@ -201,19 +197,6 @@ def _write_grid(out_dir: Path, suite: str, arm: str, cells: list[tuple[dict, flo
 #: Throughput per length regime, roughly the shape a real index gives: short peptides match far more
 #: suffixes, so they are an order of magnitude slower.
 BUCKETS = {"mixed": 1_200_000.0, "small": 400_000.0, "medium": 1_600_000.0, "large": 2_200_000.0}
-
-
-#: What the instrumented arm's counters read. Tryptic examines far more candidates and accepts far
-#: fewer of them, which is the shape the acceptance column exists to show — and the fixture has to
-#: have it, or a report that dropped the column entirely would still pass.
-def _counters(tryptic: bool) -> dict:
-    examined = 900_000 if tryptic else 120_000
-    return {
-        "search_bounds_ns": 40_000_000,
-        "match_iter_ns": 90_000_000 if tryptic else 20_000_000,
-        "candidates_examined": examined,
-        "candidates_accepted": int(examined * (0.02 if tryptic else 0.85)),
-    }
 
 
 #: The phase production runs after retrieval, shaped as the local index measures it: it dwarfs search
@@ -249,7 +232,7 @@ def build_defaults(root: Path, *, regressed: bool = False) -> Path:
         implementation that only ever compares two of them shows.
     """
     out_dir = root / ("defaults-base" if regressed else "defaults")
-    for arm in ("preloaded", "mmap", "pprot", "ptext", "pmap", "pprot+m"):
+    for arm in ("preloaded", "mmap", "pprot", "ptext", "pmap"):
         cells = []
         for source, base in BUCKETS.items():
             for equate_il in (True, False):
@@ -286,7 +269,6 @@ def build_defaults(root: Path, *, regressed: bool = False) -> Path:
                             "amount_of_peptides": 10_000,
                             "sweep": "defaults",
                             "grid_slot": "a",
-                            **(_counters(tryptic) if arm.endswith("+m") else {}),
                             **_response(tryptic),
                         },
                         qps,
@@ -430,9 +412,6 @@ CHECKS = {
         ("preloaded, ptext, pmap tied", "a tied leading group must name every arm in it, in column order"),
         ("search time", "the phase timings must each get a chart of their own"),
         ("time split", "the search/retrieval decomposition must be offered as a stacked chart"),
-        ("inside the search", "the instrumented arm must get a section of its own"),
-        ("accept%", "the candidate acceptance rate must reach the report"),
-        ("perturb", "the instrumented arm's numbers must be labelled as perturbed"),
         ("what a request actually costs",
          "the two phases after retrieval must get a section of their own"),
         ("measured share",

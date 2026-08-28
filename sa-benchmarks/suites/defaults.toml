@@ -96,7 +96,7 @@ name = "defaults"
 # Only here — it is expensive, and it is the one measurement that says what
 # fraction of a real request every other suite's throughput actually describes.
 response = true
-arms = ["preloaded", "mmap", "pprot", "ptext", "pmap", "pprot+m"]
+arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
 kmer = [5]
 equate_il = [true, false]
 tryptic = [true, false]
@@ -149,15 +149,3 @@ features = ["mmap", "preloaded-text", "preloaded-proteins"]
 [[arms]]
 name = "pmap"
 features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
-
-[[arms]]
-# One instrumented arm, which used to be a suite of its own. `measure` swaps the searcher's
-# zero-sized counters for real atomics — the only way to get the binary-search/range-scan split and
-# the candidate acceptance rate — and it perturbs what it measures by ~2%. So it is ONE arm, kept
-# out of every throughput table and verdict in this suite, feeding the "inside the search" section
-# and nothing else. It rides here rather than in a separate suite because the question it answers —
-# what is tryptic actually doing — is a question about the four search options, which is exactly
-# what this grid varies.
-name = "pprot+m"
-features = ["mmap", "preloaded-proteins"]
-measure = true

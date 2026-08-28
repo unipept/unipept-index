@@ -36,7 +36,6 @@ use super::{
     BoundSearch,
     BoundSearch::{Maximum, Minimum},
     BoundSearchResult, MAX_RESULT_PREALLOC, MLP_BATCH, SearchAllSuffixesResult, Searcher,
-    measure::Timer,
     tryptic::{TRYPTIC_EXTENSION_CHARS, tryptic_extension_chars}
 };
 use crate::{array::SuffixArrayBackend, suffix_to_protein_index::SuffixToProteinMappingBackend};
@@ -237,11 +236,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             }
 
             let sub: Vec<&[u8]> = active.iter().map(|&i| &strings[i][skip..]).collect();
-            let t_bounds = Timer::start();
             let bounds = self.search_bounds_batched(&sub);
-            self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
-            let t_iter = Timer::start();
             for (ai, &i) in active.iter().enumerate() {
                 let (min_bound, max_bound) = match &bounds[ai] {
                     BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
@@ -290,7 +286,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                     }
                 }
             }
-            self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
         }
 
         // Left-extended phase. One batched bound search per extension character, so the streams
@@ -320,14 +315,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                 }
                 let extended: Vec<&[u8]> = ext_spans.iter().map(|&(s, e)| &ext_buf[s..e]).collect();
 
-                let t_bounds = Timer::start();
                 // No special case for the separator variant: the k-mer table cannot represent `-`
                 // and says so, and `opening_window` turns that abstention into a full-range search
                 // rather than into `NoMatches`.
                 let bounds = self.search_bounds_batched(&extended);
-                self.measurements.search_bounds_ns.add(t_bounds.elapsed_ns());
 
-                let t_iter = Timer::start();
                 for (ai, &i) in active.iter().enumerate() {
                     let (min_bound, max_bound) = match &bounds[ai] {
                         BoundSearchResult::SearchResult((lo, hi)) => (*lo, *hi),
@@ -351,7 +343,6 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
                             Some(SearchAllSuffixesResult::truncated(std::mem::take(&mut matching[i]), max_matches));
                     }
                 }
-                self.measurements.match_iter_ns.add(t_iter.elapsed_ns());
             }
         }
 

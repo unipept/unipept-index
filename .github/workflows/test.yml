@@ -37,11 +37,6 @@ jobs:
       - name: Run cargo test
         run: cargo test
 
-      # The one remaining feature. It swaps the searcher's counters for real atomics, and nothing
-      # else compiles that code.
-      - name: Run cargo test with the measure feature
-        run: cargo test -p sa-index --features measure
-
   server-backends:
     # `sa-server` is where the storage features now live, and all they do is pick which concrete
     # type each `Active*` alias names (see `sa-server/src/backends.rs`). Nine resolutions; every one
@@ -82,67 +77,3 @@ jobs:
               cargo test -p sa-server --features "$features"
             fi
           done
-
-  no-instrumentation-in-shipping-builds:
-    # `measure` swaps the searcher's zero-sized counters for real atomics on cache lines every rayon
-    # worker shares. It exists for the benchmark harness and costs throughput wherever it is on, so
-    # nothing that ships may enable it — not directly, and not through a feature that forwards to it.
-    #
-    # That is easy to break by accident: adding `measure = ["sa-index/measure"]` to sa-server, or
-    # folding it into another feature, compiles cleanly and produces a slower server that nothing
-    # complains about. This job resolves the feature graph for the two shipping binaries and fails if
-    # `measure` is anywhere in it.
-    name: measure is off in shipping builds
-    runs-on: ubuntu-latest
-
-    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The workspace ships
-    # from stable, so that is what compiles and runs the tests here.
-    env:
-      RUSTUP_TOOLCHAIN: stable
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Resolve features for sa-server and sa-builder
-        shell: bash
-        run: |
-          set -uo pipefail
-          rc=0
-          # sa-builder has no features at all — it writes the index with the owned types in every
-          # configuration — so it is checked once, with none.
-          for spec in "sa-server|" "sa-server|--features mmap" "sa-builder|"; do
-            package="${spec%%|*}"
-            features="${spec#*|}"
-            # `{f}` is the resolved feature list of each package in the graph, so this reads the
-            # feature actually enabled on sa-index rather than what any manifest asks for.
-            resolved=$(cargo tree -e features -p "$package" $features --format '{p} [{f}]' \
-                       | grep 'sa-index v' | sort -u)
-            echo "$package ${features:-(default features)}:"
-            echo "$resolved" | sed 's/^/  /'
-            if grep -qE '\[[^]]*\bmeasure\b' <<<"$resolved"; then
-              echo "::error::$package ${features:-(default features)} resolves sa-index's 'measure' feature."
-              echo "::error::Instrumentation must never reach a shipping binary; see the 'measure' section of sa-index's crate docs."
-              rc=1
-            fi
-          done
-          exit $rc
-
-      # The guard is only worth having if it can fail, and a feature-graph query that silently stops
-      # matching would pass forever. sa-benchmarks with `measure` on must trip the same check.
-      - name: Prove the check detects the measure feature when it is present
-        shell: bash
-        run: |
-          set -uo pipefail
-          resolved=$(cargo tree -e features -p sa-benchmarks --features sa-benchmarks/measure \
-                     --format '{p} [{f}]' | grep 'sa-index v' | sort -u)
-          echo "$resolved" | sed 's/^/  /'
-          if grep -qE '\[[^]]*\bmeasure\b' <<<"$resolved"; then
-            echo "check is live"
-          else
-            echo "::error::the measure check no longer detects it — cargo tree output shape changed."
-            exit 1
-          fi
