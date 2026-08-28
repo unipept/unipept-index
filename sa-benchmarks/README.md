@@ -22,6 +22,46 @@ Both trees run off **one index directory**, read-only:
 | `mapping.bin` | yes | **type byte only** — fbc9328 rebuilds the mapping from the text, and reads this file solely to learn which KIND to build, so both trees walk the same mapping (bitvec, on the current index) |
 | peptide files | yes | yes — plain text |
 
+## Memory: fbc9328 cannot start on the full database as it stands
+
+This is the first thing to know, and it is a result rather than an obstacle.
+
+`Proteins::try_from_database_file` accumulates the **entire concatenated text as a plain `String`**
+— one byte per residue — and only bit-packs it into a `ProteinText` afterwards. On the full database:
+
+| | |
+|---|---|
+| suffix array (37,199,918,181 items x 37 bits) | 160.2 GiB |
+| text, 5-bit packed | 43.3 GiB |
+| **text, as the intermediate `String`** | **69.3 GiB** |
+
+`String` grows by doubling, so 69.3 GiB of content sits in 128 GiB of capacity and the final
+reallocation briefly holds both halves — 192 GiB for the text alone. Load the suffix array first
+and all of that lands on top of 160.2 GiB: **a 352 GiB peak to reach a working set of about
+204 GiB.** That is what a 295 GB box dies on, and prebuilding `proteins.bin` is precisely what the
+branch did about it.
+
+Two things follow, and they are deliberately different in kind:
+
+* **The harness reads the proteins BEFORE the suffix array. Always, unconditionally.** They are two
+  independent reads, each still timed separately, so the order measures nothing differently — and it
+  takes the peak from 352 GiB to 192 GiB. There is no reason not to.
+* **`--stream-proteins` is opt-in.** It builds the same `Proteins` value by writing each residue
+  straight into a pre-sized `ProteinText`, skipping the intermediate entirely, at the cost of a
+  second pass over the file to size it. Peak becomes roughly the working set.
+
+  It is opt-in because it *does* change how the load is performed: with it set, the fbc9328 row of
+  `baseline_startup` measures **this** loader and must not be reported as fbc9328's own. `baseline`
+  is unaffected — it measures the search path, which is identical either way.
+
+  Verified as a drop-in: both loaders produce the same protein count, the same text length, and
+  byte-identical answers over 5,000 peptides.
+
+If `baseline_startup` matters more to you than convenience, run it without `--stream-proteins` on a
+box with ~200 GiB free and let the reordering carry it. If the box cannot do that, the honest
+reporting is that **fbc9328's own loader does not fit**, with the streamed number given separately
+as "what the same work costs without the intermediate".
+
 ## The one axis that cannot be compared: the k-mer table
 
 The k-mer bound table arrived **with** the branch. fbc9328 has no cell that can sit opposite a
@@ -91,6 +131,7 @@ bash "$OLD/sa-benchmarks/branch-side/install.sh" "$BRANCH"
 #    Runs each tree's own sa-server against one index and diffs /search peptide by peptide.
 #    Index and peptide paths come from the BRANCH tree's machine profile.
 bash "$OLD/sa-benchmarks/check_answers_cross.sh" "$BRANCH" 2000
+#    STREAM=1 to use the streaming loader; IL="true" to halve it (one fbc9328 load per il value)
 
 # 3. Stage the fbc9328 harness into the session's bin/.
 bash "$OLD/sa-benchmarks/stage.sh" "$SESSION"
@@ -144,10 +185,11 @@ two scripts, and the branch-side files `install.sh` copies across. There is no s
 * **`proteins.tsv` in the index directory.** fbc9328 has no `proteins.bin`; the gate checks for it
   up front, because it is the one file the branch no longer needs at runtime and so the one an index
   directory can plausibly be missing.
-* **cmake, make and network on first build**, for the answer gate only. It builds fbc9328's
-  `sa-server`, which pulls in `sa-builder` -> `libsais64-rs`, whose build script clones and builds
-  `libsais-packed`. Any machine that already builds this repository has this. The harness itself does
-  not depend on it.
+* **Nothing beyond a Rust toolchain.** The gate does not build fbc9328's `sa-server` any more — that
+  binary loads the suffix array before the proteins and hits the 352 GiB peak described above — so
+  `sa-builder` and its vendored `libsais` never enter the picture. The gate drives the branch's
+  `sa-server` on one side and the harness's `--answers` on the other, and `--answers` calls
+  `peptide_search::search_all_peptides`, which is the function fbc9328's own server handler calls.
 * **A default toolchain that can build fbc9328.** This commit has no `rust-toolchain.toml`, so it
   takes the box default. Set `CARGO="rustup run <version> cargo"` for both scripts if that fails.
 
@@ -165,6 +207,7 @@ no translation. Verified by diffing the key sets of a record from each tree: no 
 | `KmerTable` and the whole k-mer axis | nothing | axis removed, `kmer_k` pinned to 0, a cell asking for a table is rejected |
 | `search_all_matching_suffixes_batched` | `search_matching_suffixes` per peptide | the flat `par_iter` this commit's own `search_all_peptides` uses — measuring fbc9328 with the branch's batching would attribute the branch's win to something else |
 | `frame_chunks` / `json_chunk` | nothing | reimplemented with identical framing, against this commit's owned `SearchResult` |
+| a loadable `proteins.bin` | a 69 GiB intermediate `String` | proteins read before the SA (always); `--stream-proteins` skips the intermediate (opt-in) |
 | four storage backend traits | one build | one arm; the page sweep reports zero because nothing is mapped |
 | `proteins.bin` + `mapping.bin` | `proteins.tsv` | parsed and rebuilt at startup, as this commit's server does |
 

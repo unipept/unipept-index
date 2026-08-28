@@ -1145,6 +1145,7 @@ name = "sa-benchmarks"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "fa-compression",
  "rand 0.8.5",
  "rayon",
  "sa-compression",

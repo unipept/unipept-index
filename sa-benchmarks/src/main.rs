@@ -76,10 +76,11 @@ use sa_compression::load_compressed_suffix_array;
 use sa_index::{
     SuffixArray,
     binary::load_suffix_array,
-    peptide_search::{ProteinInfo, SearchResult},
+    peptide_search::{ProteinInfo, SearchResult, search_all_peptides},
     sa_searcher::{BitVecSearcher, DenseSearcher, SearchAllSuffixesResult, Searcher, SparseSearcher}
 };
-use sa_mappings::proteins::Proteins;
+use sa_mappings::proteins::{Protein, Proteins, SEPARATION_CHARACTER, TERMINATION_CHARACTER};
+use text_compression::ProteinText;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, System};
 
@@ -238,6 +239,104 @@ fn load_suffix_array_file(file: &str) -> Result<SuffixArray, Box<dyn Error>> {
     }
 }
 
+/// Builds the same `Proteins` value `Proteins::try_from_database_file` builds, without the 69 GiB
+/// intermediate — the escape hatch for a box that cannot hold it.
+///
+/// # Why this exists
+///
+/// `try_from_database_file` accumulates the ENTIRE concatenated text as a plain `String`, one byte
+/// per residue, and only bit-packs it into a `ProteinText` afterwards. On the full database that
+/// intermediate is 69.3 GiB against the 43.3 GiB it becomes, and `String` grows by doubling, so its
+/// capacity reaches 128 GiB and the final reallocation briefly holds 192 GiB. Loading the suffix
+/// array first puts another 160.2 GiB underneath all of it. That is a 352 GiB peak to reach a
+/// working set of about 204 GiB, and it is why this commit cannot start on the full database on a
+/// 295 GB box.
+///
+/// Prebuilding `proteins.bin` is exactly what the branch did about this, so the ceiling is a real
+/// property of fbc9328 and a genuine finding — not something to quietly engineer away. Hence:
+///
+/// * loading the proteins BEFORE the suffix array is unconditional. It changes nothing about what
+///   is measured (the order of two independent reads) and takes the peak from 352 GiB to 192 GiB.
+/// * THIS function is opt-in, behind `--stream-proteins`, because it does change how the load is
+///   performed and therefore what `baseline_startup` measures.
+///
+/// # What it produces
+///
+/// The same value, field for field. It walks the same parser — split on tabs, uppercase the
+/// sequence, `fa_compression::encode` the annotations, `-` between proteins and a trailing `$` —
+/// and writes each residue straight into a pre-sized `ProteinText` instead of into a `String`. Two
+/// passes over the file: the first sums the sequence lengths, because `ProteinText::with_capacity`
+/// needs the total up front and there is no way to grow one.
+///
+/// A `#[cfg(test)]` check that this agrees with `try_from_database_file` is not possible here — the
+/// comparison needs a database file, not a fixture — so `check_answers_cross.sh` is what stands
+/// behind it: identical answers out of both trees is identical text and identical metadata.
+fn stream_proteins_from_database_file(path: &Path) -> Result<Proteins, Box<dyn Error>> {
+    // Pass 1: the text length. Field 3 of every line, plus one separator each; the trailing
+    // separator becomes the terminator rather than being added to it, exactly as the original does.
+    let mut text_len = 0usize;
+    let mut protein_count = 0usize;
+    for line in BufReader::new(File::open(path)?).split(b'\n') {
+        let line = line?;
+        if line.is_empty() {
+            continue;
+        }
+        let sequence = nth_field(&line, 2).ok_or("malformed line: fewer than 3 tab-separated fields")?;
+        text_len += sequence.len() + 1;
+        protein_count += 1;
+    }
+    if text_len == 0 {
+        return Err(format!("{} contains no proteins", path.display()).into());
+    }
+    eprintln!("  {} proteins, {} text characters (pass 1 of 2)", protein_count, text_len);
+
+    // Pass 2: fill. `with_capacity` zero-fills the whole bit array up front, so this is the only
+    // large allocation the load makes.
+    let mut text = ProteinText::with_capacity(text_len);
+    let mut proteins: Vec<Protein> = Vec::with_capacity(protein_count);
+    let mut index = 0usize;
+    for line in BufReader::new(File::open(path)?).split(b'\n') {
+        let line = line?;
+        if line.is_empty() {
+            continue;
+        }
+        let uniprot_id = std::str::from_utf8(nth_field(&line, 0).ok_or("malformed line")?)?;
+        let taxon_id = std::str::from_utf8(nth_field(&line, 1).ok_or("malformed line")?)?.parse()?;
+        let sequence = nth_field(&line, 2).ok_or("malformed line")?;
+        let annotations = std::str::from_utf8(nth_field(&line, 3).ok_or("malformed line")?)?;
+
+        for &residue in sequence {
+            text.set(index, residue.to_ascii_uppercase());
+            index += 1;
+        }
+        text.set(index, SEPARATION_CHARACTER);
+        index += 1;
+
+        proteins.push(Protein {
+            uniprot_id: uniprot_id.to_string(),
+            taxon_id,
+            functional_annotations: fa_compression::algorithm1::encode(annotations)
+        });
+    }
+
+    // The original pops the last separator and pushes the terminator; here the last separator is
+    // simply overwritten, which is the same text.
+    text.set(index - 1, TERMINATION_CHARACTER);
+    if index != text_len {
+        return Err(format!("text length changed between passes: {} then {}", text_len, index).into());
+    }
+
+    Ok(Proteins { text, proteins })
+}
+
+/// The `n`th tab-separated field of a line, or `None` if the line has fewer.
+///
+/// Bytes, not `str`: the encoded functional annotations are not valid UTF-8, which is why the
+/// original reads this file with `ByteLines` too.
+fn nth_field(line: &[u8], n: usize) -> Option<&[u8]> {
+    line.split(|byte| *byte == b'\t').nth(n)
+}
+
 /// The branch's `json_chunk`, reimplemented against this commit's owned `SearchResult`.
 ///
 /// Byte-for-byte the same framing — a leading `,` per chunk, closed into an array by
@@ -384,6 +483,32 @@ struct Args {
     // There is no `--kmer-table-file` / `--build-kmer-table` here: the k-mer bound table does not
     // exist at this commit. A grid cell asking for one is rejected in `load_grid_file` rather than
     // ignored, so a suite cannot quietly report table-accelerated cells that ran without a table.
+    /// Build the protein store without the 69 GiB intermediate `String` that
+    /// `Proteins::try_from_database_file` accumulates. See `stream_proteins_from_database_file`.
+    ///
+    /// OFF by default, because it changes how the load is performed: with this set, the fbc9328 row
+    /// of `baseline_startup` measures THIS loader and not the one fbc9328 ships, and must not be
+    /// reported as the latter. `baseline` is unaffected — it measures the search path, which is
+    /// identical either way, and the `Proteins` value produced is the same one field for field.
+    ///
+    /// Needed only where fbc9328's own loader does not fit in RAM, which on the full database is
+    /// most places.
+    #[arg(long)]
+    stream_proteins: bool,
+
+    /// Write the answers for `--peptide-file` as JSON and exit, without benchmarking anything.
+    ///
+    /// Goes through `peptide_search::search_all_peptides` — this commit's production entry point,
+    /// the one its `sa-server` calls — and emits the same shape that server returns, so the output
+    /// is directly comparable with a `/search` response from either tree.
+    ///
+    /// This exists because the answer gate cannot drive fbc9328's own `sa-server` on the full
+    /// database: that binary loads the suffix array before the proteins and so hits the 352 GiB
+    /// peak described on `stream_proteins_from_database_file`. Same library call, same answers,
+    /// a load this binary can survive.
+    #[arg(long)]
+    answers: Option<PathBuf>,
+
     /// Run a parameter matrix in one process: loads the index once, then sweeps the cell list from
     /// `--grid-file` for each `--matrix-files` entry. Writes one aggregated record per cell to
     /// `<output>/<label>.jsonl`.
@@ -1545,6 +1670,28 @@ fn run_matrix(
     Ok(())
 }
 
+/// Writes the answers for `--peptide-file` as JSON, in the shape this commit's `sa-server` returns.
+///
+/// Calls `search_all_peptides` — the same function that server's handler calls — so peptide
+/// normalisation, the sparseness-factor length filter and the cutoff are this commit's own and not
+/// a reimplementation. See `Args::answers` for why the gate needs this rather than the server.
+fn dump_answers(searcher: &ActiveSearcher, args: &Args, out: &Path) -> Result<(), Box<dyn Error>> {
+    let path = args.peptide_file.as_ref().ok_or("--answers requires --peptide-file")?;
+    let peptides: Vec<String> =
+        BufReader::new(File::open(path)?).lines().take(args.amount_of_peptides).collect::<Result<_, _>>()?;
+    eprintln!("Answering {} peptides (cutoff {}, equate_il {}, tryptic {})...",
+        peptides.len(), args.max_matches, args.equate_il, args.tryptic);
+
+    let results = search_all_peptides(searcher, &peptides, args.max_matches, args.equate_il, args.tryptic);
+
+    if let Some(parent) = out.parent() {
+        create_dir_all(parent)?;
+    }
+    serde_json::to_writer(&mut File::create(out)?, &results)?;
+    eprintln!("Wrote {} results to {}", results.len(), out.display());
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
@@ -1612,6 +1759,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let (minflt_at_start, majflt_at_start) = page_faults();
 
+    // THE PROTEINS ARE READ FIRST, and the order is load-bearing rather than incidental.
+    //
+    // `try_from_database_file` accumulates the whole concatenated text as a plain `String` before
+    // bit-packing it — 69.3 GiB on the full database, reached by doubling, so 128 GiB of capacity
+    // and a 192 GiB transient at the final reallocation. Reading the 160.2 GiB suffix array FIRST
+    // puts all of that on top of it and takes the peak to 352 GiB, which does not fit on a 295 GB
+    // box even though the steady state (about 204 GiB) does.
+    //
+    // Swapping the two costs nothing and measures nothing differently — they are independent reads,
+    // each still timed on its own — and it takes the peak to 192 GiB. It is not a fix for the
+    // underlying cost, which is a real property of this commit and the reason the branch prebuilt
+    // `proteins.bin`; `--stream-proteins` is the escape hatch for a box where 192 GiB is still too
+    // much.
+    //
+    // `load_proteins_ms` is NOT comparable with the branch's, and is deliberately recorded anyway.
+    // The branch reads a prebuilt `proteins.bin`; this parses the database TSV, uppercases and
+    // concatenates every sequence, fa-compresses every annotation and bit-packs the text. A
+    // different operation, not a slower one — read the two as "what each tree pays before its first
+    // query", never as a ratio.
+    eprintln!("Building proteins from {}...", proteins_path.display());
+    if args.stream_proteins {
+        eprintln!("  !! --stream-proteins: NOT fbc9328's own loader. `baseline` is unaffected, but");
+        eprintln!("  !! this row's startup timing must not be reported as fbc9328's.");
+    }
+    let t0 = Instant::now();
+    let proteins = if args.stream_proteins {
+        stream_proteins_from_database_file(&proteins_path)?
+    } else {
+        Proteins::try_from_database_file(proteins_path.to_str().unwrap())?
+    };
+    startup.load_proteins_ms = t0.elapsed().as_millis() as u64;
+    eprintln!(
+        "  {} proteins, {} text characters ({} ms)",
+        proteins.proteins.len(),
+        proteins.text.len(),
+        startup.load_proteins_ms
+    );
+
     eprintln!("Loading suffix array from {}...", sa_path.display());
     let t0 = Instant::now();
     let suffix_array = load_suffix_array_file(sa_path.to_str().unwrap())?;
@@ -1623,17 +1808,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         suffix_array.sample_rate(),
         startup.load_sa_ms
     );
-
-    // NOT comparable with the branch's `load_proteins_ms`, and deliberately recorded anyway. The
-    // branch reads a prebuilt `proteins.bin`; this parses a ~293 MB TSV, uppercases and concatenates
-    // every sequence, fa-compresses every annotation and bit-packs the text. It is a different
-    // operation, not a slower one — read the two as "what each tree pays before its first query",
-    // never as a ratio.
-    eprintln!("Building proteins from {}...", proteins_path.display());
-    let t0 = Instant::now();
-    let proteins = Proteins::try_from_database_file(proteins_path.to_str().unwrap())?;
-    startup.load_proteins_ms = t0.elapsed().as_millis() as u64;
-    eprintln!("  {} proteins, {} text characters ({} ms)", proteins.proteins.len(), proteins.text.len(), startup.load_proteins_ms);
 
     let sa_type = if suffix_array.bits_per_value() == 64 { "original" } else { "compressed" };
     let sample_rate = suffix_array.sample_rate();
@@ -1654,6 +1828,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (minflt_after_index, majflt_after_index) = page_faults();
     startup.load_minor_faults = minflt_after_index.saturating_sub(minflt_at_start);
     startup.load_major_faults = majflt_after_index.saturating_sub(majflt_at_start);
+
+    // Answers, not timings: dump and exit before any of the benchmark machinery runs.
+    if let Some(ref path) = args.answers {
+        return dump_answers(&searcher, &args, path);
+    }
 
     if args.matrix {
         return run_matrix(

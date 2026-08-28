@@ -1,19 +1,35 @@
 #!/usr/bin/env bash
 # Answer-equivalence gate between fbc9328 and the branch. RUN THIS BEFORE ANY TIMING COMPARISON.
 #
-# Runs BOTH trees' own `sa-server` against ONE index and compares what `/search` returns, peptide by
-# peptide. This is the check that makes the timing comparison mean anything: a baseline that answers
-# differently is not a baseline, it is a different program, and none of the benchmark suites would
-# notice. A faster tree that answers differently is not faster.
+# A baseline that answers differently is not a baseline, it is a different program, and none of the
+# benchmark suites would notice. A faster tree that answers differently is not faster.
 #
-# Each side goes through its OWN production path rather than through anything written for this
-# comparison. Peptide normalisation, the min-length filter and the cutoff all differ between the
-# trees; reimplementing them here would be testing the reimplementation.
+# Each side goes through ITS OWN production entry point rather than anything written for this
+# comparison — peptide normalisation, the sparseness-factor length filter and the cutoff all differ
+# between the trees, and reimplementing them here would be testing the reimplementation:
+#
+#   branch   `sa-server`, queried over HTTP, built with --features mmap. The mmap arm because it is
+#            by far the cheapest to load and `check_answers.sh` on the branch already establishes
+#            that all nine of its storage configurations answer identically; this gate is about the
+#            gap between COMMITS, not within one.
+#   fbc9328  the ported harness's `--answers`, which calls `peptide_search::search_all_peptides` —
+#            the exact function this commit's own `sa-server` handler calls.
+#
+# Why not fbc9328's sa-server: it loads the 160 GiB suffix array BEFORE building the protein store,
+# and that store is built via a 69 GiB intermediate String. On the full database that is a 352 GiB
+# peak and the process dies. The harness loads in the opposite order and can also stream the text
+# directly into its packed form; see `stream_proteins_from_database_file`. Same library call either
+# way, so the same answers — with a load that survives.
 #
 # The index and peptide file come from the BRANCH tree's machine profile, so this cannot drift from
 # what the suites measure. Override with IDX= / PEP=.
 #
 #   bash sa-benchmarks/check_answers_cross.sh <branch-tree> [n_peptides]
+#
+#   IL="true"            only equate_il=true (default is both; each costs one fbc9328 index load)
+#   STREAM=1             use --stream-proteins on the fbc9328 side (needed on a box that cannot
+#                        hold fbc9328's own loader — the answers are identical either way, which
+#                        this gate is itself the check for)
 set -uo pipefail
 
 OLD_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,11 +39,10 @@ N="${2:-2000}"
 PROFILE="${PROFILE:-local}"
 CUTOFF="${CUTOFF:-10000}"
 OUT="${OUT:-${TMPDIR:-/tmp}/cross-answers}"
-# Two free ports. fbc9328's server has no --address flag and binds 0.0.0.0:3000, so only the
-# branch's is configurable.
-OLD_PORT=3000
-NEW_PORT="${NEW_PORT:-3998}"
+PORT="${PORT:-3998}"
 CARGO="${CARGO:-cargo}"
+IL="${IL:-true false}"
+STREAM_ARG=""; [ "${STREAM:-0}" = "1" ] && STREAM_ARG="--stream-proteins"
 
 read -r PROFILE_IDX PROFILE_PEP <<EOF2
 $(python3 - "$BRANCH_TREE" "$PROFILE" <<'PY'
@@ -47,63 +62,59 @@ PEP="${PEP:-$PROFILE_PEP}"
 
 [ -n "$IDX" ] || { echo "ERROR: no index dir — set IDX= or create $BRANCH_TREE/sa-benchmarks/profiles/$PROFILE.toml"; exit 1; }
 [ -n "$PEP" ] || { echo "ERROR: no peptide file — set PEP= or add [peptides].mixed to the profile"; exit 1; }
-# fbc9328 reads the database TSV, not proteins.bin. Checked up front: it is the one file the branch
-# no longer needs at runtime, so it is the one an index directory can plausibly be missing.
+# proteins.tsv is checked because it is the one file the branch no longer needs at runtime, and so
+# the one an index directory can plausibly be missing. fbc9328 cannot start without it.
 for f in sa.bin proteins.bin mapping.bin proteins.tsv; do
   [ -s "$IDX/$f" ] || { echo "ERROR: missing $IDX/$f"; exit 1; }
 done
 
 mkdir -p "$OUT"; rm -f "$OUT"/*.json
+head -"$N" "$PEP" > "$OUT/peptides.txt"
+ACTUAL=$(wc -l < "$OUT/peptides.txt" | tr -d ' ')
 echo "index    : $IDX"
-echo "peptides : $PEP (first $N)"
+echo "peptides : $PEP (first $ACTUAL)"
+echo "equate_il: $IL${STREAM_ARG:+   (fbc9328 loader: streaming)}"
 
-PEPTIDES=$(head -"$N" "$PEP" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
-for il in true false; do
-  echo "{\"peptides\": $PEPTIDES, \"equate_il\": $il, \"cutoff\": $CUTOFF}" > "$OUT/body_il$il.json"
+# ---- branch: its own sa-server ------------------------------------------
+echo
+echo "===== branch ====="
+( cd "$BRANCH_TREE" && $CARGO build --release -q -p sa-server --no-default-features --features mmap ) || exit 1
+"$BRANCH_TREE/target/release/sa-server" -d "$IDX/proteins.bin" -i "$IDX/sa.bin" \
+  --mapping-file "$IDX/mapping.bin" --address "127.0.0.1:$PORT" > "$OUT/branch.log" 2>&1 &
+PID=$!
+ready=0
+for _ in $(seq 1 1800); do
+  sleep 2
+  curl -s -o /dev/null "http://127.0.0.1:$PORT/search" -X POST -H 'content-type: application/json' \
+    -d '{"peptides":[]}' && { ready=1; break; }
+  kill -0 $PID 2>/dev/null || break
+done
+[ "$ready" = 1 ] || { echo "branch server never came up — see $OUT/branch.log"; kill $PID 2>/dev/null; exit 1; }
+for il in $IL; do
+  python3 -c 'import sys,json; print(json.dumps({"peptides":[l.strip() for l in open(sys.argv[1]) if l.strip()],"equate_il":sys.argv[2]=="true","cutoff":int(sys.argv[3])}))' \
+    "$OUT/peptides.txt" "$il" "$CUTOFF" > "$OUT/body_$il.json"
+  curl -s --max-time 3600 "http://127.0.0.1:$PORT/search" -H 'content-type: application/json' \
+    --data-binary "@$OUT/body_$il.json" > "$OUT/branch_il$il.json"
+  echo "  il=$il -> $(wc -c < "$OUT/branch_il$il.json") bytes"
+done
+kill $PID 2>/dev/null; wait $PID 2>/dev/null
+
+# ---- fbc9328: the ported harness ----------------------------------------
+echo
+echo "===== fbc9328 ====="
+( cd "$OLD_TREE" && $CARGO build --release -q -p sa-benchmarks ) || exit 1
+for il in $IL; do
+  "$OLD_TREE/target/release/sa-benchmarks" \
+    --index-dir "$IDX" --output "$OUT/unused" --label answers \
+    --peptide-file "$OUT/peptides.txt" --amount-of-peptides "$ACTUAL" \
+    --equate-il "$il" --tryptic false --max-matches "$CUTOFF" \
+    --answers "$OUT/old_il$il.json" $STREAM_ARG 2>&1 | grep -E "proteins,|items,|Wrote|!!" || exit 1
 done
 
-wait_ready () {  # port pid
-  for _ in $(seq 1 1800); do
-    sleep 2
-    curl -s -o /dev/null "http://127.0.0.1:$1/search" -X POST -H 'content-type: application/json' \
-      -d '{"peptides":[]}' && return 0
-    kill -0 "$2" 2>/dev/null || return 1
-  done
-  return 1
-}
-
-query () {  # port tag
-  for il in true false; do
-    curl -s --max-time 1800 "http://127.0.0.1:$1/search" -H 'content-type: application/json' \
-      --data-binary "@$OUT/body_il$il.json" > "$OUT/$2_il$il.json"
-    echo "  il=$il -> $(wc -c < "$OUT/$2_il$il.json") bytes"
-  done
-}
-
-echo "===== branch ====="
-( cd "$BRANCH_TREE" && $CARGO build --release -q -p sa-server --no-default-features ) || exit 1
-"$BRANCH_TREE/target/release/sa-server" -d "$IDX/proteins.bin" -i "$IDX/sa.bin" \
-  --mapping-file "$IDX/mapping.bin" --address "127.0.0.1:$NEW_PORT" > "$OUT/branch.log" 2>&1 &
-PID=$!
-wait_ready "$NEW_PORT" $PID || { echo "branch server never came up — see $OUT/branch.log"; kill $PID 2>/dev/null; exit 1; }
-query "$NEW_PORT" branch
-kill $PID 2>/dev/null; wait $PID 2>/dev/null
-
-# `-d` is the database TSV here, not proteins.bin: at this commit the server builds the protein store
-# and the mapping from it at startup. Same index, different entry point — which is the thing being
-# checked. This build pulls in sa-builder -> libsais64-rs, whose build script clones and cmake-builds
-# libsais-packed; that needs cmake, make and network on first run.
-echo "===== fbc9328 ====="
-( cd "$OLD_TREE" && $CARGO build --release -q -p sa-server ) || exit 1
-"$OLD_TREE/target/release/sa-server" -d "$IDX/proteins.tsv" -i "$IDX/sa.bin" > "$OUT/old.log" 2>&1 &
-PID=$!
-wait_ready "$OLD_PORT" $PID || { echo "fbc9328 server never came up — see $OUT/old.log"; kill $PID 2>/dev/null; exit 1; }
-query "$OLD_PORT" old
-kill $PID 2>/dev/null; wait $PID 2>/dev/null
-
-python3 - "$OUT" <<'PY'
+# ---- compare -------------------------------------------------------------
+python3 - "$OUT" "$IL" <<'PY'
 import json, sys, pathlib
-out = pathlib.Path(sys.argv[1])
+out, ils = pathlib.Path(sys.argv[1]), sys.argv[2].split()
 
 def canon(path):
     """peptide -> (cutoff_used, sorted accessions).
@@ -116,7 +127,7 @@ def canon(path):
             for r in data}
 
 status = 0
-for il in ("true", "false"):
+for il in ils:
     new, old = canon(out / f"branch_il{il}.json"), canon(out / f"old_il{il}.json")
     both = new.keys() & old.keys()
     differ = [p for p in both if new[p] != old[p]]
