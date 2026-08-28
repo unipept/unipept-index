@@ -76,8 +76,8 @@ pub(crate) fn read_words_into<R: BufRead>(data: &mut Vec<u64>, mut reader: R) ->
     let mut buffer = vec![0u8; READ_CHUNK_BYTES];
     loop {
         let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-        for chunk in buffer[..bytes_read].chunks_exact(8) {
-            data.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        for chunk in buffer[..bytes_read].as_chunks::<8>().0 {
+            data.push(u64::from_le_bytes(*chunk));
         }
         if finished {
             break;
