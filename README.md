@@ -1,9 +1,14 @@
 # Unipept Index
 
+![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
 ![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&logo=Codecov)
 
 The Unipept index, written entirely in `Rust`: given a peptide, find every protein that contains
 it. This repository is a Cargo workspace of several crates that depend on each other.
+
+Every performance figure below comes from one session on the full UniProt index (223 GB, 12-core
+Xeon Silver 4410Y, 295 GB RAM), run at `660befd7ee`. The harness that produced it is in
+[`sa-benchmarks/`](sa-benchmarks/README.md).
 
 ## The one thing to know first: storage is a build-time choice
 
@@ -19,8 +24,8 @@ you the preloaded backend.** Build with `--features mmap` for the memory-mapped 
 | | preloaded (default) | `--features mmap` |
 |---|---|---|
 | Where the index lives | resident in the process | a memory mapping; the kernel decides what stays resident |
-| Memory | pays the full index size in RSS | bounded, at the cost of page faults |
-| Startup | slow: everything is read up front | fast, but the first queries pay the faults unless warmed |
+| Memory | pays the full index size in RSS, none of it evictable | bounded, at the cost of page faults |
+| Startup | slow: 466 s to read the 223 GB index up front | 3 s to map it, then 316 s of optional warmup |
 | Use when | the index comfortably fits in RAM | the index is large relative to available memory |
 
 ### Mixing the two
@@ -30,32 +35,47 @@ pulls **one** of them back into owned memory:
 
 | feature | structure it un-maps |
 |---|---|
-| `preloaded-text` | the concatenated protein text (~190 MB at UniProt scale) |
-| `preloaded-proteins` | the protein metadata table (accessions + annotations) |
-| `preloaded-mapping` | the suffix-to-protein mapping |
+| `preloaded-text` | the concatenated protein text (~43 GB on the full UniProt index) |
+| `preloaded-proteins` | the protein metadata table — accessions and annotations, ~8 GB on disk and ~24 GB once resident |
+| `preloaded-mapping` | the suffix-to-protein mapping (~11 GB) |
 
 The suffix array always follows `mmap`; there is no `preloaded-sa`. A `preloaded-*` feature has no
 effect without `mmap`, since everything is preloaded already.
 
-This exists because the structures are not alike: the text is read once per character compared
-while the metadata table is the largest thing in the index and read once per reported result. So
-`--features mmap,preloaded-text` keeps the index mapped but the hottest structure resident — worth
-measuring on your own data before choosing a default.
+This exists because the structures are not alike: the text is read once per character compared,
+while the metadata table is read once per reported result and triples in size when it moves to the
+heap. So `--features mmap,preloaded-text` keeps the index mapped but the hottest structure
+resident — worth measuring on your own data before choosing a default.
 
 **If you preload anything, preload the text as well as the metadata.**
-`--features mmap,preloaded-text,preloaded-proteins` is the fastest configuration measured that
-still leaves the 160 GB suffix array mapped: on the full UniProt index it beats
-`mmap,preloaded-proteins` alone in all 16 default cells, and ties the fully preloaded build.
-Preloading only the metadata is the configuration to avoid — it carries the highest resident
-footprint of any arm (250 GB against 242 GB fully preloaded) and still leaves search mapped, which
-is where the remaining gap lives.
+`--features mmap,preloaded-text,preloaded-proteins`, and the same plus `preloaded-mapping`, are the
+two fastest configurations measured. They cannot be told apart from each other, and together they
+are ahead of every other arm by more than the noise floor in 6 of the 16 throughput cells — by 12%
+at the median. Both beat `mmap,preloaded-proteins` alone in **all 16** cells, and both match the
+fully preloaded build while leaving the 160 GB suffix array mapped, pinning roughly 78 GB of
+non-evictable memory where the fully preloaded build pins 242 GB.
+
+Preloading only the metadata is the configuration to avoid. It closes the retrieval gap and none of
+the search one, which is the larger half, and it carries the highest resident footprint of any arm
+(250 GB, against 242 GB for the fully preloaded build).
 
 **Any of them is a bet on the index fitting.** Preloaded memory is non-evictable, so under pressure
-it displaces the page cache the mapped structures live in rather than being reclaimed. Measured
-against a falling ceiling, plain `mmap` is ahead of `mmap,preloaded-proteins` at every ceiling that
-binds, and at 78 GB the preloaded arms lose almost all their throughput to the fault rate. Preload
-when residency is guaranteed; do not where the ceiling might move. The numbers are in the "When the
-index does not fit in RAM" section of `sa-index/src/lib.rs`.
+it displaces the page cache the mapped structures live in rather than being reclaimed. Swept
+against a falling cgroup ceiling, plain `mmap` is level with or ahead of every preloading arm at
+every ceiling that binds, and at 78 GB — roughly a third of the index — the preloaded arms do not
+degrade, they collapse:
+
+| ceiling | `mmap` | `mmap,preloaded-proteins` | `mmap,preloaded-text,preloaded-proteins` |
+|---|---|---|---|
+| none | 35,725 qps | 43,603 | 52,198 |
+| 167 GB (75%) | 14,748 | 13,832 | 15,161 |
+| 112 GB (50%) | 10,679 | 9,582 | 10,212 |
+| 78 GB (35%) | **7,411** | 292 | 169 |
+
+At 78 GB the preloaded-text arm takes 55x `mmap`'s major faults, and adding `preloaded-mapping` on
+top does not fit at all. Preload when residency is guaranteed; do not where the ceiling might move.
+The method, and the alternatives that were measured and rejected, are in the "When the index does
+not fit in RAM" section of `sa-index/src/lib.rs`.
 
 These nine feature combinations are the ones the server exposes; the types themselves compose into
 sixteen, and `sa-index`'s `every_backend_combination_returns_identical_results` test builds every
@@ -69,43 +89,49 @@ Storage backends: sa=mmap text=preloaded proteins=mmap mapping=mmap
 
 ## Running an mmap build when the index does not fit in RAM
 
-Two settings matter far more than the storage flags above, and neither is on by default. Measured
-on the full 223 GB index with cgroup ceilings; see the `sa-index` crate docs for the method.
+Two settings matter far more than the storage flags above, and neither is on by default.
 
 **1. Raise the thread count.** A page fault blocks the thread that takes it, so with rayon at the
 core count every faulting thread idles a core. Raising it does not reduce faults — it overlaps
-them:
+them. Measured on the `mmap` arm, with a 6-mer table attached:
 
-| RAM available | default threads | tuned | gain |
+| RAM available | default threads | tuned | change |
 |---|---|---|---|
-| more than the index | 35,710 qps | 35,046 (48 threads) | **−1.9%** |
-| 75% of the index | 15,739 qps | 26,071 (48 threads) | **+65.6%** |
-| 50% of the index | 10,561 qps | 19,654 (96 threads) | **+86.1%** |
+| more than the index | 38,081 qps | 34,264 (48 threads) | **−10.0%** |
+| 75% of the index (167 GB) | 15,518 qps | 25,734 (96 threads) | **+65.8%** |
+| 50% of the index (112 GB) | 10,503 qps | 20,473 (96 threads) | **+94.9%** |
 
 ```bash
 RAYON_NUM_THREADS=96 ./target/release/sa-server ...
 ```
 
-The gain scales with how much the index overflows RAM, and it *costs* up to 10% when everything
-fits — so set it for constrained deployments and leave it alone otherwise.
+The gain scales with how much the index overflows RAM, and it *costs* up to 12% when everything
+fits — so set it for constrained deployments and leave it alone otherwise. The preloading arms gain
+more still under a ceiling (`mmap,preloaded-text,preloaded-proteins` is +102.7% at 167 GB), but
+they are also the arms that collapse first when the ceiling keeps falling.
 
-**2. Raise the k-mer table to 6, from the default 5.** Under pressure the 6-mer is +18.4% and
-takes 27.9% fewer major faults than no table; a 5-mer is +3.2%, barely better than nothing. It
-costs 3.06 GB against 127 MB, which is why the resident-case measurement rejected it and why 5 is
-the default — this is the one regime where the 24x is worth paying.
+**2. Raise the k-mer table to 6, from the default 5.** Under a ceiling the 6-mer is +18.4% and
+takes 27.9% fewer major faults than no table; a 5-mer is +3.2%, barely better than nothing. The
+difference is working-set size rather than probe count — a 6-mer narrows the search to about one
+suffix-array page per query where a 5-mer leaves seven. It costs 3.06 GB against 127 MB, which is
+why the resident-case measurement rejected it and why 5 is the default; this is the one regime
+where the 24x is worth paying.
 
 ```bash
 ./target/release/sa-builder ... --output-kmer-table kmer-tables/6mer_table.bin --kmer-size 6
 ```
 
-With both applied, a box holding 75% of the index runs at ~74% of its unconstrained throughput
-instead of ~36%.
+With both applied, a box holding 75% of the index runs at ~68% of its unconstrained throughput
+instead of ~41%.
 
 ## Installation
 
 > [!NOTE]
-> To build and use the Unipept Index, you need to have Rust installed. If you don't have Rust
-> installed, you can get it from [rust-lang.org](https://www.rust-lang.org/).
+> Building needs Rust — get it from [rust-lang.org](https://www.rust-lang.org/) — plus `git`,
+> `cmake`, `make`, a C compiler and `libclang`. `libsais64-rs` builds the suffix-array construction
+> library from source: its build script clones
+> [`unipept/libsais-packed`](https://github.com/unipept/libsais-packed), compiles it with CMake and
+> generates bindings with `bindgen`, so the first build needs network access.
 
 ```bash
 git clone https://github.com/unipept/unipept-index.git
@@ -136,7 +162,7 @@ cargo build --release -p sa-server --features mmap,preloaded-text
 All three outputs are mandatory and all three must come from the same run — the suffix array
 indexes positions in the text stored in `proteins.bin`, and `mapping.bin` maps those same
 positions to entries in it. Mixing files from different builds produces wrong answers rather than
-errors.
+errors; `Searcher::try_new` is what refuses to start on a mismatched set.
 
 Two options worth understanding:
 
@@ -153,15 +179,20 @@ Two options worth understanding:
 
 This precomputes the suffix-array range for every k-mer, so a search starts from those bounds
 instead of binary-searching the whole array. It is an accelerator only — results are identical
-with and without it — and it helps most on short peptides.
+with and without it.
+
+It helps most on **long** peptides, which is the opposite of what the mechanism suggests: attaching
+a table is worth +14% to +29% on 35-50-residue queries and nothing that clears the noise floor on
+5-9-residue ones. A short peptide matches an enormous suffix-array range, so its cost is the scan
+over that range rather than the binary-search descent the table removes.
 
 Note it is a *dense* table: it has one entry per possible k-mer, so its size depends only on `k`
 and not on the database. That makes `k` the whole memory decision — roughly 127 MB at the default
 `--kmer-size 5` against 3.06 GB at `6`, and `7` is the maximum the builder accepts. The default is
-5 because the 6-mer's extra 2.9 GB does not pay for itself with the index resident. Pass
-`--kmer-size 6` only under a memory ceiling, where it does; see "Choosing a storage backend" above.
-The table can only be built during a full index build, since it is derived from the suffix array
-before that is written out.
+5 because the 6-mer's extra 2.9 GB does not pay for itself with the index resident: nothing
+separates the two sizes above the noise floor in any resident cell. Pass `--kmer-size 6` only under
+a memory ceiling, where it does; see "Running an mmap build" above. The table can only be built
+during a full index build, since it is derived from the suffix array before that is written out.
 
 ## Running the server
 
@@ -198,6 +229,8 @@ curl -X POST http://localhost:3000/search \
 | `tryptic` | `false` | return only matches at tryptic boundaries |
 | `cutoff` | `10000` | stop after this many matches; the response flags `cutoff_used` |
 
+The request body is capped at 5 MB, which is the only limit the server imposes.
+
 ## Testing
 
 Both backends of every structure are always compiled, so one run covers them all — the searcher's
@@ -209,7 +242,8 @@ sixteen give identical answers:
 cargo test   # everything, both backends
 ```
 
-CI additionally checks that all nine of `sa-server`'s feature combinations typecheck. Lints:
+CI additionally builds and runs `sa-server`'s tests under all nine of its feature combinations, so
+each one reports the backends it actually selected. Lints:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
@@ -218,23 +252,24 @@ cargo +nightly fmt --all --check    # nightly is required, see below
 
 `cargo fmt` **must** run on nightly: `.rustfmt.toml` enables `unstable_features` along with
 `imports_granularity`, `group_imports` and `normalize_comments`, all of which stable rustfmt
-silently ignores.
+silently ignores. The nightly is pinned in `rust-toolchain.toml`; every other CI job overrides it
+with stable, which is what the workspace ships from.
 
 ## The crates
 
 | crate | what it does |
 |---|---|
-| `sa-server` | HTTP server for testing and for serving an index directly; see the note below |
-| `sa-builder` | builds an index from a protein TSV |
-| `sa-index` | the search itself: suffix array, k-mer table, suffix→protein mapping |
-| `protein-metadata` | protein metadata — accessions, taxa, annotations |
-| `protein-text` | the concatenated protein text, packed at 5 bits per residue |
-| `bitarray` | dense arrays of fixed-width values |
-| `fa-compression` | encoding for functional annotations |
-| `binary-traits` | the read/write/load traits every on-disk structure is written and read through |
-| `memory-hints` | prefetch, transparent-huge-page and page-warmup hints to the memory subsystem |
-| `libsais64-rs` | bindings to the suffix-array construction library |
-| `sa-benchmarks` | measurement harness (see below) |
+| [`sa-server`](sa-server/README.md) | HTTP server for testing and for serving an index directly; the only place a storage feature is read |
+| [`sa-builder`](sa-builder/README.md) | builds an index from a protein TSV — the only writer in the workspace |
+| [`sa-index`](sa-index/README.md) | the search itself: suffix array, k-mer table, suffix→protein mapping |
+| [`protein-metadata`](protein-metadata/README.md) | protein metadata — accessions, taxa, annotations |
+| [`protein-text`](protein-text/README.md) | the concatenated protein text, packed at 5 bits per residue |
+| [`bitarray`](bitarray/README.md) | dense arrays of fixed-width values |
+| [`fa-compression`](fa-compression/README.md) | encoding for functional annotations |
+| [`binary-traits`](binary-traits/README.md) | the read/write/load traits every on-disk structure is written and read through |
+| [`memory-hints`](memory-hints/README.md) | prefetch, transparent-huge-page and page-warmup hints to the memory subsystem |
+| [`libsais64-rs`](libsais64-rs/README.md) | bindings to the suffix-array construction library |
+| [`sa-benchmarks`](sa-benchmarks/README.md) | measurement harness (see below) |
 
 `sa-benchmarks` is **excluded from `default-members`**, so ordinary builds skip it and its extra
 dependencies. Build it explicitly:
@@ -253,13 +288,15 @@ machine profiles — lives in `sa-benchmarks/`. See [its README](sa-benchmarks/R
 ```bash
 cp sa-benchmarks/profiles/example.toml sa-benchmarks/profiles/local.toml   # once per machine
 ./sa-benchmarks/run.sh defaults      # the regression gate — run after any change to the search path
-sudo ./sa-benchmarks/run.sh all      # every suite in one session, into one report.md
+sudo ./sa-benchmarks/run.sh all      # every suite in one session, into one report
 ```
 
-Five suites: `defaults` (throughput at production defaults), `detail` (where the time goes inside a
-search), `startup` (what each storage configuration costs before the first query), `ram` (scaling as
-the RAM ceiling falls) and `threads` (whether oversubscription pays). `ram` and `threads` need root
-for cgroup ceilings and `drop_caches`; `run.sh all` skips them without it and says so in the report.
+Six suites: `defaults` (throughput at production defaults), `kmer` (what each k-mer table buys),
+`stream` (how throughput depends on the number of peptides in one call), `startup` (what each
+storage configuration costs before the first query), `ram` (scaling as the RAM ceiling falls) and
+`threads` (whether oversubscription pays). The last three need root, for `drop_caches` and cgroup
+ceilings. `ram` and `threads` are optional and are reported as skipped without it; `startup` is
+not, so a rootless `run.sh all` aborts in the preflight rather than producing a partial report.
 
 Every run writes a self-contained `report.html` — sidebar, row filter, sortable columns — next to
 its results, plus `report.md` and, for `all`, a `report.json` a later run can use as its baseline.
@@ -273,3 +310,5 @@ never ships at all.
 
 * Crate-level `cargo doc` for `sa-index` explains the search pipeline and the feature axes in
   detail, including why the two backends exist and which decisions were measured and rejected.
+* Each crate's own README, linked in the table above, covers what that crate is for and how it
+  fits; the rustdoc under it carries the arguments.

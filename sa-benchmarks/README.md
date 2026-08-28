@@ -1,5 +1,7 @@
 # sa-benchmarks
 
+![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
+
 Everything needed to measure the suffix-array index lives in this directory: the Rust harness, the
 Python driver, the suite definitions, and the machine profiles.
 
@@ -14,15 +16,24 @@ sudo ./sa-benchmarks/run.sh all          # every suite, into one report.md
 
 ## The suites
 
+Listed in the order `all` runs them — cheapest and root-free first, so a session that is going to
+fail on privileges has already produced the throughput numbers by the time it gets there.
+
 | Suite | Answers | Needs root |
 |---|---|---|
 | `defaults` | What this version does at production defaults, across the length regimes and every storage arm, varying only `equate_il` and `tryptic`. The regression gate. | no |
 | `kmer` | What each k-mer table buys against attaching none, per length regime, with the table's resident cost beside the win. | no |
-| `startup` | What each storage arm costs before it can answer the first query, from cold. | yes |
+| `stream` | How throughput depends on the number of peptides in one call — the only suite that varies the query count, which every other one holds fixed. | no |
+| `startup` | What each storage arm costs before it can answer the first query, from cold. | yes, and **not optional** |
 | `ram` | How the storage arms scale as the RAM ceiling falls, and where they cross over. | yes |
 | `threads` | Whether thread oversubscription pays, by how much, and what it costs when RAM is ample. | yes |
-| `stream` | How throughput depends on the number of peptides in one call — the only suite that varies the query count, which every other one holds fixed. | no |
 | `all` | Every suite in one session, into one `report.md` + `report.json`. | partially — see below |
+
+The three root-requiring suites are not equivalent. `ram` and `threads` are listed as `optional` in
+`suites/all.toml`, so without root they are **skipped and reported as skipped**. `startup` is not:
+its arms share a page cache and it has to drop that cache between them, so a rootless run of it
+would measure the cache rather than the arm. A rootless `run.sh all` therefore **aborts in the
+preflight** rather than producing a partial report — run the root-free suites by name instead.
 
 Every suite is in `all`, so one session produces one report. A suite's answer only means something
 against what the same box did on the same commit at the shipped settings, and splitting a session
@@ -55,9 +66,9 @@ budget allows. One grid cannot be both, and when `defaults` tried to be, it was 
 — a 34-row matrix re-measuring the k-mer and batch questions on every commit.
 
 `run.sh all` runs each suite in order into one session directory, sharing one built binary per arm.
-Suites it cannot run on this machine are **skipped and reported as skipped**, never silently
-omitted — so a report from a laptop shows filled `defaults`/`kmer` sections and an
-explicit `not run — needs root` for `startup`, `ram` and `threads`.
+Optional suites it cannot run on this machine are **skipped and reported as skipped**, never
+silently omitted — so a rootless session that got past the preflight shows filled
+`defaults`/`kmer`/`stream` sections and an explicit `not run — needs root` for `ram` and `threads`.
 
 ## The report
 
@@ -85,23 +96,24 @@ was the one it made impossible. Knob curves facet the same way, at (regime x con
 carries more than the storage arms themselves; the old single-axes version drew twenty-four lines,
 three times what the palette can tell apart.
 
-**A plane is drawn twice.** A knob plane carries a switch choosing what a cell says. `throughput` is what the pair measured, on a ramp scaled to that plane;
-`vs shipped` is the signed difference against the shipped pair, neutral inside the noise floor. The
-second is the suites' actual finding and the first is what makes it readable: on a suite where
-nothing clears its floor — which is most of them — the diverging view is correct and is a grid of
-identical neutral cells, so it opens on throughput. Because the ramp is scaled per plane, each one
-prints its own spread beside the floor: a plane that varies by less than its noise has no shape,
-whatever the colours suggest.
+**Knob planes are still rendered, though no current suite emits one.** A two-knob plane carries a
+switch choosing what a cell says: `throughput` on a ramp scaled to that plane, or `vs shipped`, the
+signed difference against the shipped pair, neutral inside the noise floor. The second is the
+finding and the first is what makes it readable, so it opens on throughput. Because the ramp is
+scaled per plane, each one prints its own spread beside the floor: a plane that varies by less than
+its noise has no shape, whatever the colours suggest. That machinery outlived the five knob suites
+it was built for — see [Re-tuning](#re-tuning) — and is what a restored one would draw into.
 
 **Only `defaults` times the whole request.** A request has three phases — `search`,
 `retrieval`, then `response` (unpacking each hit's annotations and writing the JSON).
 Phase 3 is measured only where a sweep sets `response = true` in its `[[sweep]]` block, which is
 `defaults.toml` and nowhere else, because paying for it on every cell of every
 knob sweep would cost more than the knobs being measured. So the `time split` in the other suites
-has two segments rather than four, and every throughput number outside `defaults` describes
-search plus retrieval only. What fraction of a real request that is — 2% to 94%, depending almost
-entirely on how big the answer is — is the `what a request actually costs` section of `defaults`,
-and it is the number to read every other suite's gains through.
+has two segments rather than three, and every throughput number outside `defaults` describes
+search plus retrieval only. What fraction of a real request that is — 19% to 96% on the
+full-database run at `660befd7ee`, depending almost entirely on how big the answer is — is the
+`what a request actually costs` section of `defaults`, and it is the number to read every other
+suite's gains through.
 
 **The phase split is a share, not a duration.** Composition is a ratio, and the length regimes
 differ by two orders of magnitude in absolute time, which left the short ones a few pixels tall
@@ -477,3 +489,18 @@ invalidates every comparison — the driver warns when the load average is high)
 
 Every suite renders its own charts into `report.html`; there is nothing extra to run and no
 third-party dependency, so the driver works on a benchmark server without a virtualenv.
+
+## Where it sits
+
+Depends on `sa-index`, `sa-server` and `protein-text`, plus `clap`, `serde`, `rand`, `sysinfo` and
+`rayon`. Its storage features forward to `sa-server` and nowhere else, which is what keeps this
+crate and the loaders it calls from ever resolving to different backends. Nothing depends on it,
+and it is excluded from `default-members`, so it never ships.
+
+The Python driver has no third-party dependencies — it needs python >= 3.11 for `tomllib` and
+nothing else, so it runs on a benchmark server without a virtualenv.
+
+---
+
+Part of the [Unipept Index](../README.md) workspace · full API docs with
+`cargo doc -p sa-benchmarks --open`

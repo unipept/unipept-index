@@ -8,7 +8,7 @@
 //! Prefetching reads like an mmap concern — hiding page faults — but the two-pass loop below is
 //! just as valuable when everything is in owned RAM, and the reason is that "loaded" is not
 //! "cached". Even on the smaller ~300 M-residue index the structures this phase touches are orders
-//! of magnitude larger than any L3 (the full UniProt index multiplies each by roughly 200 — see
+//! of magnitude larger than any L3 (the full UniProt index multiplies each by roughly 250 — see
 //! the crate docs for that breakdown):
 //!
 //! * suffix-to-protein mapping: ~1.2 GB dense, a few hundred MB as a bit vector

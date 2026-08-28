@@ -31,9 +31,9 @@ use crate::{ProteinRef, ProteinsBackend, preloaded::read_metadata_section};
 /// Protein table borrowed from a memory mapping.
 ///
 /// `T` is the text backend. At [`MmapBackedProteinText`] the text borrows the text section of the
-/// very same mapping; at [`InMemoryProteinText`] it is copied into owned RAM while the much larger
-/// metadata table stays mapped. The text is the hottest structure in the index and the metadata
-/// the biggest, so that second pairing is the point of the parameter.
+/// very same mapping; at [`InMemoryProteinText`] it is copied into owned RAM while the metadata
+/// table stays mapped. The text is the hottest structure in the index and the metadata the one
+/// that costs most to preload, so that second pairing is the point of the parameter.
 pub struct MmapBackedProteins<T> {
     /// The mapping of `proteins.bin`, shared with `text` when the text is mapped too.
     pub mmap: Arc<Mmap>,
@@ -595,7 +595,8 @@ mod tests {
     /// The warm range must skip the text section exactly when the text is not in the mapping.
     ///
     /// Getting this wrong is silent: the pages fault in, nothing ever reads them again, and the
-    /// only symptoms are startup time and page-cache pressure — ~190 MB of it at UniProt scale.
+    /// only symptoms are startup time and page-cache pressure — ~190 MB of it over the
+    /// ~300 M-residue reference database, and ~43 GB at full UniProt scale.
     /// That would quietly cancel the point of holding the text in owned memory at all.
     #[test]
     fn warm_range_skips_the_text_only_when_the_text_is_owned() {

@@ -16,10 +16,12 @@
 //! | [`ActiveMapping`] | `InMemorySuffixToProteinMapping` | `MmapBackedSuffixToProteinMapping` | `mmap` and not `preloaded-mapping` |
 //!
 //! Nine configurations in all: everything preloaded, everything mapped, and the seven mixtures.
-//! The point is that the best place for one structure is not the best place for another — the text
-//! is the hottest and the metadata table the biggest — so, for instance
-//! `--features mmap,preloaded-text` keeps the multi-gigabyte index mapped while the ~190 MB text
-//! that search reads once per character compared sits in owned RAM.
+//! The point is that the best place for one structure is not the best place for another: the text
+//! is read once per character compared and is the hottest thing in the index, while the metadata
+//! table is read once per reported result and is the one that grows most when preloaded. So, for
+//! instance, `--features mmap,preloaded-text` keeps the multi-gigabyte index mapped while the text
+//! sits in owned RAM — ~190 MB over the ~300 M-residue reference database, ~43 GB over full
+//! UniProt.
 //!
 //! Two things follow that are easy to trip over:
 //!

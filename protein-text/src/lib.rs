@@ -6,8 +6,9 @@
 //! one residue per character compared. It is the hottest data structure in the index.
 //!
 //! The alphabet is 25 amino-acid letters plus the two delimiters, so a residue needs 5 bits
-//! rather than 8. At UniProt scale that is the difference between roughly 290 MB and 190 MB, and
-//! the smaller footprint is worth more than the unpacking costs.
+//! rather than 8. Over the ~300 M-residue reference database that is the difference between
+//! roughly 290 MB and 190 MB — ~43 GB packed at full UniProt scale — and the smaller footprint is
+//! worth more than the unpacking costs.
 //!
 //! # Two backends
 //!
@@ -20,8 +21,9 @@
 //!   decides what stays resident.
 //!
 //! Storing this structure differently from the rest of the index is worth a knob of its own
-//! (`sa-server`'s `preloaded-text`): the text is the hottest structure in the index while the
-//! protein metadata sharing its file is the biggest.
+//! (`sa-server`'s `preloaded-text`): the text is the hottest structure in the index, while the
+//! protein metadata sharing its file is the one that grows most when preloaded — roughly tripling,
+//! since it becomes owned strings rather than bytes in a file.
 //!
 //! `preloaded` owns the `WriteBinary` implementation that produces the file both backends read,
 //! which is why `sa-builder` needs only that half.
