@@ -9,9 +9,10 @@
 //! five storage arms, measured 3.9% noise floor) could not distinguish three of them from noise
 //! anywhere it looked:
 //!
-//! * `validate_batch`, swept 16..256 over 40 contexts — **0 of 40** cleared their own floor. Best
-//!   values topped out at +2.6% against floors of ±5.4% to ±15.2%, and on 8 contexts the shipped
-//!   64 was itself the peak.
+//! * `validate_batch`, swept 16..256 over 40 contexts — **0 of 40** cleared their own floor. The
+//!   largest gain any value showed was +5.6%, against that context's own floor of ±11.2%; the
+//!   floors across the 40 ran ±3.9% to ±19.0%, and on 14 of them the shipped 64 was itself the
+//!   peak.
 //! * `prefetch_threshold` × `retrieval_prefetch_distance`, swept as a full 4×4 cross on five arms
 //!   — **0 of 80 pairs** cleared their own floor, and the best pair differed on every arm
 //!   (64/32, 32/8, 64/16, 32/32, 8/16), which is what noise looks like rather than a plateau.

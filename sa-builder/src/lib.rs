@@ -110,7 +110,7 @@ pub enum SAConstructionAlgorithm {
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SuffixToProteinMappingStyle {
     /// One `u32` per text position: a single load per lookup, at 4 bytes per residue — ~1.2 GB
-    /// over the ~300 M-residue reference text, and ~256 GB at full UniProt scale, which exceeds
+    /// over the ~300 M-residue reference text, and ~300 GB at full UniProt scale, which exceeds
     /// the whole rest of the index. For small databases only.
     Dense,
     /// The start position of each protein, binary-searched. Smallest, at O(log m) dependent

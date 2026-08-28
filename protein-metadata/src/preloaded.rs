@@ -258,10 +258,22 @@ fn check_entry_lengths(proteins: &[Protein]) -> Result<(), String> {
 /// fails the build loudly instead and leaves no partial file behind.
 ///
 /// For scale: measured over a 573,911-protein UniProt release, accessions run 6.04 bytes and
-/// encoded annotations 41.58 bytes per protein. The accession blob therefore has room for ~711M
-/// proteins; the annotation blob for ~103M. Raising the annotation ceiling means widening the
-/// offsets to `u64` and rebuilding every index, so it is deliberately not done pre-emptively —
-/// the check exists so that the need announces itself.
+/// encoded annotations 41.58 bytes per protein, which puts the accession blob's capacity at ~711M
+/// proteins and the annotation blob's at ~103M.
+///
+/// **Treat those two figures as an order of magnitude, not a budget.** They come from a sample
+/// two to three orders of magnitude smaller than the release the index is actually built over —
+/// the full UniProt index the benchmarks run against carries a metadata section of ~8.3 GB, of
+/// which this 4 GiB ceiling is already at most half — and the annotation length per protein is
+/// exactly the quantity that does not transfer between a curated subset and a whole release.
+///
+/// The real headroom is three `u64`s into any built `proteins.bin`: `protein_count`,
+/// `uid_bytes_total` and `fa_bytes_total` sit immediately after the text section, in that order.
+/// Read them off the index in hand rather than scaling the numbers above.
+///
+/// Raising the annotation ceiling means widening the offsets to `u64` and rebuilding every index,
+/// so it is deliberately not done pre-emptively — the check exists so that the need announces
+/// itself.
 impl<T: WriteBinary> WriteBinary for InMemoryProteins<T> {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         let protein_count = self.proteins.len() as u64;

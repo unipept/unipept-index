@@ -72,6 +72,10 @@ degrade, they collapse:
 | 112 GB (50%) | 10,679 | 9,582 | 10,212 |
 | 78 GB (35%) | **7,411** | 292 | 169 |
 
+The unconstrained `mmap` figure here (35,725 qps) and the one in the thread-count table below
+(38,081) are the same build measured by two different suites in the same session. The 6.6% between
+them is inside both cells' resolution floors — compare within a table, not across.
+
 At 78 GB the preloaded-text arm takes 55x `mmap`'s major faults, and adding `preloaded-mapping` on
 top does not fit at all. Preload when residency is guaranteed; do not where the ceiling might move.
 The method, and the alternatives that were measured and rejected, are in the "When the index does

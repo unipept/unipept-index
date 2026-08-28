@@ -11,7 +11,7 @@
 //! of magnitude larger than any L3 (the full UniProt index multiplies each by roughly 250 — see
 //! the crate docs for that breakdown):
 //!
-//! * suffix-to-protein mapping: ~1.2 GB dense, a few hundred MB as a bit vector
+//! * suffix-to-protein mapping: ~1.2 GB dense, ~50 MB as a bit vector (~1.25 bits per position)
 //! * protein metadata table: gigabytes
 //! * protein text: ~190 MB packed at 5 bits per residue
 //!

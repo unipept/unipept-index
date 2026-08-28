@@ -169,6 +169,11 @@
 //! | 112 GB | 10,679 | 9,582 | 10,212 | 10,425 | did not fit |
 //! | 78 GB | **7,411** | 292 | 169 | did not fit | did not fit |
 //!
+//! The unconstrained `mmap` figure here (35,725) and the one in the thread table above (38,081)
+//! are the same configuration measured by two different suites in the same session. They differ by
+//! 6.6%, which is inside both cells' own resolution floors; neither suite can tell them apart, and
+//! nothing should be read into the gap. Compare within a table, never across.
+//!
 //! There is no crossover to find above 78 GB: from the first ceiling that binds, no preloading arm
 //! is ahead of plain `mmap` by more than the floor, and `preloaded-proteins` is behind it at every
 //! one. At 78 GB — roughly a third of the index — the preloaded arms do not degrade, they

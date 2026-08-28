@@ -51,13 +51,22 @@ structure is worth. `ptext` and `pmap` tie at the top and `pprot` is a stopping 
 not a deployment target — it closes the retrieval gap and none of the search one.
 
 `tryptic` is swept in every suite; `equate_il` only in `defaults`. Both are what the caller asked
-for rather than tuning, but only one of them changes the WORK: instrumented runs (since removed,
-along with the `measure` feature that produced them) showed tryptic examining 9x fewer candidates,
-accepting ~2% of them against ~11%, and inverting the binary-search/range-scan split, while
-equate_il moved none of the three. So a knob's answer has to
-hold across tryptic before it is an answer about the default, and `defaults` is where the
-caller-visible cost of equate_il is priced. Crossing it everywhere cost 45% of the sweep and changed
-a resolved verdict in 2 of 23 contexts.
+for rather than tuning, and both change the work — but not in the same way, which is what decides
+where each is swept. From the instrumented cells of `defaults` at 660befd7ee:
+
+* **`tryptic` changes the SHAPE of a request.** Acceptance collapses from 6-92% of the candidates
+  examined to 0.1-0.8%, so retrieval all but disappears and a request becomes almost pure search.
+  It does *not* reduce the candidates examined — those are level on `mixed` and `small`, and 1.7x
+  and 7x **higher** on `large` and `medium`, because almost nothing is accepted and the cutoff
+  never stops the scan early.
+* **`equate_il` changes the VOLUME.** It cuts candidates examined roughly 2-3x (191M to 81M on
+  `small`, 1.35M to 0.44M on `large`) while leaving acceptance where it was, so the phase mix a
+  knob is measured against barely moves.
+
+A knob's answer therefore has to hold across tryptic before it is an answer about the default,
+which is why every suite crosses it; `defaults` is where the caller-visible cost of `equate_il` is
+priced instead. Crossing `equate_il` everywhere cost 45% of the sweep and changed a resolved
+verdict in 2 of 23 contexts.
 
 `defaults` answers one question at high precision; `kmer` and `stream` each answer one more, at
 whatever precision fits. That split is deliberate: a regression gate wants few cells resolved

@@ -2,7 +2,7 @@
 //!
 //! The sibling hint to [`prefetch`](crate::prefetch), against the same problem: where that one
 //! hides the latency of a single load, this one cuts how many page-walks the walk costs at all. A
-//! 149 GB suffix array needs ~36 M page-table entries at 4 KB granularity and ~72 K at 2 MB, and
+//! 160 GB suffix array needs ~42 M page-table entries at 4 KB granularity and ~82 K at 2 MB, and
 //! the accesses are random, so the TLB miss rate is the difference between the two.
 //!
 //! WHEN the advice is issued decides whether it does anything at all, so `bitarray`'s two

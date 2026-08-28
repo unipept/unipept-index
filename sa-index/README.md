@@ -27,8 +27,8 @@ rather than proxying [`sa-server`](../sa-server/README.md).
 `suffix_to_protein_index` is chosen at build time (`sa-builder --mapping-style`) and recorded in the
 file: **BitVec** (a bit per position plus rank; near-dense speed at ~1.25 bits per position, and the
 default), **Sparse** (protein starts, binary-searched; smallest, O(log m) dependent loads) or
-**Dense** (one `u32` per position; one load per lookup, but 4 bytes per residue — ~256 GB at
-full-UniProt scale, so small databases only).
+**Dense** (one `u32` per position; one load per lookup, but 4 bytes per residue — ~300 GB at
+full-UniProt scale, larger than the suffix array itself, so small databases only).
 
 ## Storage: two backends per structure, and no opinion about which
 

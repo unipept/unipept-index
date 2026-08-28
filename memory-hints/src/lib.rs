@@ -1,7 +1,7 @@
 //! Best-effort hints to the memory subsystem.
 //!
 //! The index is far larger than any cache and larger than the TLB can map at 4 KB granularity — a
-//! full UniProt suffix array runs to ~149 GB out of 223 GB total; see the crate docs of `sa-index`
+//! full UniProt suffix array runs to ~160 GB out of 223 GB total; see the crate docs of `sa-index`
 //! for the breakdown — so both backends spend most of their time waiting on memory. The two hints
 //! here attack that from opposite ends:
 //!
