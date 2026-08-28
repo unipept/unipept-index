@@ -60,7 +60,7 @@ pub fn decode(input: &[u8], compression_table: CompressionTable) -> String {
     }
 
     let mut result = String::with_capacity(input.len() / 3 * 15);
-    for bytes in input.chunks_exact(3) {
+    for bytes in input.as_chunks::<3>().0 {
         // Convert the first 3 bytes to a u32 and use it as an index in the compression table
         let index = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]) as usize;
         result.push_str(&compression_table[index].annotation);
