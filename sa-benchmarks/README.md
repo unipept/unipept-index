@@ -54,18 +54,33 @@ done by deletion where possible, so anything not listed here is byte-identical t
 | `frame_chunks` / `json_chunk`, borrowed `ProteinInfo` | nothing; owned `ProteinInfo` | reimplemented with identical framing |
 | `touch_all_pages` via `memory_hints` | nothing, and private mmap handles | accessor-driven sweep — see below |
 
-### The page sweep is the one caveat
+### The page sweep
 
 The branch walks the raw `Mmap` one byte per page under `MADV_SEQUENTIAL`. Neither `memory-hints`
-nor access to the mmap handles exists here, so the port sweeps through the public accessors instead
-— one `get` per page-worth of entries. It faults in the same pages and populates the same PTEs, so
-**the warmup does its job and `baseline` is unaffected**. But:
+nor access to the mmap handles exists here, so the port sweeps through the public accessors instead.
+It faults in the same pages and populates the same PTEs, and it is **verified to cover the same
+bytes**: 0.34 / 0.16 / 0.02 GiB for sa / proteins / mapping against on-disk 0.340 / 0.156 / 0.030.
 
-* **`GB swept` is comparable** with the branch's (computed analytically from the same entry counts).
-* **`GB/s` is NOT.** An accessor call per page is far more work than a byte load per page, and there
-  is no `MADV_SEQUENTIAL`. Read this commit's sweep rate against its own other arm, never against
-  the branch's. What the column exists for — telling a cold sweep from one handed a warm page cache
-  — still works within a commit.
+Getting that coverage right took a correction worth recording, because the failure was silent.
+`proteins.bin` is ONE mapped file holding four regions — the 5-bit text, a 16-byte-per-protein fixed
+table, the accession blob and the annotation blob — and the first version of this sweep strided over
+proteins at 256 per page. That is wrong twice over for the blobs, which are VARIABLE length: a
+stride over proteins is a stride of unknown byte distance, and at ~30 bytes of annotation per
+protein a 256-protein step is ~7.7 KB, so it skipped pages. Worse, `Proteins::get` never
+dereferences the annotations at all — it only slices them (the accessions it does read, because it
+builds them through `str::from_utf8`, which scans to validate).
+
+So the annotation blob was left entirely cold, which biased the **response** phase specifically —
+that being the phase which decodes annotations, and one `baseline` measures. It now walks every
+protein and touches a byte of each blob. That costs one 16-byte read and two slice constructions per
+protein: 21 ms for the whole local proteins region, so a few seconds at full-database scale, against
+a sweep faulting in ~200 GiB.
+
+**Rates are comparable, when both sides are equally warm.** Measured warm-against-warm: this commit
+17.9-22.6 GB/s, the branch 19.5-20.3. The accessor path costs more CPU per page but not enough to
+show against memory bandwidth. As always with this column, compare a cold sweep only with a cold
+one — an arm handed a page cache the previous arm filled reads an order of magnitude faster, which
+is exactly what the column is there to reveal.
 
 The preloaded arm sweeps nothing and reports zero, exactly as the branch's does.
 

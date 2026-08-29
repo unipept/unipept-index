@@ -1284,6 +1284,9 @@ struct SweepStat {
 const PAGE: usize = 4096;
 
 /// Entries of `bits` bits that fit in one page. At least one, so a stride is never zero.
+///
+/// Only valid for FIXED-width regions. The variable-length blobs in `proteins.bin` are walked
+/// entry by entry instead — see `warmup_touch_pages`.
 fn stride_for(bits: usize) -> usize {
     (PAGE * 8 / bits.max(1)).max(1)
 }
@@ -1330,21 +1333,44 @@ fn warmup_touch_pages(searcher: &ActiveSearcher) -> (SweepStat, SweepStat, Sweep
         });
         scope.spawn(|_| {
             let start = Instant::now();
-            // The protein TEXT (5 bits per residue) and the metadata table, which are one mapped
-            // file here and are reported together as the branch reports them together.
+            // `proteins.bin` is ONE mapped file holding four regions, and the branch sweeps all of
+            // it, so all of it has to be swept here or the arms are not warmed alike:
+            //
+            //   text          the 5-bit packed residues
+            //   fixed table   16 bytes per protein: taxon, and the offset/length of each blob below
+            //   uid blob      the accession strings
+            //   fa blob       the encoded functional annotations
+            //
+            // The text is strided one page at a time. The other three cannot be, because the blobs
+            // are VARIABLE length: a stride over proteins is a stride of unknown byte distance, and
+            // at ~30 bytes of annotation per protein a 256-protein step is ~7.7 KB, which skips
+            // pages. So this walks every protein instead. It costs one cheap iteration per protein
+            // — a 16-byte read and two slice constructions — against a sweep that is faulting in
+            // tens of gigabytes, and it makes the coverage exact rather than estimated.
+            //
+            // `get` already dereferences the uid blob for us: it builds the accession through
+            // `str::from_utf8`, which scans the bytes to validate them. The annotations are only
+            // sliced, never read, which is why the explicit touch below is needed — and why leaving
+            // it out biased the RESPONSE phase specifically, that being the phase which decodes
+            // them.
             let text = searcher.proteins.text();
             for index in (0..text.len()).step_by(stride_for(5)) {
                 std::hint::black_box(text.get(index));
             }
-            let mut metadata_bytes = 0u64;
-            for index in (0..searcher.proteins.len()).step_by(stride_for(16 * 8)) {
+
+            let mut blob_bytes = 0u64;
+            for index in 0..searcher.proteins.len() {
                 let protein = searcher.proteins.get(index);
                 std::hint::black_box(protein.taxon_id);
-                metadata_bytes += 1;
+                std::hint::black_box(protein.uniprot_id.len());
+                if let Some(first) = protein.functional_annotations.first() {
+                    std::hint::black_box(*first);
+                }
+                blob_bytes += protein.uniprot_id.len() as u64 + protein.functional_annotations.len() as u64;
             }
-            let _ = metadata_bytes;
+
             proteins = SweepStat {
-                bytes: (text.len() as u64 * 5).div_ceil(8) + searcher.proteins.len() as u64 * 16,
+                bytes: (text.len() as u64 * 5).div_ceil(8) + searcher.proteins.len() as u64 * 16 + blob_bytes,
                 ms: start.elapsed().as_millis() as u64
             };
         });
