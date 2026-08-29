@@ -32,7 +32,12 @@ was built from:
                   prebuilt 167 MB `proteins.bin`.
   * `mapping`   — fbc9328 BUILDS the suffix-to-protein mapping from the text. The branch READS a
                   prebuilt 33 MB `mapping.bin`.
-  * `sa`        — the same file, read the same way, in both. This phase IS directly comparable.
+  * `sa`        — the same file, read the same way, in all three. This phase IS directly comparable.
+
+c4f0f30 has BOTH prebuilt files, so its two rows are directly comparable with this commit's on every
+phase — that step is where the TSV parse disappears. Its sweep `GB/s` is not comparable, though: the
+page sweep there goes through public accessors rather than the raw mmap, so it is far slower per
+byte. `GB swept` is comparable; the rate is only comparable between the two c4f0f30 arms.
 
 So the fbc9328 row's phases say WHERE its startup went, not how fast it read the same thing. That is
 not a flaw in the measurement — prebuilding those two files is exactly what the branch did, and this
@@ -64,11 +69,23 @@ peptides = "mixed"
 kmer = 0
 warmup = "all"
 
-# The baseline. Its binary is staged into `<session>/bin/fbc9328` before the run — it cannot be
-# built from this tree. See `baseline.toml` and the worktree's README for why and how.
+# The two older commits. Their binaries are STAGED into `<session>/bin` before the run — neither can
+# be built from this tree. See `baseline.toml` and each worktree's README.
+#
+# `sequential` ordering here, so every label is `<arm>__a` and ADDING an arm later is purely
+# additive: the existing cells are skipped and only the new ones run. (`baseline` is palindrome and
+# does NOT resume that way — its slot letters are positional.)
 [[arms]]
 name = "fbc9328"
 features = []
+
+[[arms]]
+name = "c4f0f30-preloaded"
+features = []
+
+[[arms]]
+name = "c4f0f30-mmap"
+features = ["mmap"]
 
 # The like-for-like arm from this commit: everything in owned memory, as fbc9328 is.
 [[arms]]
