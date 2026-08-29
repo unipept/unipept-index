@@ -38,9 +38,10 @@ storage selection, and the tuning constants. Not the k-mer table, held out at 0 
 NOT COMPARABLE, and recorded anyway:
   * fbc9328's `load_proteins_ms` / `load_mapping_ms` — a TSV parse and a mapping build, where both
     later commits read prebuilt files. See `baseline_startup`, and read its `total` column.
-  * c4f0f30's sweep `GB/s` — its page sweep goes through public accessors rather than the raw mmap
-    (neither `memory-hints` nor the mmap handles exist at that commit), so it is far slower per byte.
-    `GB swept` IS comparable; the rate is only comparable between the two c4f0f30 arms.
+  * nothing else, as far as this has been able to establish. c4f0f30's page sweep goes through
+    public accessors rather than the raw mmap (neither `memory-hints` nor the mmap handles exist at
+    that commit), but it is verified to cover the same bytes and, warm against warm, to run at the
+    same rate. Read sweep `GB/s` cold-against-cold as always.
 
 Both older trees were checked for answer equivalence against this one before these numbers were
 taken — identical over 2,000 peptides. Re-run those gates before trusting any re-run of this suite.
