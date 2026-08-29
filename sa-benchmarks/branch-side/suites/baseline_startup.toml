@@ -1,0 +1,97 @@
+description = "What each configuration costs before its first query — this commit against fbc9328"
+
+# UNTRACKED, the companion to `baseline.toml`. That one measures steady-state throughput; this one
+# measures what is paid to reach it. Same three arms, same `kmer = 0`, same staged fbc9328 binary.
+#
+# Separate suite rather than a block in `baseline.toml` because startup is `mode = "single"` — load
+# time is a property of an invocation, not of a rep, so every configuration is loaded once against a
+# trivial query workload and the numbers come from the harness's `startup` section. A suite has one
+# mode, so this cannot live in the matrix suite.
+mode = "single"
+ordering = "sequential"
+# Both on, and not optional — see the note below on the page cache. Inherited verbatim from
+# `startup.toml`, and for the same reason: without a drop between arms the first arm's RSS evicts
+# the cache it filled and the arms measure their position in the sweep instead of themselves.
+needs_root = true
+drop_caches = true
+
+notes = """
+READ `total` FIRST, AND READ THE PHASE SPLIT SECOND AND CAREFULLY. The two say different things
+here, and only one of them is a like-for-like comparison.
+
+`total` IS comparable, and it is the headline: how long from process start to the first answerable
+query, on a cold page cache. That is a real operational number for both trees and they can be put
+side by side without qualification.
+
+THE PHASE SPLIT IS NOT LIKE-FOR-LIKE FOR THE fbc9328 ROW. The branch introduced `proteins.bin` and
+`mapping.bin`; fbc9328 has neither and reconstructs both at startup from the database TSV the index
+was built from:
+
+  * `proteins`  — fbc9328 PARSES a ~293 MB TSV: it uppercases and concatenates every sequence,
+                  fa-compresses every annotation and bit-packs the text. The branch READS a
+                  prebuilt 167 MB `proteins.bin`.
+  * `mapping`   — fbc9328 BUILDS the suffix-to-protein mapping from the text. The branch READS a
+                  prebuilt 33 MB `mapping.bin`.
+  * `sa`        — the same file, read the same way, in all three. This phase IS directly comparable.
+
+c4f0f30 has BOTH prebuilt files, so its two rows are directly comparable with this commit's on every
+phase — that step is where the TSV parse disappears. Its sweep `GB/s` is not comparable, though: the
+page sweep there goes through public accessors rather than the raw mmap, so it is far slower per
+byte. `GB swept` is comparable; the rate is only comparable between the two c4f0f30 arms.
+
+So the fbc9328 row's phases say WHERE its startup went, not how fast it read the same thing. That is
+not a flaw in the measurement — prebuilding those two files is exactly what the branch did, and this
+suite is where that shows up. It is the reason to read `total` first.
+
+Note the disk footprint moves with it: fbc9328 needs `proteins.tsv` (293 MB) at runtime, the branch
+needs `proteins.bin` + `mapping.bin` (200 MB) and does not read the TSV at all.
+
+WARMUP. fbc9328 has nothing mapped, so its page-touch sweep touches nothing and its `GB swept` is 0
+— the same "nothing mapped" the branch's `preloaded` arm reports, for the same reason. Its warmup
+column is comparable with `preloaded` and NOT with the mapped arms. Read `GB/s`, not `warmup` alone:
+two arms sweeping the same structure do the same work, and if one is an order of magnitude faster
+per byte it was handed a warm cache and the pair is void.
+
+PAGE CACHE. The cache is dropped before every configuration, so these are cold-boot numbers — "how
+long does the first start after a deploy take". A restart on a warm box is much faster and is not
+what this measures.
+
+THE K-MER TABLE IS HELD OUT at 0, as in `baseline` and for the same reason: it arrived with the
+branch, so fbc9328 has no row that can sit opposite a `kmer = 5` one. The `kmer` phase is therefore
+0 in every row here. The branch's own `startup` suite runs at the shipped 5-mer table and is where
+that cost is measured.
+"""
+
+[defaults]
+runs = 1
+amount = 100
+peptides = "mixed"
+kmer = 0
+warmup = "all"
+
+# The two older commits. Their binaries are STAGED into `<session>/bin` before the run — neither can
+# be built from this tree. See `baseline.toml` and each worktree's README.
+#
+# `sequential` ordering here, so every label is `<arm>__a` and ADDING an arm later is purely
+# additive: the existing cells are skipped and only the new ones run. (`baseline` is palindrome and
+# does NOT resume that way — its slot letters are positional.)
+[[arms]]
+name = "fbc9328"
+features = []
+
+[[arms]]
+name = "c4f0f30-preloaded"
+features = []
+
+[[arms]]
+name = "c4f0f30-mmap"
+features = ["mmap"]
+
+# The like-for-like arm from this commit: everything in owned memory, as fbc9328 is.
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]

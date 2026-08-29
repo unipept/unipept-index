@@ -1,0 +1,30 @@
+[package]
+name = "sa-benchmarks"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sa-benchmarks"
+path = "src/main.rs"
+
+# At this commit the mmap/preloaded choice is a RUNTIME bool (`sa_server::load_*_file(path, mmap)`),
+# not a compile-time feature, and it is one flag covering all three structures — there is no
+# per-structure selection to make. The feature below exists anyway, and only sets that bool, for two
+# reasons: the driver selects arms by cargo feature, and its distinctness check requires the two
+# arms to be different binaries. Folding the runtime flag into a `cfg!` gives it that without
+# changing which of the two configurations is measured.
+[features]
+default = []
+mmap = []
+
+[dependencies]
+sa-index         = { path = "../sa-index" }
+sa-server        = { path = "../sa-server" }
+sa-mappings      = { path = "../sa-mappings" }
+text-compression = { path = "../text-compression" }
+clap       = { version = "4.5", features = ["derive"] }
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rand       = "0.8"
+sysinfo    = "0.30"
+rayon      = "1.8"

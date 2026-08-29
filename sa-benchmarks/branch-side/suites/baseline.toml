@@ -1,0 +1,110 @@
+description = "The optimisation progression: fbc9328 -> c4f0f30 -> this commit, at production defaults with the k-mer table held out"
+
+# UNTRACKED in the branch checkout, installed by `branch-side/install.sh`. It is the branch's
+# `defaults` suite with one axis moved — `kmer = [0]` instead of `[5]` — plus the arms from two
+# earlier commits, whose binaries are STAGED into `<session>/bin` because they cannot be built from
+# the branch tree.
+#
+# Why the k-mer table is held out: it arrived WITH the branch, so neither older commit has a cell
+# that can sit opposite a `kmer = 5` one. Comparing across it would fold "the branch added a bound
+# table" into every other number the branch changed. Run `run.sh kmer` for what the table buys.
+mode = "matrix"
+ordering = "palindrome"
+
+notes = """
+Three commits, one table, one interleaved session:
+
+  fbc9328            the pre-mmap baseline. One configuration — everything in owned memory, the
+                     protein store and mapping rebuilt from the TSV at startup.
+  c4f0f30            the INITIAL, pre-optimisation mmap/preloaded split, 32 commits later. Two
+                     configurations, chosen by one runtime bool covering all three structures.
+  preloaded / mmap   this commit, 174 further on.
+
+WHICH COLUMNS TO COMPARE. Storage residency is the axis, so compare like with like:
+
+  fbc9328  ->  c4f0f30-preloaded  ->  preloaded      all three fully resident
+               c4f0f30-mmap       ->  mmap           both fully mapped
+
+`c4f0f30-mmap` vs `preloaded` answers two questions at once and is not the comparison to quote.
+There is no c4f0f30 counterpart to `pprot` / `ptext` / `pmap`: mixing per structure is itself
+something the branch added, so those arms measure a capability the older commits do not have.
+
+WHAT THE fbc9328 -> c4f0f30 STEP CONTAINS: the mmap/preloaded split itself, plus the prebuilt
+`proteins.bin` and `mapping.bin` that replaced parsing the TSV at startup. WHAT c4f0f30 -> HEAD
+CONTAINS: the optimisation work — batched search and its MLP interleaving, the borrowed
+`ProteinInfo` and per-peptide JSON serialisation, retrieval and suffix-to-protein work, per-structure
+storage selection, and the tuning constants. Not the k-mer table, held out at 0 everywhere here.
+
+NOT COMPARABLE, and recorded anyway:
+  * fbc9328's `load_proteins_ms` / `load_mapping_ms` — a TSV parse and a mapping build, where both
+    later commits read prebuilt files. See `baseline_startup`, and read its `total` column.
+  * c4f0f30's sweep `GB/s` — its page sweep goes through public accessors rather than the raw mmap
+    (neither `memory-hints` nor the mmap handles exist at that commit), so it is far slower per byte.
+    `GB swept` IS comparable; the rate is only comparable between the two c4f0f30 arms.
+
+Both older trees were checked for answer equivalence against this one before these numbers were
+taken — identical over 2,000 peptides. Re-run those gates before trusting any re-run of this suite.
+"""
+
+[defaults]
+runs = 100
+amount = 10000
+max_matches = 10000
+warmup = "all:200000"
+files = ["mixed", "small", "medium", "large"]
+
+[[sweep]]
+name = "baseline"
+# On, because the response phase is one of the places the branch changed most: both older commits
+# clone the accession and decode the annotations into an owned String per hit, where this one
+# borrows both and streams the decode into the serialiser. Throughput alone would not show it.
+response = true
+arms = ["fbc9328", "c4f0f30-preloaded", "c4f0f30-mmap", "preloaded", "mmap"]
+kmer = [0]
+equate_il = [true, false]
+tryptic = [true, false]
+
+# ORDER MATTERS. Palindrome ordering straddles the FIRST arm's two invocations across the whole
+# suite while the last arm's are adjacent, so the first arm carries the widest between-invocation
+# spread — and `floor_of` takes the widest across a comparison, so that arm governs. Declare the arm
+# whose stability is least established first. That is the oldest one.
+#
+# `features = []` on the staged arms is honest rather than a placeholder: fbc9328 has one build, and
+# c4f0f30's two are selected by a feature that only sets a runtime bool. The staged binaries are what
+# keep them distinct from each other and from `preloaded`.
+[[arms]]
+name = "fbc9328"
+features = []
+
+[[arms]]
+name = "c4f0f30-preloaded"
+features = []
+
+[[arms]]
+name = "c4f0f30-mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+# The per-structure arms this commit added. Uncomment to include them — but note the cost: each arm
+# is another 16 cells x 100 reps x 2 slots, and they have no counterpart in either older commit, so
+# they widen the report without deepening the progression this suite is about. `run.sh defaults` on
+# the branch already measures them at the shipped 5-mer table.
+#
+# [[arms]]
+# name = "pprot"
+# features = ["mmap", "preloaded-proteins"]
+#
+# [[arms]]
+# name = "ptext"
+# features = ["mmap", "preloaded-text", "preloaded-proteins"]
+#
+# [[arms]]
+# name = "pmap"
+# features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

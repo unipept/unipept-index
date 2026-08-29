@@ -6,6 +6,7 @@ members = [ "bitarray",
     "libsais64-rs",
     "sa-builder",
     "sa-index",
+    "sa-benchmarks",
     "sa-mappings",
     "sa-server"
 ]
