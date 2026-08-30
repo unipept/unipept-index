@@ -523,8 +523,8 @@ mod size_limit_tests {
 mod tests {
 
     /// Writes a TSV with the given rows into a fresh temp dir and returns its path.
-    fn tsv_with(rows: &[&str]) -> (tempdir::TempDir, String) {
-        let dir = tempdir::TempDir::new("tsv_errors").unwrap();
+    fn tsv_with(rows: &[&str]) -> (tempfile::TempDir, String) {
+        let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("proteins.tsv");
         std::fs::write(&path, format!("{}\n", rows.join("\n"))).unwrap();
         let as_string = path.to_str().unwrap().to_string();
@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(loaded.proteins[1].taxon_id, 562);
     }
 
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     use super::*;
     use crate::test_utils::{TEST_PROTEINS, write_database_file};
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_get_taxon() {
-        let tmp_dir = TempDir::new("test_get_taxon").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let proteins =
             InMemoryProteins::load_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
         for (i, &taxon) in [1u32, 2, 6, 17].iter().enumerate() {
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_get_functional_annotations() {
-        let tmp_dir = TempDir::new("test_get_fa").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let proteins =
             InMemoryProteins::load_from_tsv(write_database_file(&tmp_dir, &TEST_PROTEINS).to_str().unwrap()).unwrap();
         for i in 0..proteins.len() {
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn test_write_and_read_binary_buffered() {
         use std::io::BufReader;
-        let tmp_dir = TempDir::new("test_binary_roundtrip").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let db = write_database_file(&tmp_dir, &TEST_PROTEINS);
         let original = InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap();
         let original_save = InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap();

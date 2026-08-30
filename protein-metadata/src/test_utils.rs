@@ -6,7 +6,7 @@
 
 use std::{fs::File, io::Write, path::PathBuf};
 
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 /// `(uniprot_id, taxon_id, sequence, annotations)`, in the order they appear in the file.
 pub(crate) const TEST_PROTEINS: [(&str, u32, &str, &str); 4] = [
