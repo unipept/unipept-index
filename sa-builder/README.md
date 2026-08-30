@@ -1,7 +1,6 @@
 # sa-builder
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=sa-builder&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 Builds the on-disk index that [`sa-server`](../sa-server/README.md) reads: the suffix array, the
 protein store, the suffix-to-protein mapping and an optional k-mer bounds table.

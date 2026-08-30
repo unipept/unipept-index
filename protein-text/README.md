@@ -1,7 +1,6 @@
 # protein-text
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=protein-text&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 The concatenated protein text, packed at 5 bits per residue. Every protein sequence in the database
 is joined into one text, separated by `-` and terminated by `$`. The suffix array indexes positions

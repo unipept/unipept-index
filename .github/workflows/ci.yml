@@ -1,0 +1,205 @@
+# Everything that gates a change, in one workflow.
+#
+# This was two files (lint.yml and test.yml) with identical triggers, runner, toolchain override
+# and cache setup. One workflow keeps those in sync by construction and gives branch protection a
+# single coherent set of required checks to name.
+#
+# Toolchains: every job here runs on stable via `RUSTUP_TOOLCHAIN`, which takes precedence over
+# rust-toolchain.toml. The workspace ships from stable, so that is what has to compile. The one
+# exception is `fmt`, which needs the pinned nightly and gets it by *not* setting that variable —
+# see the comment on that job.
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+# Previously `on: push` with no filter, which ran the whole of CI on every branch pushed to the
+# remote — including throwaway worktree and baseline branches, two of which sat permanently red.
+# Work now gets its CI through the pull request instead, which also means a fork's PR is tested;
+# under `push` alone it never was.
+
+# A force-push replaces its predecessor rather than racing it. Not on develop: runs there are the
+# record of what the branch did, and cancelling one leaves a commit with no verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # One cell, because the libraries no longer have a storage feature to vary. Both backends of
+    # every structure are always compiled, and the searcher's fixtures load each combination by
+    # naming its types, so a single `cargo test` exercises all of them — see
+    # `sa-index/src/sa_searcher/test_utils.rs`. What the features still choose is which combination
+    # the *binaries* are built for; that is covered by the `server-backends` job below.
+    name: Check + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Deliberately no `--workspace`: that would override the root `default-members`
+      # and drag `sa-benchmarks` (a heavy, long-running bench harness) into every CI run.
+      #
+      # `--all-targets` is not redundant with the `cargo test` below: it is the only thing that
+      # compiles `fa-compression`'s criterion bench, which `cargo test` does not build.
+      - name: Run cargo check
+        run: cargo check --all-targets
+
+      - name: Run cargo test
+        run: cargo test
+
+  release-build:
+    # `cargo check` proves the workspace typechecks; it does not prove it links, and it never
+    # exercises the release profile. Until this job existed the only release build in CI was the
+    # monthly index build, so a release-only failure had a month to hide.
+    name: Release build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release
+
+  server-backends:
+    # `sa-server` is where the storage features now live, and all they do is pick which concrete
+    # type each `Active*` alias names (see `sa-server/src/backends.rs`). Nine resolutions; every one
+    # has to typecheck, and each has to report the backends it actually selected — which is what
+    # `backends::tests` checks, per configuration, so it is run rather than only compiled.
+    # Checking `sa-benchmarks` covers `sa-server` too, since its features forward there and nowhere
+    # else.
+    #
+    # Sequential rather than a matrix on purpose: the nine combinations share one warm target
+    # directory and finish in well under a minute, where nine runners would each pay checkout,
+    # toolchain and cache restore first.
+    name: sa-server backend aliases
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check every backend combination
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in "" "mmap" "mmap,preloaded-text" "mmap,preloaded-proteins" \
+                          "mmap,preloaded-mapping" "mmap,preloaded-text,preloaded-proteins" \
+                          "mmap,preloaded-text,preloaded-mapping" \
+                          "mmap,preloaded-proteins,preloaded-mapping" \
+                          "mmap,preloaded-text,preloaded-proteins,preloaded-mapping"; do
+            echo "== ${features:-(none)} =="
+            if [ -z "$features" ]; then
+              cargo check --all-targets -p sa-benchmarks
+              cargo test -p sa-server
+            else
+              cargo check --all-targets -p sa-benchmarks --features "$features"
+              cargo test -p sa-server --features "$features"
+            fi
+          done
+
+  clippy:
+    name: Run Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Clippy gates the workspace on the toolchain it ships from, and nightly's lint set is not
+    # stable's.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # No `--workspace` here on purpose: it overrides the root `default-members`, which
+      # exists to keep `sa-benchmarks` out of the default build. That package is linted
+      # explicitly in the next step instead, so it cannot rot.
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run Clippy (sa-benchmarks)
+        run: cargo clippy -p sa-benchmarks --all-features -- -D warnings
+
+  docs:
+    # The crates carry a lot of prose, and prose rots quietly: a renamed item leaves an intra-doc
+    # link pointing at nothing, which nothing else in CI notices. `-D warnings` turns that into a
+    # failure. `--no-deps` keeps it to this workspace's own documentation.
+    name: Check documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      RUSTDOCFLAGS: -D warnings
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features --document-private-items
+
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # The only job that runs on rust-toolchain.toml's pinned nightly, and it does so by *not*
+    # setting RUSTUP_TOOLCHAIN: rustup reads the pin straight out of that file and installs it,
+    # components included. Nightly is required because .rustfmt.toml sets `unstable_features`
+    # together with `imports_granularity`, `group_imports`, `normalize_comments` and
+    # `normalize_doc_attributes`; stable rustfmt warns about those and then formats against the
+    # rest, producing a different tree from the one the repo targets.
+    #
+    # The pin lives in rust-toolchain.toml alone, so a local `cargo fmt` and this gate cannot
+    # disagree about the nightly. Bump it there, never here.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check formatting
+        run: cargo fmt --all --check

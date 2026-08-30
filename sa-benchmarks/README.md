@@ -1,6 +1,6 @@
 # sa-benchmarks
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 Everything needed to measure the suffix-array index lives in this directory: the Rust harness, the
 Python driver, the suite definitions, and the machine profiles.

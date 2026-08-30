@@ -1,7 +1,6 @@
 # bitarray
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=bitarray&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 Dense arrays of fixed-width values packed into `u64` words. The index stores hundreds of millions
 of values that need far fewer than 64 bits each — a suffix array over a 300 M-residue text needs

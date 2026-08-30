@@ -1,7 +1,6 @@
 # sa-index
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=sa-index&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 The search itself: given a peptide, find every protein that contains it. This is the crate the
 Unipept API builds its endpoints on — `peptide_search::search_all_peptides_json` and friends —

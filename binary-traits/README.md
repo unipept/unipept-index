@@ -1,7 +1,6 @@
 # binary-traits
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=binary-traits&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 The I/O traits every on-disk index structure is written and read through. An index is built once by
 `sa-builder` and read back through one of two storage backends, so most structures have one writer
