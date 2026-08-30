@@ -3,7 +3,7 @@ use fa_compression::algorithm1::encode;
 
 use super::util::generate_annotation;
 
-/// Generate a random number of decoded annotations.
+/// Generate `count` random annotations, as the plain text `encode` takes.
 fn generate_decoded_annotations(count: usize) -> String {
     let mut random = rand::thread_rng();
 

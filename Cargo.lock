@@ -182,6 +182,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "binary-traits"
+version = "0.1.0"
+
+[[package]]
 name = "bindgen"
 version = "0.69.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -207,6 +211,9 @@ dependencies = [
 [[package]]
 name = "bitarray"
 version = "0.1.0"
+dependencies = [
+ "memory-hints",
+]
 
 [[package]]
 name = "bitflags"
@@ -229,12 +236,6 @@ dependencies = [
  "futures-util",
  "tokio",
 ]
-
-[[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
@@ -361,6 +362,12 @@ name = "colorchoice"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b6a852b24ab71dffc585bcb46eaf7959d175cb865a7152e35b348d1b2960422"
+
+[[package]]
+name = "core-foundation-sys"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "criterion"
@@ -773,6 +780,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "memory-hints"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "memmap2",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -812,6 +827,15 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "ntapi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]
@@ -943,6 +967,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e835ff2298f5721608eb1a980ecaee1aef2c132bf95ecc026a11b7bf3c01c02e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "protein-metadata"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "bytelines",
+ "fa-compression",
+ "memmap2",
+ "memory-hints",
+ "protein-text",
+ "tempdir",
+]
+
+[[package]]
+name = "protein-text"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "bitarray",
+ "memmap2",
+ "memory-hints",
+ "tempfile",
 ]
 
 [[package]]
@@ -1117,14 +1165,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 
 [[package]]
-name = "sa-builder"
+name = "sa-benchmarks"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "protein-text",
+ "rand 0.8.5",
+ "rayon",
+ "sa-index",
+ "sa-server",
+ "serde",
+ "serde_json",
+ "sysinfo",
+]
+
+[[package]]
+name = "sa-builder"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "clap",
  "libdivsufsort-rs",
  "libsais64-rs",
+ "protein-metadata",
+ "protein-text",
  "sa-index",
- "sa-mappings",
  "tempfile",
 ]
 
@@ -1132,29 +1197,17 @@ dependencies = [
 name = "sa-index"
 version = "0.1.0"
 dependencies = [
+ "binary-traits",
  "bitarray",
- "clap",
  "fa-compression",
  "memmap2",
+ "memory-hints",
+ "protein-metadata",
+ "protein-text",
  "rayon",
- "sa-mappings",
  "serde",
  "serde_json",
- "succinct",
- "tempdir",
  "tempfile",
- "text-compression",
-]
-
-[[package]]
-name = "sa-mappings"
-version = "0.1.0"
-dependencies = [
- "bytelines",
- "fa-compression",
- "memmap2",
- "tempdir",
- "text-compression",
 ]
 
 [[package]]
@@ -1162,10 +1215,13 @@ name = "sa-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "binary-traits",
  "clap",
+ "protein-metadata",
+ "protein-text",
  "sa-index",
- "sa-mappings",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -1260,16 +1316,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "succinct"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7798b62081a999bcf090b2f220fee8845dd1c6ffeb17e1bc6ca783825f62a418"
-dependencies = [
- "byteorder",
- "num-traits",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1293,6 +1339,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7065abeca94b6a8a577f9bd45aa0867a2238b74e8eb67cf10d492bc39351394"
 
 [[package]]
+name = "sysinfo"
+version = "0.30.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a5b4ddaee55fb2bea2bf0e5000747e5f5c0de765e5a5ff87f4cd106439f4bb3"
+dependencies = [
+ "cfg-if",
+ "core-foundation-sys",
+ "libc",
+ "ntapi",
+ "once_cell",
+ "rayon",
+ "windows",
+]
+
+[[package]]
 name = "tempdir"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1313,15 +1374,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "text-compression"
-version = "0.1.0"
-dependencies = [
- "bitarray",
- "memmap2",
- "tempfile",
 ]
 
 [[package]]
@@ -1544,6 +1596,25 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "windows"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
+dependencies = [
+ "windows-core",
+ "windows-targets 0.52.4",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
+dependencies = [
+ "windows-targets 0.52.4",
+]
 
 [[package]]
 name = "windows-sys"

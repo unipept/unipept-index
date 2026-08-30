@@ -1,5 +1,25 @@
 target/
+
+# Index data: build inputs and the multi-GB artefacts built from them.
 data/
+uniprot-*/
+benchmarks/
+
+# Developer tooling and design/benchmark write-ups. Deliberately not tracked: these are
+# machine-specific harnesses and historical notes, not part of what this repo ships.
+scripts/
+docs/
+sa-benchmarks/summary/
+# Generated benchmark reports. They belong with the run that produced them, not in the tree.
+report*.html
+# Machine-specific paths (index dir, peptide files, scratch). profiles/example.toml is the template.
+sa-benchmarks/profiles/local.toml
+__pycache__/
+*.log
+
+# Tooling scratch space.
+.claude/
+.env/
 
 libsais64-rs/libsais
 libsais64-rs/libsais-packed

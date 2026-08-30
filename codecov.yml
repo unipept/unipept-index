@@ -3,28 +3,41 @@ coverage:
     project:
       default:
         target: 90%
+      binary-traits:
+        flags:
+          - binary-traits
       bitarray:
         flags:
           - bitarray
       fa-compression:
         flags:
           - fa-compression
+      memory-hints:
+        flags:
+          - memory-hints
+      protein-metadata:
+        flags:
+          - protein-metadata
+      protein-text:
+        flags:
+          - protein-text
       sa-builder:
         flags:
           - sa-builder
-      sa-compression:
-        flags:
-          - sa-compression
       sa-index:
         target: 80%
         flags:
           - sa-index
-      sa-mappings:
+      sa-server:
         flags:
-          - sa-mappings
+          - sa-server
     patch: off
 
 flags:
+  binary-traits:
+    paths:
+      - binary-traits
+    carryforward: true
   bitarray:
     paths:
       - bitarray
@@ -33,21 +46,29 @@ flags:
     paths:
       - fa-compression
     carryforward: true
+  memory-hints:
+    paths:
+      - memory-hints
+    carryforward: true
+  protein-metadata:
+    paths:
+      - protein-metadata
+    carryforward: true
+  protein-text:
+    paths:
+      - protein-text
+    carryforward: true
   sa-builder:
     paths:
       - sa-builder
-    carryforward: true
-  sa-compression:
-    paths:
-      - sa-compression
     carryforward: true
   sa-index:
     paths:
       - sa-index
     carryforward: true
-  sa-mappings:
+  sa-server:
     paths:
-      - sa-mappings
+      - sa-server
     carryforward: true
 
 ignore:

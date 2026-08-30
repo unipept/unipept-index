@@ -1,34 +1,49 @@
-use std::error::Error;
-use std::fs::File;
-use std::io::BufReader;
-use sa_index::{ReadBinary, ReadBinaryMmap, SuffixArray};
-use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
-use sa_mappings::proteins::Proteins;
+//! Loading the index files this build was compiled to use.
+//!
+//! Every index structure has two implementations — one holding owned memory, one borrowing a
+//! memory mapping — and both are always compiled. [`backends`] names one of each for this build;
+//! the loaders below are then just `LoadIndex::load` on those names, since each concrete type
+//! already knows whether it is read or mapped.
+//!
+//! See [`backends`] for what the storage features select and why, and
+//! [`backends::backend_summary`] for reporting it at startup.
+//!
+//! Nothing here relates the files to each other. Each loader only proves its own file is
+//! well-formed; that the four came from the same `sa-builder` run is checked once they meet, by
+//! `Searcher::try_new` and `Searcher::try_with_kmer_table`.
+#![warn(missing_docs)]
 
-pub fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray, Box<dyn Error>> {
-    if use_mmap {
-        return SuffixArray::read_binary_mmap(std::path::Path::new(file));
-    }
-    let f = File::open(file)?;
-    let mut reader = BufReader::new(f);
-    SuffixArray::read_binary(&mut reader)
+use std::{error::Error, path::Path};
+
+use binary_traits::LoadIndex;
+use sa_index::KmerTable;
+
+pub mod backends;
+
+pub use backends::{
+    ActiveMapping, ActiveProteins, ActiveSa, ActiveSearcher, ActiveText, MAPPING_BACKEND, PROTEINS_BACKEND, SA_BACKEND,
+    TEXT_BACKEND, backend_summary
+};
+
+/// Loads the suffix array.
+pub fn load_suffix_array_file(file: &str) -> Result<ActiveSa, Box<dyn Error>> {
+    ActiveSa::load(Path::new(file))
 }
 
-pub fn load_proteins_file(file: &str, use_mmap: bool) -> Result<Proteins, Box<dyn Error>> {
-    if use_mmap {
-        return Proteins::read_binary_mmap(std::path::Path::new(file));
-    }
-    
-    let proteins_file = File::open(file)?;
-    let mut reader = BufReader::new(proteins_file);
-    Proteins::read_binary(&mut reader)
+/// Loads the protein table and the concatenated protein text (both live in `proteins.bin`).
+pub fn load_proteins_file(file: &str) -> Result<ActiveProteins, Box<dyn Error>> {
+    ActiveProteins::load(Path::new(file))
 }
 
-pub fn load_mapping_file(file: &str, use_mmap: bool) -> Result<SuffixToProteinMapping, Box<dyn Error>> {
-    if use_mmap {
-        return SuffixToProteinMapping::read_binary_mmap(std::path::Path::new(file));
-    }
-    let f = File::open(file)?;
-    let mut reader = BufReader::new(f);
-    SuffixToProteinMapping::read_binary(&mut reader)
+/// Loads the suffix-to-protein mapping.
+pub fn load_mapping_file(file: &str) -> Result<ActiveMapping, Box<dyn Error>> {
+    ActiveMapping::load(Path::new(file))
+}
+
+/// Loads a pre-built k-mer bounds table.
+///
+/// Unlike the three above this has no memory-mapped variant: the table is small relative to the
+/// index and is read into owned memory in every configuration.
+pub fn load_kmer_table_file(file: &str) -> Result<KmerTable, Box<dyn Error>> {
+    KmerTable::load(Path::new(file))
 }

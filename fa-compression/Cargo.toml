@@ -9,10 +9,8 @@ edition = "2021"
 criterion = "0.5.1"
 rand = "0.8.5"
 
+# Profile settings belong in the workspace root manifest; Cargo ignores them here. The benches run
+# on the default `bench` profile, which inherits `release`.
 [[bench]]
-opt-level = 0
 name = "bench_main"
 harness = false
-
-[profile.bench]
-opt-level=3

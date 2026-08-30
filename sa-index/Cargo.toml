@@ -6,17 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dev-dependencies]
-tempdir = "0.3.7"
 tempfile = "3"
-fa-compression = { path = "../fa-compression" }
 
 [dependencies]
-clap = { version = "4.4.8", features = ["derive"] }
+binary-traits = { path = "../binary-traits" }
 memmap2 = "0.9"
 rayon = "1.8.1"
+fa-compression = { path = "../fa-compression" }
 serde = { version = "1.0.197", features = ["derive"] }
-sa-mappings = { path = "../sa-mappings" }
-text-compression = { path = "../text-compression" }
+memory-hints = { path = "../memory-hints" }
+protein-metadata = { path = "../protein-metadata" }
+protein-text = { path = "../protein-text" }
 bitarray = { path = "../bitarray" }
 serde_json = "1.0.116"
-succinct = "0.5.2"

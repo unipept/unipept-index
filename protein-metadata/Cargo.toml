@@ -1,0 +1,17 @@
+[package]
+name = "protein-metadata"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dev-dependencies]
+tempdir = "0.3.7"
+
+[dependencies]
+binary-traits = { path = "../binary-traits" }
+fa-compression = { path = "../fa-compression" }
+memory-hints = { path = "../memory-hints" }
+bytelines = "2.5.0"
+protein-text = { path = "../protein-text" }
+memmap2 = "0.9"

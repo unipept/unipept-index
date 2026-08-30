@@ -6,6 +6,9 @@ on:
     - cron: '0 0 1 * *'
   push:
     branches:
+      # NOTE: this branch no longer exists; the trigger is therefore dead in practice.
+      # Left as-is on purpose (trigger semantics unchanged) — decide separately whether to
+      # drop it or point it at an existing branch.
       - feature/build_index_action
   workflow_dispatch:
 
@@ -13,10 +16,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The index binaries
+    # released from this job are built by stable, as they were before that file existed.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
     steps:
       # Check out the most recent version of the repository with submodules
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -57,33 +65,51 @@ jobs:
           lz4 -d build/input/taxons.tsv.lz4 > build/$SP_VERSION/taxons.tsv
 
       # Step 8: Run the sa-builder command
+      #
+      # sa-builder no longer has a single `-o` output flag; it now requires three separate
+      # mandatory outputs (--output-sa / --output-proteins / --output-mapping), all of which
+      # sa-server needs to boot (--index-file / --database-file / --mapping-file).
+      #
+      # --output-kmer-table is optional and feeds sa-server's --kmer-table-file, which speeds
+      # up the binary search considerably. Note the table is a dense bucket array: at
+      # --kmer-size 5 it is ~127 MB on disk regardless of database size (it compresses well
+      # inside the zip). Drop these two flags if the release artifact should stay small.
       - name: Run sa-builder
         run: |
           prefix="build/$SP_VERSION"
           ./target/release/sa-builder \
-            -d "$prefix/proteins.tsv" \
+            --database-file "$prefix/proteins.tsv" \
             --output-sa "$prefix/sa_sparse3_compressed.bin" \
             --output-proteins "$prefix/proteins.bin" \
             --output-mapping "$prefix/mapping.bin" \
-            -s 3 -a lib-div-suf-sort -c
+            --output-kmer-table "$prefix/kmer_table.bin" \
+            --kmer-size 5 \
+            --sparseness-factor 3 \
+            --construction-algorithm lib-div-suf-sort \
+            --compress-sa
 
-      # Zip the contents of the build/$SP_VERSION directory
+      # Zip the contents of the build/$SP_VERSION directory.
+      # proteins.bin and mapping.bin are mandatory for sa-server: without them the published
+      # artifact cannot start a server.
       - name: Zip build contents
         run: |
-          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin" "proteins.bin" "mapping.bin"
+          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" \
+            "proteins.tsv" \
+            "taxons.tsv" \
+            "sa_sparse3_compressed.bin" \
+            "proteins.bin" \
+            "mapping.bin" \
+            "kmer_table.bin"
 
-      # Create a GitHub release and upload the zip file and individual binary assets
+      # Create a GitHub release and upload the zip file
       - name: Upload or Update Release
         id: upload_or_update_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
-            build/${{ env.SP_VERSION }}/proteins.bin
-            build/${{ env.SP_VERSION }}/mapping.bin
+          files: build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
           tag_name: index-${{ env.SP_VERSION }}
           name: Index ${{ env.SP_VERSION }}
-          commitish: ${{ github.sha }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
         env:
