@@ -11,7 +11,8 @@ name: Audit
 
 on:
   schedule:
-    # Mondays, shortly after Dependabot opens its weekly PRs.
+    # Weekly, independent of Dependabot's monthly run: this is the check that notices an
+    # advisory landing against a lockfile nobody has touched.
     - cron: '0 7 * * 1'
   push:
     branches: [develop, main]

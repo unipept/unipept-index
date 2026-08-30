@@ -11,23 +11,19 @@
 #     documented in that file.
 #   * the libsais-packed C library, which libsais64-rs/builder.rs clones at build time rather than
 #     declaring as a dependency.
+#
+# Monthly, ungrouped, and effectively uncapped: one PR per update, so each bump is reviewed and
+# merged on its own evidence rather than as part of a batch that is green as a whole.
 version: 2
 
 updates:
   - package-ecosystem: cargo
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
+      interval: monthly
+      time: "13:00"
       timezone: Europe/Brussels
-    open-pull-requests-limit: 5
-    # Grouping keeps the ordinary churn to one PR a week. Majors stay ungrouped: they are the ones
-    # that need a human to read a changelog, and they should not ride along in a green batch.
-    groups:
-      cargo-minor-and-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 99
     commit-message:
       prefix: "deps"
     labels: ["dependencies", "rust"]
@@ -35,15 +31,10 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
+      interval: monthly
+      time: "13:00"
       timezone: Europe/Brussels
-    open-pull-requests-limit: 5
-    # Action bumps are almost always safe and almost always arrive in threes; one PR for the lot.
-    groups:
-      github-actions:
-        patterns: ["*"]
+    open-pull-requests-limit: 99
     commit-message:
       prefix: "ci"
     labels: ["dependencies", "github-actions"]
@@ -52,7 +43,9 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 2
+      time: "13:00"
+      timezone: Europe/Brussels
+    open-pull-requests-limit: 99
     commit-message:
       prefix: "chore"
     labels: ["dependencies"]
