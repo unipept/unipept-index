@@ -31,9 +31,9 @@ and packs two characters per byte; `decode` puts the prefixes back.
 * `decode_into()` — appends to a buffer you already have
 * `decoded()` — decodes lazily into a formatter, so a serialiser never materialises the string
 
-`sa-index::peptide_search` uses the third: a large response can hold millions of hits, and owning
-each one's annotations would cost an allocation per hit purely so `serde` could copy out of it a
-moment later.
+The third exists for the search path, which has no consumer here yet: a large response can hold
+millions of hits, and owning each one's annotations would cost an allocation per hit purely so
+`serde` could copy out of it a moment later.
 
 ## Benchmarks
 
@@ -45,7 +45,7 @@ Criterion benches for both algorithms, on the default `bench` profile (which inh
 
 ## Where it sits
 
-Depends on nothing at runtime. Used by `protein-metadata` and `sa-index`.
+Depends on nothing at runtime. Used by `sa-mappings`.
 
 ---
 
