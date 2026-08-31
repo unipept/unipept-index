@@ -121,7 +121,7 @@ mod tests {
     use super::{SparseSuffixToProtein, read_sparse_mapping, write_sparse_mapping};
     use crate::{
         Nullable, ReadBinaryMmap,
-        suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping}
+        suffix_to_protein_index::legacy::{SuffixToProteinIndex, SuffixToProteinMapping}
     };
 
     fn build_text() -> ProteinText {
