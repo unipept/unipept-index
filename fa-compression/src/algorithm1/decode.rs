@@ -11,11 +11,10 @@
 //! This does it in one pass with no intermediate buffer, which matters because the server decodes
 //! one of these per protein hit and a single request can have millions of them.
 //!
-//! The trick that makes a single pass possible: the old code appended `prefix + annotation + ';'`
-//! for every annotation and then popped the trailing `;`. That final pop is unimplementable in a
-//! streaming writer, where the byte may already have been flushed. But the output it produces is
-//! exactly the `;`-join of `prefix ++ annotation`, so emitting the separator *before* each
-//! annotation instead of after removes the pop entirely.
+//! The rule that makes a single pass possible: the separator goes *before* each annotation, never
+//! after. Appending `';'` after every annotation and popping the last one is the natural way to
+//! write a `;`-join, but that final pop is unimplementable in a streaming writer, where the byte
+//! may already have been flushed. Leading separators produce the same bytes with nothing to undo.
 
 use std::fmt;
 
@@ -126,7 +125,10 @@ impl Sink for FmtSink<'_, '_> {
         if self.len + bytes.len() > self.buffer.len() {
             self.flush();
         }
-        // A single write never exceeds the buffer: the longest is `PREFIXES[2]` at 7 bytes.
+        // The flush above leaves room unless it failed, and a failed flush is followed by at most
+        // the writes left in the current byte — two annotation openings, 32 bytes — before
+        // `decode_to` sees `failed()` and stops. The longest single write is `PREFIXES[2]`, 7 bytes.
+        debug_assert!(self.len + bytes.len() <= self.buffer.len(), "the flush buffer must have room");
         self.buffer[self.len..self.len + bytes.len()].copy_from_slice(bytes);
         self.len += bytes.len();
     }
@@ -249,8 +251,9 @@ pub fn decode(input: &[u8]) -> String {
 
 /// Decodes a byte array into annotations, **appending** them to `out`.
 ///
-/// The allocation-free variant of [`decode`] for callers that have a buffer to reuse. Nothing is
-/// cleared first, and nothing is written for empty input. See [`decoded`] to skip the buffer too.
+/// The variant of [`decode`] that allocates no `String` of its own, for callers that have a buffer
+/// to reuse — `out` still grows if what is decoded does not fit. Nothing is cleared first, and
+/// nothing is written for empty input. See [`decoded`] to skip the buffer too.
 ///
 /// # Arguments
 ///
