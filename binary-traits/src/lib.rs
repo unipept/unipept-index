@@ -89,11 +89,11 @@ pub trait ReadBinaryMmap: Sized {
 /// function can be generic over the storage backends — which is what the searcher's test fixtures
 /// need in order to exercise every combination in one build.
 ///
-/// It also puts a fact in the type system that used to be a hand-maintained `#[cfg]` predicate:
-/// `proteins.bin` holds both the protein text and the metadata table, so it must be *mapped*
-/// whenever either section is mapped, not merely when the metadata is. That is now expressed by
-/// which of the four `InMemory`/`MmapBacked` protein pairings implements this trait through which
-/// route; see `protein_metadata::mmap`.
+/// It also holds a fact about the protein files in the type system: `proteins.bin` stores the
+/// protein text and the metadata table in one file, so it must be *mapped* whenever either section
+/// is mapped, not merely when the metadata is. Which route each of the four `InMemory`/`MmapBacked`
+/// protein pairings implements this trait through is what expresses that; see
+/// `protein_metadata::mmap`.
 pub trait LoadIndex: Sized {
     /// Loads the structure stored at `path`.
     fn load(path: &Path) -> Result<Self, Box<dyn Error>>;
