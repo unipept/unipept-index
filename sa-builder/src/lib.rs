@@ -1,13 +1,31 @@
+//! Builds the on-disk index that `sa-server` reads: the suffix array, the protein store, the
+//! suffix-to-protein mapping and an optional k-mer bounds table.
+//!
+//! This is the only writer in the workspace. Every format the other crates read is produced here,
+//! through the `WriteBinary` implementations documented in `binary-traits` — so a format question
+//! is answered at its writer, not here.
+//!
+//! One run produces one index. The four files are only usable as a set: the suffix array indexes
+//! positions in the text stored in `proteins.bin`, and the mapping resolves those same positions
+//! to entries in it, so mixing files from different builds yields wrong answers rather than
+//! errors. The binary therefore writes every section to a temporary sibling and renames them all
+//! only once the last one has succeeded; see `main.rs`.
+//!
+//! This crate holds the pieces worth testing on their own — the command line in [`Arguments`] and
+//! suffix array construction in [`build_ssa`]. The file writing lives in the binary.
+#![warn(missing_docs)]
+
 use std::error::Error;
 
 use clap::{Parser, ValueEnum};
-use sa_index::suffix_to_protein_index::legacy::SuffixToProteinMappingStyle;
+use sa_index::kmer_table::MAX_KMER_K;
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]
 pub struct Arguments {
-    /// File with the proteins used to build the suffix tree. All the proteins are expected to be
-    /// concatenated using a dash `-`.
+    /// Tab-separated file with one protein per row: `uniprot_id`, `taxon_id`, `sequence` and
+    /// `annotations`. The sequences are concatenated into a single text internally, separated by
+    /// `-` and terminated by `$`; neither character may appear in a sequence.
     #[arg(short, long)]
     pub database_file: String,
     /// Output location where to store the suffix array
@@ -19,9 +37,19 @@ pub struct Arguments {
     /// Output location where to store the suffix-to-protein mapping binary
     #[arg(long)]
     pub output_mapping: String,
-    /// The sparseness_factor used on the suffix array (default value 1, which means every value in
-    /// the SA is used)
-    #[arg(short, long, default_value_t = 1)]
+    /// The sparseness factor used on the suffix array: only every n-th text position is indexed
+    /// (default 1, which indexes every position).
+    ///
+    /// Larger values shrink the suffix array at the cost of search work. Peptides shorter than n
+    /// cannot be found at all.
+    // Rejected below 1 rather than left to the arithmetic, because every step downstream accepts
+    // zero and produces a well-formed index that matches nothing. `0.is_multiple_of(5)` is true,
+    // so `libsais64` keeps `libsais_sparseness == MAX_SPARSENESS` and derives a `sample_rate` of
+    // `0 / 5 == 0`, which skips the second sampling pass; the zero then reaches the file header
+    // unchanged through `dump_suffix_array`. The array is built at a stride of 5 while the header
+    // claims 0, and a claimed stride of zero means no peptide is ever long enough to search. The
+    // build reports success throughout.
+    #[arg(short, long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..))]
     pub sparseness_factor: u8,
     /// The algorithm used to construct the suffix array (default value LibSais)
     #[arg(short('a'), long, value_enum, default_value_t = SAConstructionAlgorithm::LibSais)]
@@ -31,14 +59,66 @@ pub struct Arguments {
     pub compress_sa: bool,
     /// The style of suffix-to-protein mapping to build (default value BitVec)
     #[arg(long, value_enum, default_value_t = SuffixToProteinMappingStyle::BitVec)]
-    pub mapping_style: SuffixToProteinMappingStyle
+    pub mapping_style: SuffixToProteinMappingStyle,
+    /// Output location where to store the k-mer bounds table (optional).
+    /// When set, a k-mer lookup table is built and written to this path.
+    #[arg(long)]
+    pub output_kmer_table: Option<String>,
+    /// The k-mer size used when building the k-mer bounds table (default 5, maximum 7).
+    ///
+    /// The table is dense at 24^k entries of 16 bytes, so its size depends only on k and not on
+    /// the database: k=5 is 127 MB (0.12 GiB) and k=6 is 3.06 GB (2.85 GiB), a 24x step for one
+    /// more level of the probe chain.
+    ///
+    /// 5 is the default because it is the size that pays in both regimes. With the index fully
+    /// resident, the 6-mer's edge over it sits inside the noise floor on most length regimes and
+    /// reaches only +4.1% on large peptides, which does not buy 2.9 GB. Raise it to 6 only under
+    /// a memory ceiling, where the table's value is working-set size rather than probe count: a
+    /// 5-mer narrows the search to ~7 SA pages per query and a 6-mer to ~1, which is +18.4%
+    /// against no table where the 5-mer manages +3.2%.
+    // The upper bound is enforced here rather than left to the `k <= MAX_KMER_K` assertion inside
+    // `KmerTable::build_kmer_table`, which does not run until the suffix array has already been
+    // built — hours into a full-database build. The bound itself is taken from `sa_index` so the
+    // two cannot drift. The lower bound matters for the same reason `--sparseness-factor` has one:
+    // k=0 indexes every suffix into a single bucket, producing a table that narrows nothing and
+    // reports no error.
+    #[arg(long, default_value_t = 5,
+          value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=MAX_KMER_K as u64))]
+    pub kmer_size: usize
 }
 
-/// Enum representing the two possible algorithms to construct the suffix array
+/// The library used to construct the suffix array.
+///
+/// Both produce the same array; they differ in how the sparseness factor is applied. `libsais`
+/// can sample during construction and so never materialises the full array, which is what makes
+/// a sparse build of a UniProt-sized database feasible.
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SAConstructionAlgorithm {
+    /// `libdivsufsort`. Always builds the dense array first and samples it afterwards, so peak
+    /// memory is that of the dense array whatever the sparseness factor.
     LibDivSufSort,
+    /// `libsais`. Samples during construction where the factor allows it. The default.
     LibSais
+}
+
+/// Which suffix-to-protein mapping is written to `--output-mapping`.
+///
+/// All three answer the same question — which protein contains this text position — and the
+/// style is recorded in the file, so the server picks its reader from what it finds rather than
+/// from configuration. The choice is purely a space against lookup-cost trade made here, and
+/// `sa_index::suffix_to_protein_index` documents the three representations in full.
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
+pub enum SuffixToProteinMappingStyle {
+    /// One `u32` per text position: a single load per lookup, at 4 bytes per residue — ~1.2 GB
+    /// over the ~300 M-residue reference text, and ~300 GB at full UniProt scale, which exceeds
+    /// the whole rest of the index. For small databases only.
+    Dense,
+    /// The start position of each protein, binary-searched. Smallest, at O(log m) dependent
+    /// loads per lookup for m proteins, each likely a cache miss.
+    Sparse,
+    /// A bit per text position marking the separators and the terminator, with a rank structure
+    /// over it. Near-dense speed at ~1.25 bits per position. The default.
+    BitVec
 }
 
 /// Build a sparse suffix array from the given text
@@ -79,40 +159,82 @@ pub fn build_ssa(
     Ok(sa)
 }
 
-// Max sparseness for libsais because it creates a bucket for each element of the alphabet (2 ^ (sparseness * bits_per_char) buckets).
+/// The largest number of text characters `libsais` may fold into a single symbol.
+///
+/// `libsais` allocates one bucket per symbol, and a symbol spanning `s` characters of the 5-bit
+/// protein alphabet needs `2^(5*s)` of them. At `s = 5` that is `2^25` buckets, and every further
+/// step multiplies it by 32.
 const MAX_SPARSENESS: usize = 5;
-fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+
+/// How a requested sparseness factor is divided between the two passes that apply it.
+///
+/// The product of the two fields is the requested factor. See [`split_sparseness`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SparsenessSplit {
+    /// The part `libsais` applies itself, by folding that many characters into one symbol.
+    pub libsais_sparseness: usize,
+    /// The part left to a second pass over the result. 1 when `libsais` handles all of it.
+    pub sample_rate: usize
+}
+
+/// Splits a sparseness factor between the sampling `libsais` performs itself and a second pass
+/// over its output.
+///
+/// `libsais` can only sample at a factor it folds into its symbols, so this takes the largest
+/// such factor that divides the requested sparseness and leaves the remainder to `sample_sa`.
+/// The walk down from `MAX_SPARSENESS` always terminates because 1 divides everything.
+///
+/// Only the `LibSais` construction algorithm splits the factor this way; `LibDivSufSort` builds
+/// the dense array and samples it at the full factor.
+pub fn split_sparseness(sparseness_factor: u8) -> SparsenessSplit {
     let sparseness_factor = sparseness_factor as usize;
 
-    // set libsais_sparseness to highest sparseness factor fitting in 32-bit value and sparseness factor divisible by libsais sparseness
-    // max 28 out of 32 bits used, because a bucket is created for every element of the alphabet 8 * 2^28).
     let mut libsais_sparseness = MAX_SPARSENESS;
     while !sparseness_factor.is_multiple_of(libsais_sparseness) {
         libsais_sparseness -= 1;
     }
-    let sample_rate = sparseness_factor / libsais_sparseness;
 
-    eprintln!("\tSparseness factor: {}", sparseness_factor);
-    eprintln!("\tLibsais sparseness factor: {}", libsais_sparseness);
-    eprintln!("\tSample rate: {}", sample_rate);
+    SparsenessSplit {
+        libsais_sparseness,
+        sample_rate: sparseness_factor / libsais_sparseness
+    }
+}
+
+/// Builds the suffix array with `libsais`, splitting the sparseness factor between the sampling
+/// `libsais` performs itself and a second pass over the result.
+fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+    let SparsenessSplit { libsais_sparseness, sample_rate } = split_sparseness(sparseness_factor);
 
     let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;
 
+    // `sample_sa` filters on the *full* sparseness factor, not on `sample_rate`.
+    //
+    // The two are not interchangeable here, because `sais64` has already discarded everything
+    // that is not a multiple of `libsais_sparseness` (it multiplies every entry by it before
+    // returning). Filtering that output on `sample_rate` leaves the multiples of
+    // `lcm(libsais_sparseness, sample_rate)`, which equals `sparseness_factor` only when the two
+    // are coprime. At `--sparseness-factor 8` they are not: `libsais_sparseness` is 4 and
+    // `sample_rate` is 2, every multiple of 4 is already even, and the pass removed nothing —
+    // leaving a stride of 4 under a header declaring 8. Factors 9, 16, 25 and 27 broke the same
+    // way, and each match was then found by two skip passes instead of one.
+    //
+    // Filtering on `sparseness_factor` is correct for every factor: it is a multiple of
+    // `libsais_sparseness`, so the surviving entries are exactly its own multiples. It is also
+    // what the `LibDivSufSort` path in `build_ssa` has always done.
     if sample_rate > 1 {
-        sample_sa(&mut sa, sample_rate as u8);
+        sample_sa(&mut sa, sparseness_factor);
     }
 
     Ok(sa)
 }
 
-/// Translate all L's to I's in the given text
+/// Translate all L's to I's in the given text, in place
+///
+/// Leucine and isoleucine have the same mass, so a mass-spectrometry search cannot tell them
+/// apart. Folding them together here means the suffix array never contains an `L` at all.
 ///
 /// # Arguments
 /// * `text` - The text in which we want to translate the L's to I's
-///
-/// # Returns
-///
-/// The text with all L's translated to I's
 fn translate_l_to_i(text: &mut [u8]) {
     for character in text.iter_mut() {
         if *character == b'L' {
@@ -121,15 +243,14 @@ fn translate_l_to_i(text: &mut [u8]) {
     }
 }
 
-/// Sample the suffix array with the given sparseness factor
+/// Sample the suffix array with the given sparseness factor, in place
+///
+/// Keeps only the entries whose text position is a multiple of the factor, compacting them to the
+/// front and truncating `sa` to what survived.
 ///
 /// # Arguments
 /// * `sa` - The suffix array that we want to sample
 /// * `sparseness_factor` - The sparseness factor used for sampling
-///
-/// # Returns
-///
-/// The sampled suffix array
 fn sample_sa(sa: &mut Vec<i64>, sparseness_factor: u8) {
     if sparseness_factor <= 1 {
         return;
@@ -170,7 +291,11 @@ mod tests {
             "--output-mapping",
             "output.mapping",
             "--mapping-style",
-            "dense"
+            "dense",
+            "--output-kmer-table",
+            "output.kmer",
+            "--kmer-size",
+            "5"
         ]);
 
         assert_eq!(args.database_file, "database.fa");
@@ -181,6 +306,29 @@ mod tests {
         assert!(args.compress_sa);
         assert_eq!(args.output_mapping, "output.mapping".to_string());
         assert_eq!(args.mapping_style, SuffixToProteinMappingStyle::Dense);
+        assert_eq!(args.output_kmer_table, Some("output.kmer".to_string()));
+        assert_eq!(args.kmer_size, 5);
+    }
+
+    /// The k-mer table is optional; omitting its path must leave it unbuilt.
+    #[test]
+    fn test_arguments_without_kmer_table() {
+        let args = Arguments::parse_from([
+            "sa-builder",
+            "--database-file",
+            "database.fa",
+            "--output-sa",
+            "output.fa",
+            "--output-proteins",
+            "output.proteins",
+            "--output-mapping",
+            "output.mapping"
+        ]);
+
+        assert_eq!(args.output_kmer_table, None);
+        assert_eq!(args.sparseness_factor, 1, "default sparseness");
+        assert_eq!(args.kmer_size, 5, "default k-mer size");
+        assert!(!args.compress_sa, "compression is opt-in");
     }
 
     #[test]
@@ -203,7 +351,7 @@ mod tests {
     fn test_build_ssa_libsais_empty() {
         let text = b"".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibSais, 1).unwrap();
-        assert_eq!(sa, vec![]);
+        assert_eq!(sa, Vec::<i64>::new());
     }
 
     #[test]
@@ -224,7 +372,7 @@ mod tests {
     fn test_build_ssa_libdivsufsort_empty() {
         let text = b"".to_vec();
         let sa = build_ssa(text, &SAConstructionAlgorithm::LibDivSufSort, 1).unwrap();
-        assert_eq!(sa, vec![]);
+        assert_eq!(sa, Vec::<i64>::new());
     }
 
     #[test]
@@ -253,5 +401,67 @@ mod tests {
         let mut sa = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         sample_sa(&mut sa, 2);
         assert_eq!(sa, vec![0, 2, 4, 6, 8]);
+    }
+
+    /// The two halves of the split must multiply back to the requested factor, and the `libsais`
+    /// half must be one it can actually fold into a symbol.
+    ///
+    /// The factors where the two share a divisor (8, 9, 16, 25, 27) are the ones that broke the
+    /// sampling pass; they are interleaved with factors that were always correct.
+    #[test]
+    fn test_split_sparseness() {
+        for factor in [1u8, 2, 3, 4, 5, 6, 8, 9, 10, 15, 16, 25, 27] {
+            let SparsenessSplit { libsais_sparseness, sample_rate } = split_sparseness(factor);
+
+            assert!(
+                (1..=MAX_SPARSENESS).contains(&libsais_sparseness),
+                "factor {factor}: libsais cannot fold {libsais_sparseness} characters into a symbol"
+            );
+            assert_eq!(
+                libsais_sparseness * sample_rate,
+                factor as usize,
+                "factor {factor}: the two passes together must apply the requested factor"
+            );
+        }
+
+        // The largest divisor wins, so `libsais` does as much of the work as it can.
+        assert_eq!(split_sparseness(10), SparsenessSplit { libsais_sparseness: 5, sample_rate: 2 });
+        assert_eq!(split_sparseness(8), SparsenessSplit { libsais_sparseness: 4, sample_rate: 2 });
+        // 7 is prime and above MAX_SPARSENESS, so the walk falls all the way to 1.
+        assert_eq!(split_sparseness(7), SparsenessSplit { libsais_sparseness: 1, sample_rate: 7 });
+    }
+
+    /// The stride `libsais64` actually produces must equal the sparseness factor the header will
+    /// declare, for *every* factor — not only for those where `libsais_sparseness` and
+    /// `sample_rate` happen to be coprime.
+    ///
+    /// The five factors that regressed (8, 9, 16, 25, 27) are the ones where they share a divisor;
+    /// they are interleaved here with factors that were always correct, so a regression in either
+    /// direction fails. `sa-index`'s `Searcher::try_new` checks exactly this relation at load time,
+    /// which is how the mismatch surfaced: it turned such an index into a startup failure.
+    #[test]
+    fn test_libsais64_stride_matches_the_declared_sparseness_factor() {
+        let mut text = "ACDEFGHIKLMNPQRSTVWY".repeat(20).into_bytes();
+        translate_l_to_i(&mut text);
+        let text_len = text.len();
+
+        for factor in [1u8, 2, 3, 4, 5, 6, 8, 9, 10, 15, 16, 25, 27] {
+            let sa = libsais64(text.clone(), factor).unwrap();
+
+            assert_eq!(
+                sa.len(),
+                text_len.div_ceil(factor as usize),
+                "factor {factor}: entry count must be ceil(text_len / factor), or Searcher::try_new rejects it"
+            );
+            assert!(
+                sa.iter().all(|position| position % factor as i64 == 0),
+                "factor {factor}: every sampled position must be a multiple of the factor"
+            );
+
+            let mut sorted = sa.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), sa.len(), "factor {factor}: sampled positions must be distinct");
+        }
     }
 }
