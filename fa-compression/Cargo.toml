@@ -7,7 +7,7 @@ edition = "2021"
 
 [dev-dependencies]
 criterion = "0.5.1"
-rand = "0.8.5"
+rand = "0.10.2"
 
 # Profile settings belong in the workspace root manifest; Cargo ignores them here. The benches run
 # on the default `bench` profile, which inherits `release`.
