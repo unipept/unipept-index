@@ -68,8 +68,11 @@ pub fn prefetch_read<T>(ptr: *const T) {
         std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0)
     }
     #[cfg(target_arch = "aarch64")]
-    // SAFETY: `prfm` is a pure hint — it never faults and never reads. `readonly` and `nostack`
-    // hold because the instruction touches neither memory nor the stack.
+    // SAFETY: `prfm` is a pure hint — it never faults and never reads. `nostack` holds because the
+    // instruction does not touch the stack. `readonly` is the weaker of the two memory options and
+    // deliberately so: `prfm` performs no architectural memory access, so `nomem` would be sound
+    // too, but it would also let the hint be reordered across stores — and issuing it where the
+    // caller put it, several iterations ahead of the load, is the entire value of a prefetch.
     unsafe {
         std::arch::asm!(
             "prfm pldl1keep, [{p}]",
