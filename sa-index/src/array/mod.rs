@@ -326,9 +326,9 @@ mod tests {
 
     #[test]
     fn test_load_suffix_array_mmap_uncompressed() {
-        use tempdir::TempDir;
+        use tempfile::TempDir;
 
-        let tmp = TempDir::new("mmap_test").unwrap();
+        let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("sa.bin");
 
         let sa = vec![1_i64, 2, 3, 4, 5];
@@ -348,9 +348,9 @@ mod tests {
 
     #[test]
     fn test_load_suffix_array_mmap_compressed() {
-        use tempdir::TempDir;
+        use tempfile::TempDir;
 
-        let tmp = TempDir::new("mmap_compressed_test").unwrap();
+        let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("sa_compressed.bin");
 
         let sa = vec![1_i64, 2, 3, 4, 5, 6, 7, 8, 9, 10];

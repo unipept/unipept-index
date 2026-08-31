@@ -384,7 +384,7 @@ impl ReadBinaryMmap for Proteins {
 mod tests {
     use std::{fs::File, io::Write, path::PathBuf};
 
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_get_taxon() {
-        let tmp_dir = TempDir::new("test_get_taxon").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
 
         let database_file = create_database_file(&tmp_dir);
 
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_get_functional_annotations() {
-        let tmp_dir = TempDir::new("test_get_fa").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
 
         let database_file = create_database_file(&tmp_dir);
 
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_get_concatenated_proteins() {
-        let tmp_dir = TempDir::new("test_get_fa").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
 
         let database_file = create_database_file(&tmp_dir);
 
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_write_and_read_binary_buffered() {
-        let tmp_dir = TempDir::new("test_binary_roundtrip").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let database_file = create_database_file(&tmp_dir);
 
         let original = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_load_from_binary_mmap() {
-        let tmp_dir = TempDir::new("test_mmap_roundtrip").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let database_file = create_database_file(&tmp_dir);
 
         let original = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();

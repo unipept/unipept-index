@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dev-dependencies]
-tempdir = "0.3.7"
 tempfile = "3"
 fa-compression = { path = "../fa-compression" }
 
