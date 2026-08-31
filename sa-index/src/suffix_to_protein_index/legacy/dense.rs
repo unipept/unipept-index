@@ -99,7 +99,7 @@ mod tests {
     use super::{DenseSuffixToProtein, read_dense_mapping, write_dense_mapping};
     use crate::{
         Nullable, ReadBinaryMmap,
-        suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping}
+        suffix_to_protein_index::legacy::{SuffixToProteinIndex, SuffixToProteinMapping}
     };
 
     fn build_text() -> ProteinText {

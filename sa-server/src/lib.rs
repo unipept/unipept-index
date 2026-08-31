@@ -1,6 +1,6 @@
 use std::{error::Error, fs::File, io::BufReader};
 
-use sa_index::{ReadBinary, ReadBinaryMmap, SuffixArray, suffix_to_protein_index::SuffixToProteinMapping};
+use sa_index::{ReadBinary, ReadBinaryMmap, SuffixArray, suffix_to_protein_index::legacy::SuffixToProteinMapping};
 use sa_mappings::proteins::Proteins;
 
 pub fn load_suffix_array_file(file: &str, use_mmap: bool) -> Result<SuffixArray, Box<dyn Error>> {

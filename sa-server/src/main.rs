@@ -10,7 +10,7 @@ use clap::Parser;
 use sa_index::{
     peptide_search::{SearchResult, search_all_peptides},
     sa_searcher::Searcher,
-    suffix_to_protein_index::SuffixToProteinMapping
+    suffix_to_protein_index::legacy::SuffixToProteinMapping
 };
 use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::Deserialize;
