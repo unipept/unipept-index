@@ -986,6 +986,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "protein-metadata"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "bytelines",
+ "fa-compression",
+ "memmap2",
+ "memory-hints",
+ "protein-text",
+ "tempfile",
+]
+
+[[package]]
 name = "protein-text"
 version = "0.1.0"
 dependencies = [
