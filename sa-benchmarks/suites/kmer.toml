@@ -1,0 +1,155 @@
+description = "What each k-mer table buys, per peptide length regime and per backend"
+
+mode = "matrix"
+# Palindrome, not sequential: every arm runs the whole grid twice, forward then reversed. A matrix
+# invocation emits EVERY cell of an arm, so its reps are one sample repeated rather than n samples —
+# whatever shifts the process shifts all of its cells together, and a per-cell band cannot see it.
+# The gap between an arm's two invocations is the only estimate of that the mode can produce, and
+# `floor_of` treats it as a floor. It costs this suite twice its wall clock, and it is what stopped
+# a per-invocation offset being read as an arm difference (`pprot` vs `preloaded` flipped sign
+# between suites while each suite was internally one-sided — the signature of exactly that).
+#
+# Note the asymmetry the ordering has: the slots run forward then reversed (a b c … c b a), so the
+# FIRST arm's two invocations straddle the suite while the last arm's are adjacent. The first arm
+# therefore carries the widest spread, and since `floor_of` takes the widest across both cells of a
+# comparison, that is the one that governs. Declare the arm whose stability is most in question
+# first.
+ordering = "palindrome"
+
+notes = """
+One question: is the k-mer table worth attaching, and if so, which one. Everything else is held at
+the production configuration, so a difference in a row is the table and nothing else.
+
+The mechanism is why this is a suite of its own rather than a column in `defaults`. A search without
+a table binary-searches the suffix array from scratch: a dependent chain of pointer-chasing probes,
+each one a cache miss that cannot be prefetched because its address depends on the previous probe's
+result. A k-mer table skips the first k levels of that chain by looking the prefix up directly. So
+the table's value is a FUNCTION OF PEPTIDE LENGTH — it removes a fixed number of probes, which is a
+large share of a short peptide's work and a small share of a long one's. Reading one number for
+"the k-mer table" averages that away, which is why every row here is per length regime.
+
+`equate_il` is HELD at the shipped value here; only `tryptic` is swept. The two are not equivalent
+contexts, and the instrumented arm in `defaults` is what settles it — with I/L equated or not, the
+search examines about the same candidates (1.26M against 1.15M) and accepts about the same share of
+them (10.7% against 11.0%), and the binary-search/range-scan split barely moves (46/54 against
+42/58). Under tryptic all three change at once: 9x fewer candidates, acceptance down to ~2%, and the
+split inverts to 86/14. So tryptic is a different workload and earns its multiplication; equate_il
+is the same workload with a different answer, which is a question for `defaults` and nowhere else.
+Crossing it here cost 45% of the whole sweep and moved a resolved k-mer winner in 2 of 23 contexts.
+
+Read the table this way:
+
+  * `vs none` is the column that decides. A table that does not clear its row's floor is not a
+    small win, it is no answer — and it still costs its resident bytes.
+  * `table GB` beside it, always. The 6-mer is 2.85 GB resident against the 5-mer's 0.12 GB, a
+    24x cost, and this suite runs UNCONSTRAINED, which is the one regime where
+    that cost is invisible. A 6-mer that wins by less than the floor is a loss. The `table GB`
+    column is computed from k, not measured — the table is dense at 24^k entries of 16 bytes — and
+    it has to be, because one matrix process loads every k the grid names before it sweeps, so
+    process RSS is identical in every row and can attribute nothing.
+  * the two backends should agree on the SIGN. The table shortens the probe chain, which is a
+    property of the search rather than of the storage; if mmap and preloaded disagree about whether
+    a table helps, something else moved.
+
+The verdict this suite is currently expected to reproduce, from the last full-database run: with the
+index resident, the 6-mer is inside the noise floor on medium/small and only +4.1% on large, for
+2.85 GB against 0.12 GB. That measurement is what the shipped default rests on — `sa-builder
+--kmer-size` defaults to 5, because 24x the memory for a win that small is not a trade worth making
+with the index resident.
+
+Under a ceiling the answer inverts: the table's value there is working-set size rather than probe
+count, and the 6-mer reaches +18.4% against no table where a 5-mer manages +3.2%. See `ram` for that
+answer; this suite deliberately does not sweep ceilings, because a table comparison under a cap is a
+different experiment with a root requirement attached. So the 6-mer is a documented tuning step for
+memory-constrained deployments, not the default.
+
+So this suite is expected to keep reporting the 6-mer as unresolved or marginal against the 5-mer,
+and that agrees with what ships rather than contradicting it. What would be a real result here is
+the 6-mer reading BETTER than the 5-mer by more than the floor in this regime — that would mean the
+resident cost now buys something, and the default would have to be re-argued.
+"""
+
+[defaults]
+runs = 100
+# Stop a cell early once its band is as tight as the floor can use. `floor_of` is
+# max(band, slot spread, drift residual, NOISE_FLOOR_PCT) and NOISE_FLOOR_PCT is 3.9, so once a
+# cell's band reaches 3.9% the floor is pinned there and further reps cannot narrow anything —
+# they are provably wasted. Cells noisier than that never converge and run the full `runs`, which
+# is the half of the sweep where the reps are doing something.
+#
+# `min_runs` is the guard, and 40 is not arbitrary. `band` is a percentile spread of the reps
+# ((p90-p10)/2/p50), not a standard error: adding reps makes it converge UPWARD to the true spread
+# rather than shrinking it, and small samples read narrow. Simulated against a distribution whose
+# true band is 8.3%, twenty reps average 7.5% and forty average 7.9%. Below forty the risk is not
+# a slow run, it is a cell that stops on a lucky-narrow band and reports a floor tighter than it
+# earned: for a cell whose true band is 5.1% — just above the target, the only place it can happen —
+# that risk is 34% at min_runs=20, 11% at 40 and 4% at 60. Forty buys most of the protection while
+# still stopping the quiet cells.
+#
+# Deliberately NOT set in `defaults` (the gate wants a fixed rep count so two sessions are
+# comparable), nor in `ram`/`threads` (single mode, and the runner only forwards this for matrix
+# suites), nor in `stream` (its short-call cells are the noisy ones by construction and would run
+# the full count anyway).
+runs_target_band = 3.9
+min_runs = 40
+# Page sweep, then 200k real queries. The sweep only warms what is MAPPED, so on an arm that
+# preloads a structure the one thing that arm exists to buy goes into the first timed cell cold.
+# `ram`/`threads` warm the pipeline and put `pprot` +14-16% over `mmap` on the mixed file; the matrix
+# suites did not and put the same pair at +0.3-9.6%. With `ptext` and `pmap` here — which preload
+# more than any other arm — measuring them behind a page sweep alone would understate exactly the
+# arms the suite was extended to compare.
+warmup = "all:200000"
+amount = 10000
+max_matches = 10000
+# `mixed` is the unbucketed 5..50 file — the query mix a server actually sees, and the one
+# number to quote. The three buckets are there to say WHERE a change landed, since peptide length
+# moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
+files = ["mixed", "small", "medium", "large"]
+
+[[sweep]]
+name = "kmer"
+arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
+# Drift cadence: the reference is re-measured every 8 cells so the process's own movement is
+# measured and removed rather than folded into every table's delta.
+base_every = 8
+# 0 attaches no table at all, and it is the reference every other row is read against. Add a k here
+# and the profile needs a `kmer_tables.k<n>` entry, or the table is built in-process at startup.
+kmer = [0, 5, 6]
+equate_il = [true]
+tryptic = [true, false]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+# `pprot` plus the protein text. This is the arm that closed the gap: at 402fbcb546 it tied fully
+# preloaded in 16 of 16 cells while `pprot` closed only 18%, because the text is read once per
+# residue compared and is the whole of the search cost, where the metadata is the whole of the
+# retrieval cost. Carried by every suite so that no knob is tuned only against configurations that
+# are no longer the fastest ones.
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks. Kept alongside the two extremes everywhere, because
+# a result that holds for both of them can still fail for the configuration actually deployed.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
