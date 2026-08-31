@@ -125,9 +125,9 @@ mod tests {
         }
     }
 
-    /// Everything else is rejected rather than computed. Unchecked, the two halves of this range
-    /// failed differently: below `A` the subtraction underflowed, and from 95 up the rank exceeded
-    /// the field and spilled into the neighbouring residue.
+    /// Everything else is rejected rather than computed, and the two halves of the range would
+    /// fail differently: below `A` the rank subtraction underflows, and from 95 up the rank
+    /// exceeds the field and spills into the neighbouring residue.
     #[test]
     fn every_other_byte_is_rejected() {
         let alphabet: Vec<u8> = (*b"$-").into_iter().chain(b'A'..=b'Z').collect();

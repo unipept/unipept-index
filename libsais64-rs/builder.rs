@@ -49,10 +49,9 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
 
 /// Where the C library comes from, and exactly which commit of it.
 ///
-/// Pinned rather than tracking the default branch. The previous `git clone --depth=1` took whatever
-/// HEAD happened to be at build time, which meant two builds of the same Rust commit were not
-/// necessarily the same binary, a change in the C repository reached every user without a commit
-/// here recording it, and a bad one over there broke CI on a tree nobody had touched.
+/// Pinned to a hash rather than tracking the default branch, so that a given Rust commit always
+/// builds the same binary and no change in the C repository can reach a build — or break CI —
+/// without a commit here recording it.
 ///
 /// Bumping is deliberate: change the hash below and commit it, so the bump is reviewable and
 /// bisectable like any other dependency change.
@@ -74,10 +73,10 @@ fn is_at_pinned_commit() -> bool {
 
 /// Puts [`LIBSAIS_COMMIT`] of the C library in `libsais-packed/`.
 ///
-/// A shallow fetch of the single commit by hash, which costs what the old `--depth=1` clone cost;
-/// GitHub serves any commit reachable from a branch this way. The whole step is skipped when the
-/// directory is already at that commit, so an incremental build no longer re-clones and recompiles
-/// the C library every time.
+/// A shallow fetch of the single commit by hash, which costs what a `--depth=1` clone costs; GitHub
+/// serves any commit reachable from a branch this way. A directory already at that commit is left
+/// alone, so an incremental build skips the fetch entirely — `main` still reconfigures with cmake
+/// and runs make, but both then find their work already done.
 ///
 /// # Errors
 ///

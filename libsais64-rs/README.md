@@ -19,11 +19,10 @@ plain `cargo build` of the workspace — needs:
 The checkout lands in `libsais64-rs/libsais-packed/`, which is gitignored: it is a build artefact,
 not a vendored dependency or a submodule.
 
-**The commit is pinned**, in `LIBSAIS_COMMIT` at the top of `builder.rs`. It used to be whatever
-the C repository's default branch pointed at when you happened to build, which made two builds of
-the same Rust commit two different binaries and let a change over there arrive without a commit
-here. Bump it by editing that constant. A build whose checkout is already at the pinned commit
-skips the fetch and the recompile entirely.
+**The commit is pinned**, in `LIBSAIS_COMMIT` at the top of `builder.rs`, so that a given Rust
+commit always builds the same binary and no change in the C repository reaches a build without a
+commit here recording it. Bump it by editing that constant. A build whose checkout is already at
+the pinned commit skips the fetch; cmake and make still run, and find their work already done.
 
 ## Sparseness and bit packing
 
