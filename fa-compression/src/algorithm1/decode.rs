@@ -122,12 +122,18 @@ impl<'a, 'b> FmtSink<'a, 'b> {
 impl Sink for FmtSink<'_, '_> {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
+        // Nothing more is accepted once the formatter has failed. The output is discarded from that
+        // point anyway, and refusing here is what keeps the buffer from filling behind a `flush`
+        // that has become a no-op.
+        if self.error.is_some() {
+            return;
+        }
+
         if self.len + bytes.len() > self.buffer.len() {
             self.flush();
         }
-        // The flush above leaves room unless it failed, and a failed flush is followed by at most
-        // the writes left in the current byte — two annotation openings, 32 bytes — before
-        // `decode_to` sees `failed()` and stops. The longest single write is `PREFIXES[2]`, 7 bytes.
+        // The flush above either emptied the buffer or set the error the check above catches next
+        // time, so there is always room. The longest single write is `PREFIXES[2]`, 7 bytes.
         debug_assert!(self.len + bytes.len() <= self.buffer.len(), "the flush buffer must have room");
         self.buffer[self.len..self.len + bytes.len()].copy_from_slice(bytes);
         self.len += bytes.len();
