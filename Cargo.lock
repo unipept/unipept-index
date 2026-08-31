@@ -637,9 +637,9 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libdivsufsort-rs"
-version = "0.1.2"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ae6d5de0472a582c6be43c392ba23e8ca59add069c8bd661f6b2a90690be3fb"
+checksum = "eb1e988b05ff4b43511622aab2f3cf8a4027dec6961f624f6fe7e704217406d3"
 dependencies = [
  "cmake",
 ]
