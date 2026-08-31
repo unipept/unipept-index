@@ -44,11 +44,11 @@ trait Encode {
 
 /// Trait for decoding a value from a character set.
 ///
-/// Test-only since the decoder became table-driven: [`decode`] reads its nibbles out of a
-/// `[u8; 16]` rather than through a `match` with a panicking arm, and this is the specification
-/// that table is checked against (`decode_matches_the_character_set` and
-/// `pairs_match_the_character_set` in the `decode` module's tests). Keeping it is what stops the
-/// table and the encoding's definition drifting apart silently.
+/// Test-only: [`decode`] reads its nibbles out of a `[u8; 16]` rather than through a `match` with a
+/// panicking arm, and this trait is the specification that table is checked against
+/// (`decode_matches_the_character_set` and `pairs_match_the_character_set` in the `decode` module's
+/// tests). Keeping it is what stops the table and the encoding's definition drifting apart
+/// silently.
 #[cfg(test)]
 trait Decode {
     /// Decodes the given value from a character set into a character.
