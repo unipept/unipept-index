@@ -60,6 +60,9 @@ pub fn encode(input: &str, compression_table: CompressionTable) -> Vec<u8> {
     let mut encoded: Vec<u8> = Vec::with_capacity(input.len() / 3);
     for annotation in input.split(';') {
         if let Some(index) = compression_table.index_of(annotation) {
+            // Only the low 3 bytes are stored, so an index past the ceiling would be written as a
+            // different, valid-looking one. The table would have to hold 16.7M entries to get here.
+            debug_assert!(index < 1 << 24, "table index {index} does not fit the 3 bytes the format stores");
             encoded.extend_from_slice(&index.to_le_bytes()[0..3])
         }
     }
