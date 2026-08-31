@@ -37,7 +37,8 @@ selects one of three entry points by how wide the packed symbol has to be:
 | 2-3 | 16 bits | `libsais16x64` |
 | 4-6 | 32 bits | `libsais32x64` |
 
-Six is the widest this crate can pack, since `6 * 5 = 30` bits still fits a `u32`. `sa-builder`
+Six is the widest this crate can pack, since `6 * 5 = 30` bits still fits a `u32`, and `sais64`
+refuses anything outside `1..=6` rather than picking a branch with no packer behind it. `sa-builder`
 stops at 5 and reaches any higher `--sparseness-factor` by sampling the result as well.
 
 The returned positions are multiplied back by the sparseness before they are handed out, so callers
