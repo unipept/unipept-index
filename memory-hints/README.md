@@ -21,8 +21,8 @@ wrong is silent:
 * `prefetch_read` is `#[inline(always)]` on purpose — a `call`/`ret` pair around one hint
   instruction costs more than the hint saves.
 * `advise_capacity` must be issued **between reserving an allocation and first writing to it**.
-  One line too late it is not merely weaker, it is worthless, and it still looks like it is working.
-  That ordering bug once left 160 GB of suffix array and 43 GB of text on 4 KB pages.
+  One line too late it is not merely weaker, it is worthless, and it still looks like it is working:
+  a full index gets its 160 GB of suffix array and 43 GB of text on 4 KB pages anyway.
 * `touch_all_pages` launders its read through `black_box`; without that the optimizer deletes the
   loop and the warmup silently does nothing.
 
@@ -34,9 +34,8 @@ faulting itself and costs real time, which is why it runs at startup rather than
 
 Depends on `libc` and `memmap2`. Used by `bitarray`, `protein-text`, `protein-metadata` and
 `sa-index`, none of which depend on one another — which is why this is a crate rather than a module.
-`prefetch` and `hugepages` were separate crates before, the latter inside `bitarray`; they merged
-once it was clear four of `hugepages`' six call sites advise plain `Vec`s in `sa-index` with no bit
-array in sight.
+Nor does any of the three hints belong to a data structure: four of `hugepages`' six call sites
+advise plain `Vec`s in `sa-index`, with no bit array in sight.
 
 ---
 
