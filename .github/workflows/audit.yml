@@ -1,0 +1,50 @@
+# RustSec advisory check over Cargo.lock.
+#
+# Separate from ci.yml because of the schedule: an advisory is published against code that has not
+# changed, so a check that only runs on pushes finds it whenever the next push happens to be —
+# which on a quiet week is never. The weekly run is the point of this workflow; the dependency-file
+# triggers just move the same check earlier when a bump is what introduced the problem.
+#
+# This is not the same thing as Dependabot. Dependabot proposes newer versions; this reads the
+# lockfile as it actually resolves today and fails on a known-vulnerable one.
+name: Audit
+
+on:
+  schedule:
+    # Weekly, independent of Dependabot's monthly run: this is the check that notices an
+    # advisory landing against a lockfile nobody has touched.
+    - cron: '0 7 * * 1'
+  push:
+    branches: [develop, main]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/audit.yml'
+  pull_request:
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The action annotates the run with each advisory it finds, and opens an issue for one found by
+  # the scheduled run — where there is no pull request for it to annotate.
+  checks: write
+  issues: write
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Audit dependencies
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

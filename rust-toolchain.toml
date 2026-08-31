@@ -1,0 +1,26 @@
+# The toolchain every command in this repository uses locally, pinned so that `cargo fmt` is
+# never run by the wrong one.
+#
+# Nightly is REQUIRED for formatting: .rustfmt.toml sets `unstable_features = true` together with
+# `imports_granularity`, `group_imports`, `normalize_comments`, `normalize_doc_attributes`,
+# `overflow_delimited_expr` and `trailing_comma`. Stable rustfmt does not just ignore those — it
+# warns and then reformats the tree against the remaining rules, so a plain `cargo fmt` on a stable
+# default toolchain rewrites files nobody touched. This file removes that failure mode: rustup
+# picks the toolchain below for any cargo invocation inside the repository, so `cargo fmt` is
+# enough and `cargo +nightly fmt` is no longer something to remember.
+#
+# Pinned to a date, not floating `nightly`. rustfmt's output changes between nightlies, and a
+# floating channel means the formatting gate can go red on a commit that touched nothing — which
+# has already happened here once. Bumping is a deliberate three-step: change the date here, run
+# `cargo fmt --all`, and commit the reformat together with the bump so the gate never goes red in
+# between. Add the reformat's hash to .git-blame-ignore-revs while you are there.
+#
+# CI does NOT build on this toolchain. The workspace ships from stable — see the `RUSTUP_TOOLCHAIN:
+# stable` in the test, clippy, coverage and build_index workflows, which takes precedence over this
+# file — so anything that compiles here but not on stable is caught there, not by a user. Only the
+# formatting job runs on the toolchain named below, and it gets it from this file.
+[toolchain]
+# nightly-2026-03-11 == rustc 1.96.0-nightly (0c68443b0 2026-03-10); the toolchain the tree is
+# currently formatted with.
+channel = "nightly-2026-03-11"
+components = ["rustfmt", "clippy"]
