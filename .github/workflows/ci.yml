@@ -36,7 +36,7 @@ jobs:
     # every structure are always compiled, and the searcher's fixtures load each combination by
     # naming its types, so a single `cargo test` exercises all of them — see
     # `sa-index/src/sa_searcher/test_utils.rs`. What the features still choose is which combination
-    # the *binaries* are built for; a `server-backends` job covering that arrives with sa-server.
+    # the *binaries* are built for; that is covered by the `server-backends` job below.
     name: Check + test
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -87,6 +87,47 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
+  server-backends:
+    # `sa-server` is where the storage features now live, and all they do is pick which concrete
+    # type each `Active*` alias names (see `sa-server/src/backends.rs`). Nine resolutions; every one
+    # has to typecheck, and each has to report the backends it actually selected — which is what
+    # `backends::tests` checks, per configuration, so it is run rather than only compiled.
+    # Checking `sa-benchmarks` covers `sa-server` too, since its features forward there and nowhere
+    # else.
+    #
+    # Sequential rather than a matrix on purpose: the nine combinations share one warm target
+    # directory and finish in well under a minute, where nine runners would each pay checkout,
+    # toolchain and cache restore first.
+    name: sa-server backend aliases
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check every backend combination
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in "" "mmap" "mmap,preloaded-text" "mmap,preloaded-proteins" \
+                          "mmap,preloaded-mapping" "mmap,preloaded-text,preloaded-proteins" \
+                          "mmap,preloaded-text,preloaded-mapping" \
+                          "mmap,preloaded-proteins,preloaded-mapping" \
+                          "mmap,preloaded-text,preloaded-proteins,preloaded-mapping"; do
+            echo "== ${features:-(none)} =="
+            if [ -z "$features" ]; then
+              cargo check --all-targets -p sa-benchmarks
+              cargo test -p sa-server
+            else
+              cargo check --all-targets -p sa-benchmarks --features "$features"
+              cargo test -p sa-server --features "$features"
+            fi
+          done
+
   clippy:
     name: Run Clippy
     runs-on: ubuntu-latest
@@ -110,10 +151,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # No `--workspace` here on purpose: it overrides the root `default-members`, which
-      # exists to keep `sa-benchmarks` out of the default build. A dedicated step linting
-      # that package is added when the package itself lands.
+      # exists to keep `sa-benchmarks` out of the default build. That package is linted
+      # explicitly in the next step instead, so it cannot rot.
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run Clippy (sa-benchmarks)
+        run: cargo clippy -p sa-benchmarks --all-features -- -D warnings
 
   docs:
     # The crates carry a lot of prose, and prose rots quietly: a renamed item leaves an intra-doc
