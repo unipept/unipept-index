@@ -11,9 +11,9 @@
 #
 # Pinned to a date, not floating `nightly`. rustfmt's output changes between nightlies, and a
 # floating channel means the formatting gate can go red on a commit that touched nothing — which
-# has already happened here once. Bumping is a deliberate three-step: change the date here, run
+# has already happened here once. Bumping is a deliberate two-step: change the date here, run
 # `cargo fmt --all`, and commit the reformat together with the bump so the gate never goes red in
-# between. Add the reformat's hash to .git-blame-ignore-revs while you are there.
+# between.
 #
 # CI does NOT build on this toolchain. The workspace ships from stable — every job in ci.yml except
 # `fmt`, and the build job in build_index.yml, sets `RUSTUP_TOOLCHAIN: stable`, which takes

@@ -7,8 +7,7 @@
 #
 # NOT covered, and deliberately so:
 #   * rust-toolchain.toml's pinned nightly. Dependabot does not know about it, and bumping it is a
-#     three-step manual ritual (bump, `cargo fmt --all`, add the reformat to .git-blame-ignore-revs)
-#     documented in that file.
+#     two-step manual ritual (bump, then `cargo fmt --all`) documented in that file.
 #   * the libsais-packed C library, which libsais64-rs/builder.rs clones at build time rather than
 #     declaring as a dependency.
 #
