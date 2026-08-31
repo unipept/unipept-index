@@ -1,12 +1,31 @@
-//! The `fa-compression` crate provides functions to encode and decode annotations following a
-//! specific format
+//! Self-contained compression of a single annotation string.
+//!
+//! Every string is encoded on its own, with no shared state: there is no table to build, carry or
+//! keep in sync, and decoding one entry never means decoding the database around it. That is what
+//! makes this the algorithm the index and the server actually use — a protein hit's annotations can
+//! be decoded in isolation.
+//!
+//! The format exploits the fact that Unipept annotations draw on only sixteen characters
+//! (see the private `CharacterSet`), so two of them pack into one byte. [`encode()`] strips the `EC:`, `GO:` and
+//! `IPR:IPR` prefixes, groups what is left into three `,`-separated sections, and packs the result
+//! two characters per byte; [`decode()`] puts the prefixes back. Compression is at least **50%** even
+//! for a single short annotation, and typically **68-71%**.
+//!
+//! Decoding has three entry points, all the same single pass over the input:
+//!
+//! * [`decode()`] — allocates and returns a `String`.
+//! * [`decode_into`] — appends to a buffer you already have.
+//! * [`decoded`] — decodes lazily into a formatter, so a serialiser never materialises the string.
+//!
+//! Compare [`algorithm2`](super::algorithm2), which compresses harder at the cost of a global
+//! table.
 
 use std::ops::BitOr;
 
 mod decode;
 mod encode;
 
-pub use decode::decode;
+pub use decode::{Decoded, decode, decode_into, decoded};
 pub use encode::encode;
 
 /// Trait for encoding a value into a character set.
@@ -24,6 +43,13 @@ trait Encode {
 }
 
 /// Trait for decoding a value from a character set.
+///
+/// Test-only since the decoder became table-driven: [`decode`] reads its nibbles out of a
+/// `[u8; 16]` rather than through a `match` with a panicking arm, and this is the specification
+/// that table is checked against (`decode_matches_the_character_set` and
+/// `pairs_match_the_character_set` in the `decode` module's tests). Keeping it is what stops the
+/// table and the encoding's definition drifting apart silently.
+#[cfg(test)]
 trait Decode {
     /// Decodes the given value from a character set into a character.
     ///
@@ -115,6 +141,7 @@ impl Encode for CharacterSet {
     }
 }
 
+#[cfg(test)]
 impl Decode for CharacterSet {
     /// Decodes the given value from a character set into a character.
     ///
