@@ -1,0 +1,121 @@
+description = "How the storage arms scale as the RAM ceiling falls, and where they cross over"
+
+mode = "single"
+# Palindromic within each ceiling: comparisons are made within a level, so drift across levels does
+# not matter, but drift inside one does — and the storage-axes run showed the per-cell slot spread
+# was the statistic that separated the real effects from the noise.
+ordering = "palindrome"
+needs_root = true
+drop_caches = true
+
+notes = """
+Preloaded memory is non-evictable anonymous memory, so under pressure it displaces the file-backed
+cache the mapped structures live in. Unconstrained that costs nothing and the residency is pure win;
+somewhere below it the trade inverts. This sweeps the ceiling down and looks for that crossover.
+
+The arm this is really about has changed twice. It used to be `pprot`, on the strength of a
+storage-axes A/B that put preloaded-proteins 21.5% ahead with the whole index resident. Then
+`defaults` at b530143049 put the FULLY preloaded arm 21-82% ahead of both mapped arms, once
+`MADV_HUGEPAGE` was issued before the buffers were filled rather than after — it had been leaving
+160 GB of suffix array and 43 GB of text on 4 KiB pages.
+
+Then `defaults` at 402fbcb546 found `ptext` — mapped suffix array, preloaded text and metadata —
+tied with fully preloaded in 16 of 16 cells, and `pprot` closing only 18% of the gap. The
+decomposition was clean: the text is the whole search cost and the metadata the whole retrieval
+cost, while the suffix array, 72% of the index by size, contributes nothing measurable.
+
+So the question here is now specifically about `ptext`, and it is a question about EVICTABILITY
+rather than speed. Unconstrained the two are tied. But `ptext` pins ~78 GB of anonymous memory
+against fully preloaded's 241 GB, and keeps the suffix array and the mapping as page cache the
+kernel can reclaim — 171 GB the fully preloaded arm cannot give back at any price. If that makes
+`ptext` degrade more gently as the ceiling falls, it wins outright rather than tying, and this suite
+is the only thing that can say so. `pprot` stays in because every earlier conclusion here was drawn
+on it, and dropping it in the same run that adds its replacement would leave nothing to attribute a
+change to.
+
+WHICH REGIME THIS MEASURES, and it is only one. Every cell here runs `tryptic=false` on the mixed
+file, because a ceiling sweep cannot afford a workload axis as well. That is the regime in which
+preloading the protein metadata pays: without tryptic the search accepts 9-13% of the candidates it
+examines, so retrieval is a third of the measured work and the structure `pprot` preloads is hot.
+Under tryptic acceptance falls to ~0.5%, retrieval drops to 1-7% of the work, and `defaults` at
+b530143049 measured `pprot` vs `mmap` at a median of -3.6% across the eight tryptic cells against
++9.3% across the eight non-tryptic ones — the sign flips in 15 of 16.
+
+So a `pprot vs mmap` figure from this suite is the best case for `pprot`, not a property of the
+arms. It is stable across the axes swept here; it is not stable across workloads, and `defaults` is
+the suite that says so.
+
+Read the columns in this order:
+
+  * `slots` is the gap between a cell's own two invocations. A delta smaller than it is not an
+    answer for that ceiling — that is the lesson from the storage-axes run, where the real effects
+    had 0.1-2.1% spreads and the noise had 6.8-12.9%.
+  * `drift` is the first quarter of reps against the last. A capped cell begins with the cache the
+    page sweep left behind and climbs; a large positive drift means it had not reached steady state,
+    so its median understates that arm. Both arms drifting similarly is fine.
+  * `majflt` is the mechanism. If throughput falls while major faults stay flat, residency is not
+    what changed and something else is being measured (reclaim CPU, huge-page breakup).
+  * `RSS GB` should track the ceiling once constrained. If it does not, the cap did not apply and
+    the cell is void — check that the page cache was actually dropped.
+
+`--no-theoretical-memory` is on for every cell. That calculation walks every protein's metadata,
+which on an mmap backend faults the whole metadata section in before anything is timed: it would
+pre-warm exactly what the mmap arm should be faulting on demand, and spend the budget being measured.
+
+The 6-mer table is attached to both arms. It removes the top ~21 of ~34 binary-search probes, which
+is exactly the phase that degrades under a cap, so a sweep with it and a sweep without it answer
+different questions. Under a ceiling the 6-mer is +18.4% and -27.9% major faults against no table
+where a 5-mer is +3.2% / -6.2% — the table's value here is working-set size (~1 SA page per query at
+k=6 against ~7 at k=5), not probe count, and that only matters once pages can be evicted.
+
+MADV_WILLNEED over the SA range was swept here and has since been removed from the searcher: the
+advice lands (majflt -23-25%) but buys nothing above the core count, and costs 3.7% resident. See
+the comment where it lived in `sa-index/src/array/mmap.rs` before re-opening that question. The
+reading rule generalises to anything readahead-shaped — check majflt before qps: majflt down with
+minflt up means the advice landed; majflt flat means it never took effect and any qps change is
+syscall cost or noise.
+"""
+
+[defaults]
+runs = 100
+amount = 10000
+peptides = "mixed"
+kmer = 5
+warmup = "all:1000000"
+no_theoretical_memory = true
+
+[axes]
+# GB; 0 = unconstrained. Adjust to the box — these bracket a ~223 GB index on a 295 GB machine.
+ceiling_gb = [0, 223, 167, 140, 112, 78]
+
+# Declared preloaded-first: the palindrome runs forward then reversed (a b c … c b a), so the first
+# arm's two invocations straddle the sweep while the last arm's are adjacent — and the first arm therefore
+# carries the widest slot spread, which is the floor every comparison against it is judged on. The
+# arm whose stability is most in question goes first, and here that is the one holding 241 GB of
+# non-evictable anonymous memory under a cap.
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

@@ -1,0 +1,151 @@
+description = "What this version does at production defaults, across the length regimes and every storage arm"
+
+# Matrix mode: ONE process per backend loads the index once and sweeps the whole grid in-process.
+# Index loads dominate everything else at full-database scale (37e9 suffixes), so a process per
+# configuration would spend the entire run loading. One index load per arm per slot, not one per cell.
+mode = "matrix"
+# Palindrome, not sequential: every arm runs the whole grid twice, forward then reversed. A matrix
+# invocation emits EVERY cell of an arm, so its reps are one sample repeated rather than n samples —
+# whatever shifts the process shifts all of its cells together, and a per-cell band cannot see it.
+# The gap between an arm's two invocations is the only estimate of that the mode can produce, and
+# `floor_of` treats it as a floor. It costs this suite twice its wall clock, and it is what stopped
+# a per-invocation offset being read as an arm difference (`pprot` vs `preloaded` flipped sign
+# between suites while each suite was internally one-sided — the signature of exactly that).
+#
+# Note the asymmetry the ordering has: the slots run forward then reversed (a b c … c b a), so the
+# FIRST arm's two invocations straddle the suite while the last arm's are adjacent. The first arm
+# therefore carries the widest spread, and since `floor_of` takes the widest across both cells of a
+# comparison, that is the one that governs. Declare the arm whose stability is most in question
+# first.
+ordering = "palindrome"
+
+notes = """
+This is the sweep to run after any change to the search path, and the only one to run on every
+commit. It answers ONE question — what does this version do at the settings that ship — and it
+answers it at high precision, which is what makes a delta against a baseline mean something.
+
+Everything is held at the production configuration except the two SEARCH OPTIONS, `equate_il` and
+`tryptic`, which are not tuning at all: they are what the caller asked for. Both are in production
+use, they change the shape of the search rather than its parameters, and a regression that only
+shows up under one of them is a regression this suite has to catch. Four rows per length regime.
+
+What is deliberately NOT here, and where it went:
+
+  * the k-mer tables      -> `run.sh kmer`
+
+Those used to be folded in, which made this suite a 34-row grid that took six times as long and
+re-measured settled questions on every commit. The split is not just cheaper: a regression gate and
+a parameter sweep want opposite things from a run. The gate wants few cells at high precision so a
+3% move is visible; the sweep wants many cells at whatever precision fits the budget. One grid
+cannot be both, and when it tried, it was the gate that lost.
+
+Read the `noise` column before the ratio columns. It is the widest of the cell's own rep band, the
+gap between the two invocations the palindrome ordering gives each arm, and the measured 3.9%
+full-database floor. Any delta below it is noise, not signal.
+
+WHAT THIS SUITE LAST FOUND (b530143049, 2026-08-18): the fully preloaded arm leads both mapped arms
+by 21-82%, resolved in 16 of 16 cells against a median floor of 13.8%. It is worth knowing how close
+that came to being missed. The run before it (fbc6615a5b) had preloaded and `pprot` tied in all 16
+cells, and the tie was not physics — it was `MADV_HUGEPAGE` being issued after `read_binary` had
+already filled the buffers, which left 160 GB of suffix array and 43 GB of text on 4 KiB pages on a
+box whose THP setting is `madvise`. Moving the advice ahead of the fill was the entire difference:
+preloaded moved 1.26-1.83x while `mmap` moved 1.01x and `pprot` 0.95x, and the instrumented arm's
+`examined` counts are byte-identical across the two runs, so it is the same work done faster.
+
+Two habits come out of that. Read the arm ratios against `noise` and not against each other — the
+floor doubled between those runs, because it now carries between-invocation spread, and the effect
+still cleared it. And when an arm that holds strictly more in RAM fails to beat one that holds less,
+treat it as a bug in the arm rather than a fact about the index, because that is what it was.
+
+Held values are not assumed: the run records every coordinate and the summary prints back what
+these cells actually ran at. If that line does not read the production configuration, this run was
+not measuring the defaults.
+"""
+
+[defaults]
+# Fixed, and deliberately high. The 3.9% full-database noise floor that `records.NOISE_FLOOR_PCT`
+# carries was measured at 20 reps; this suite ran 20 until 3bb32710f0, which raised it to 100 in the
+# same change that added the `pmap` arm. 100 buys precision below that floor rather than re-deriving
+# it. Do not lower it without re-checking the floor — and note that `NOISE_FLOOR_PCT` and the rep
+# count quoted in `src/main.rs` (`--runs-target-band`) both still describe the 20-rep measurement.
+#
+# This is the one suite where precision is the point, so there is no `runs_target_band` here — a
+# cell that stops early stops at a band this suite exists to resolve.
+runs = 100
+amount = 10000
+max_matches = 10000
+# Page sweep, then 200k real queries. The sweep alone warms only what is MAPPED, so on an arm that
+# preloads a structure the one thing that arm exists to buy goes into the first timed cell cold —
+# and `ram`/`threads`, which do warm the pipeline, put `pprot` +14-16% over `mmap` on the mixed file
+# where this suite put the same pair at +0.3-9.6%. 200k rather than the million those suites use:
+# this is a grid of 16 cells at 100 reps each, so the steady state is reached inside the measurement
+# anyway and the warmup only has to stop the FIRST cells paying for the rest.
+warmup = "all:200000"
+
+# `mixed` is the unbucketed 5..50 file — the query mix a server actually sees, and the one
+# number to quote. The three buckets are there to say WHERE a change landed, since peptide length
+# moves throughput by two orders of magnitude and a mixed-only result hides which regime moved.
+files = ["mixed", "small", "medium", "large"]
+
+# Production defaults: 5-mer table, and the search path at the constants it ships with.
+# One measurement per context — the searcher has no runtime settings, so a block IS its contexts.
+[[sweep]]
+name = "defaults"
+# Time what happens AFTER retrieval as well: turning each hit into the `ProteinInfo` the server
+# returns (an fa-compression decode plus an accession String) and serialising the lot to JSON.
+# Only here — it is expensive, and it is the one measurement that says what
+# fraction of a real request every other suite's throughput actually describes.
+response = true
+arms = ["preloaded", "mmap", "pprot", "ptext", "pmap"]
+kmer = [5]
+equate_il = [true, false]
+tryptic = [true, false]
+
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+# The middle ground, and the one that turned out to matter: everything mapped except the protein
+# store, which is the structure retrieval walks. Kept alongside the two extremes everywhere, because
+# a result that holds for both of them can still fail for the configuration actually deployed.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+# Everything `pprot` preloads, plus the protein TEXT. Added 2026-08-18 to answer one question:
+# where the rest of the gap to `preloaded` is.
+#
+# The pooled phase split at 85c2e772b1 put the two mapped arms 1.52x and 1.08x behind `preloaded` in
+# RETRIEVAL — so `pprot` closes ~85% of that gap, which is what preloading the metadata is for — and
+# 1.54x and 1.57x behind it in SEARCH, where `pprot` closes nothing at all. It cannot: it maps the
+# suffix array and the text exactly as `mmap` does. All that is left of the gap is search, and the
+# two structures search reads are the SA (160.23 GB) and the text (43.34 GB).
+#
+# There is no `preloaded-sa` (see `sa-server/src/backends.rs`) — the suffix array follows `mmap`
+# alone — so this arm is the only way to separate the two. It differs from `pprot` in the text and
+# in nothing else, so the search delta between them IS the text's contribution and whatever is left
+# over is the SA's. If search collapses here, most of preloading's win is reachable while leaving
+# 160 GB mapped; if it does not move, the cost is in the SA and only the fully preloaded build
+# reaches it.
+#
+# The per-structure sweep that once answered this was retired after it settled on `pprot` — but that
+# was settled BEFORE the huge-page ordering fix, i.e. while preloading was crippled by having its
+# `MADV_HUGEPAGE` issued after the buffers were already faulted in. `startup.toml` says to add an
+# arm back when a structure's storage becomes a live question again. It has.
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]
