@@ -1,118 +1,103 @@
-//! This module provides utilities for reading and writing the bitarray as binary.
+//! Reading and writing a bit array's backing words as raw little-endian `u64`s.
+//!
+//! Deliberately headerless: the width and the value count live in the *containing* structure's
+//! header, which the caller reads and writes itself. See [`Binary`] for what that leaves the
+//! caller responsible for.
 
 use std::io::{BufRead, Read, Result, Write};
 
-use crate::BitArray;
-
-/// The `Binary` trait provides methods for reading and writing a struct as binary.
+/// Reads and writes a bit array's backing words as packed binary data.
+///
+/// The payload is words only — no length, no width, no marker. Everything needed to interpret it
+/// lives in a header the caller owns, which is what makes a bit array embeddable in a larger file
+/// alongside other sections.
+///
+/// # This is not `binary_traits::ReadBinary`
+///
+/// The workspace has a second pair of traits with the same method names, in `binary-traits`, for
+/// whole index structures. They are not interchangeable, and the contracts are opposite where it
+/// matters most: `binary_traits::ReadBinary` consumes *exactly* the bytes its writer produced, so
+/// several structures chain over one stream, whereas [`read_binary`](Self::read_binary) below
+/// consumes the reader to EOF. A structure implements that trait; its bit array implements this
+/// one, usually from inside that implementation.
 pub trait Binary {
-    /// Writes the struct as binary to the given writer.
+    /// Writes every backing word as little-endian bytes, and nothing else.
     ///
-    /// # Arguments
-    ///
-    /// * `writer` - The writer to write the binary data to.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if the write operation is successful, or an `Err` if an error occurs.
+    /// The output is `word_len() * 8` bytes. A caller embedding this in a larger file must have
+    /// written whatever header is needed to interpret it — at minimum the width and the value
+    /// count, neither of which is recoverable from the payload.
     fn write_binary<W: Write>(&self, writer: &mut W) -> Result<()>;
 
-    /// Reads binary data into a struct from the given reader.
+    /// Refills the backing store from `reader`, **consuming it to EOF**.
     ///
-    /// # Arguments
+    /// Two consequences, both of which every caller in this workspace has had to handle:
     ///
-    /// * `reader` - The reader to read the binary data from.
+    /// * *It reads to the end of the stream.* Since the payload carries no length, there is
+    ///   nothing to stop at. A bit array is therefore either the last section of its file — as in
+    ///   the compressed suffix array — or the caller must hand over a bounded reader, as
+    ///   `protein-text` does with `Read::take` when the protein metadata follows the text in
+    ///   the same file. Passing an unbounded reader for a non-final section silently swallows the
+    ///   sections after it.
+    /// * *It validates nothing.* The store ends up holding however many words the reader happened
+    ///   to yield, which says nothing about the count the caller's header declared. A truncated
+    ///   file therefore loads cleanly and panics later, on the first lookup past the real data,
+    ///   unless the caller compares `word_len()` against `required_words()` afterwards. Both
+    ///   implementations expose that pair for exactly this check.
     ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if the read operation is successful, or an `Err` if an error occurs.
+    /// Errors only on an I/O error from `reader`; a short stream is not one.
     fn read_binary<R: BufRead>(&mut self, reader: R) -> Result<()>;
 }
 
-/// Implementation of the `Binary` trait for the `BitArray` struct.
-impl Binary for BitArray {
-    /// Writes the binary representation of the `BitArray` to the given writer.
-    ///
-    /// # Arguments
-    ///
-    /// * `writer` - The writer to which the binary data will be written.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if there was a problem writing to the writer.
-    fn write_binary<W: Write>(&self, writer: &mut W) -> Result<()> {
-        for value in self.data.iter() {
-            writer.write_all(&value.to_le_bytes())?;
-        }
-
-        Ok(())
+/// Writes each `u64` word as little-endian bytes.
+pub(crate) fn write_words<W: Write>(data: &[u64], writer: &mut W) -> Result<()> {
+    for value in data {
+        writer.write_all(&value.to_le_bytes())?;
     }
-
-    /// Reads the binary representation of the `BitArray` from the given reader.
-    ///
-    /// # Arguments
-    ///
-    /// * `reader` - The reader from which the binary data will be read.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if there was a problem reading from the reader.
-    fn read_binary<R: BufRead>(&mut self, mut reader: R) -> Result<()> {
-        self.data.clear();
-
-        let mut buffer = vec![0; 8 * 1024];
-
-        loop {
-            let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-            for buffer_slice in buffer[..bytes_read].as_chunks::<8>().0 {
-                self.data.push(u64::from_le_bytes(*buffer_slice));
-            }
-
-            if finished {
-                break;
-            }
-        }
-
-        Ok(())
-    }
+    Ok(())
 }
 
-/// Fills the buffer with data read from the input.
+/// Bytes pulled out of the reader per iteration of the refill loop below.
 ///
-/// # Arguments
+/// Chosen to be **larger than the caller's `BufReader` capacity**, not for its own sake. Every
+/// preloaded structure is read through `binary_traits::load_owned`, whose `BufReader` uses the
+/// default 8 KiB; `BufReader::read` only bypasses that internal buffer when the destination slice
+/// is at least as large as its capacity. At 8 KiB it never was, so each request was served partly
+/// from the internal buffer and partly from a fresh refill — one syscall *and two memcpys* per
+/// 8 KiB, over the whole suffix array and the whole protein text. Above the capacity the bypass
+/// applies: one syscall and one copy straight into this buffer.
 ///
-/// * `input` - The input source to read data from.
-/// * `buffer` - The buffer to fill with data.
-///
-/// # Returns
-///
-/// Returns a tuple `(finished, bytes_read)` where `finished` indicates whether the end of the input
-/// is reached, and `bytes_read` is the number of bytes read into the buffer.
-fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<(bool, usize)> {
-    // Store the buffer size in advance, because rust will complain
-    // about the buffer being borrowed mutably while it's borrowed
-    let buffer_size = buffer.len();
+/// So this is not a knob to tidy downwards. Anything below `load_owned`'s `BufReader` capacity
+/// silently restores the double copy.
+const READ_CHUNK_BYTES: usize = 4 << 20;
 
-    let mut writable_buffer_space = buffer.as_mut();
-
+/// Clears `data` and refills it by reading little-endian `u64` words from `reader`.
+pub(crate) fn read_words_into<R: BufRead>(data: &mut Vec<u64>, mut reader: R) -> Result<()> {
+    data.clear();
+    let mut buffer = vec![0u8; READ_CHUNK_BYTES];
     loop {
-        match input.read(writable_buffer_space) {
-            // No bytes written, which means we've completely filled the buffer
-            // or we've reached the end of the file
-            Ok(0) => {
-                return Ok((!writable_buffer_space.is_empty(), buffer_size - writable_buffer_space.len()));
-            }
+        let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
+        for chunk in buffer[..bytes_read].as_chunks::<8>().0 {
+            data.push(u64::from_le_bytes(*chunk));
+        }
+        if finished {
+            break;
+        }
+    }
+    Ok(())
+}
 
-            // We've read {bytes_read} bytes
-            Ok(bytes_read) => {
-                // Shrink the writable buffer slice
-                writable_buffer_space = writable_buffer_space[bytes_read..].as_mut();
-            }
-
-            // An error occurred while reading
-            Err(e) => {
-                return Err(e);
-            }
+/// Fills `buffer` as fully as possible from `input`.
+///
+/// Returns `(finished, bytes_read)` where `finished` is true when the reader
+/// returned EOF before the buffer was full.
+pub(crate) fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> Result<(bool, usize)> {
+    let buffer_size = buffer.len();
+    let mut writable = buffer.as_mut();
+    loop {
+        match input.read(writable) {
+            Ok(0) => return Ok((!writable.is_empty(), buffer_size - writable.len())),
+            Ok(n) => writable = writable[n..].as_mut(),
+            Err(e) => return Err(e)
         }
     }
 }
@@ -121,7 +106,7 @@ fn fill_buffer<T: Read>(input: &mut T, buffer: &mut Vec<u8>) -> std::io::Result<
 mod tests {
     use super::*;
 
-    pub struct ErrorInput;
+    struct ErrorInput;
 
     impl Read for ErrorInput {
         fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
@@ -133,12 +118,9 @@ mod tests {
     fn test_fill_buffer() {
         let input_str = "a".repeat(8_000);
         let mut input = input_str.as_bytes();
-
         let mut buffer = vec![0; 800];
-
         loop {
             let (finished, bytes_read) = fill_buffer(&mut input, &mut buffer).unwrap();
-
             if finished {
                 assert!(bytes_read < 800);
                 break;
@@ -152,40 +134,6 @@ mod tests {
     fn test_fill_buffer_read_error() {
         let mut input = ErrorInput;
         let mut buffer = vec![0; 800];
-
         assert!(fill_buffer(&mut input, &mut buffer).is_err());
-    }
-
-    #[test]
-    fn test_write_binary() {
-        let mut bitarray = BitArray::with_capacity(4, 40);
-        bitarray.set(0, 0x1234567890_u64);
-        bitarray.set(1, 0xabcdef0123_u64);
-        bitarray.set(2, 0x4567890abc_u64);
-        bitarray.set(3, 0xdef0123456_u64);
-
-        let mut buffer = Vec::new();
-        bitarray.write_binary(&mut buffer).unwrap();
-
-        assert_eq!(buffer, vec![
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
-        ]);
-    }
-
-    #[test]
-    fn test_read_binary() {
-        let buffer = [
-            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
-        ];
-
-        let mut bitarray = BitArray::with_capacity(4, 40);
-        bitarray.read_binary(&buffer[..]).unwrap();
-
-        assert_eq!(bitarray.get(0), 0x1234567890);
-        assert_eq!(bitarray.get(1), 0xabcdef0123);
-        assert_eq!(bitarray.get(2), 0x4567890abc);
-        assert_eq!(bitarray.get(3), 0xdef0123456);
     }
 }

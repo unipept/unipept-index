@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, Write}
 };
 
-use bitarray::{Binary, BitArray, data_to_writer};
+use bitarray::{Binary, DynBitArray, data_to_writer};
 
 use crate::SuffixArray;
 
@@ -50,13 +50,13 @@ pub fn load_compressed_suffix_array(
     Ok(SuffixArray::Compressed(sa, sample_rate))
 }
 
-/// Inner helper: load the compressed BitArray body (no header).
+/// Inner helper: load the compressed DynBitArray body (no header).
 pub(super) fn load_compressed(
     reader: &mut impl BufRead,
     bits_per_value: usize,
     size: usize
-) -> Result<BitArray, Box<dyn Error>> {
-    let mut compressed_suffix_array = BitArray::with_capacity(size, bits_per_value);
+) -> Result<DynBitArray, Box<dyn Error>> {
+    let mut compressed_suffix_array = DynBitArray::with_capacity(size, bits_per_value);
     compressed_suffix_array
         .read_binary(reader)
         .map_err(|_| "Could not read the compressed suffix array from the binary file")?;
