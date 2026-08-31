@@ -535,9 +535,9 @@ mod tests {
         let input_string = "ACICA-CAC$";
         let text = ProteinText::from_string(input_string);
         let text_slice = text.slice(1, 5);
-        let eq_slice_true = [b'C', b'I', b'C', b'A'];
-        let eq_slice_false = [b'C', b'C', b'C', b'A'];
-        let eq_slice_il_true = [b'C', b'L', b'C', b'A'];
+        let eq_slice_true = *b"CICA";
+        let eq_slice_false = *b"CCCA";
+        let eq_slice_il_true = *b"CLCA";
 
         assert!(text_slice.equals_slice(&eq_slice_true, false));
         assert!(!text_slice.equals_slice(&eq_slice_false, false));
@@ -550,8 +550,8 @@ mod tests {
         let text = ProteinText::from_string(input_string);
         let text_slice = text.slice(1, 5);
         let il_locations = [1, 2];
-        let il_true = [b'C', b'I', b'L', b'A'];
-        let il_false = [b'C', b'I', b'C', b'A'];
+        let il_true = *b"CILA";
+        let il_false = *b"CICA";
 
         assert!(text_slice.check_il_locations(0, &il_locations, &il_true));
         assert!(!text_slice.check_il_locations(0, &il_locations, &il_false));

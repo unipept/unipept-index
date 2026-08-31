@@ -64,8 +64,8 @@ impl Binary for BitArray {
 
         loop {
             let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-            for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
-                self.data.push(u64::from_le_bytes(buffer_slice.try_into().unwrap()));
+            for buffer_slice in buffer[..bytes_read].as_chunks::<8>().0 {
+                self.data.push(u64::from_le_bytes(*buffer_slice));
             }
 
             if finished {

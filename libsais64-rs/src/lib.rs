@@ -19,30 +19,27 @@ pub mod bitpacking;
 /// Returns Some with the suffix array build over the text if construction succeeds
 /// Returns None if construction of the suffix array failed
 pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'static str> {
-    let exit_code;
+    
     let mut sa;
 
     let required_bits = libsais_sparseness * BITS_PER_CHAR;
-    if required_bits <= 8 {
+    let exit_code = if required_bits <= 8 {
         // bitpacked values fit in uint8_t
         let packed_text = if libsais_sparseness == 1 { text } else { bitpack_text_8(text, libsais_sparseness) };
 
         sa = vec![0; packed_text.len()];
-        exit_code =
-            unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
+        unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) }
     } else if required_bits <= 16 {
         // bitpacked values fit in uint16_t
         let packed_text = bitpack_text_16(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
-        exit_code =
-            unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
+        unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) }
     } else {
         let packed_text = bitpack_text_32(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
         let k = 1 << (libsais_sparseness * BITS_PER_CHAR);
-        exit_code =
-            unsafe { libsais32x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, k, 0, null_mut()) };
-    }
+        unsafe { libsais32x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, k, 0, null_mut()) }
+    };
 
     if exit_code == 0 {
         for elem in sa.iter_mut() {
