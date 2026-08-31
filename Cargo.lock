@@ -908,6 +908,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "protein-text"
+version = "0.1.0"
+dependencies = [
+ "binary-traits",
+ "bitarray",
+ "memmap2",
+ "memory-hints",
+ "tempfile",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
