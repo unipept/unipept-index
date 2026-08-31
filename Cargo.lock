@@ -220,6 +220,9 @@ dependencies = [
 [[package]]
 name = "bitarray"
 version = "0.1.0"
+dependencies = [
+ "memory-hints",
+]
 
 [[package]]
 name = "bitflags"
