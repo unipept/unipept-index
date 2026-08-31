@@ -71,6 +71,18 @@ fn is_at_pinned_commit() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the checkout has uncommitted changes to tracked files.
+///
+/// Untracked files are ignored: cmake and make leave their output in this directory, so it is never
+/// clean by that measure.
+fn has_local_changes() -> bool {
+    Command::new("git")
+        .args(["-C", LIBSAIS_DIRECTORY, "status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .map(|out| out.status.success() && !out.stdout.is_empty())
+        .unwrap_or(false)
+}
+
 /// Puts [`LIBSAIS_COMMIT`] of the C library in `libsais-packed/`.
 ///
 /// A shallow fetch of the single commit by hash, which costs what a `--depth=1` clone costs; GitHub
@@ -83,6 +95,16 @@ fn is_at_pinned_commit() -> bool {
 /// Any of the git invocations failing.
 fn fetch_libsais() -> Result<(), Box<dyn Error>> {
     if is_at_pinned_commit() {
+        // Edits to the C source are the one reason to be here by hand, and the re-checkout below
+        // starts with `rm -rf`, so they are reported rather than deleted. The build is no longer
+        // the pinned one, and saying so is the most this can do without eating someone's work.
+        if has_local_changes() {
+            println!(
+                "cargo:warning=libsais64-rs: {}/ is at the pinned commit but has uncommitted changes; \
+                 building those instead of the pinned source. Delete the directory for a clean checkout.",
+                LIBSAIS_DIRECTORY
+            );
+        }
         return Ok(());
     }
 
