@@ -26,16 +26,32 @@ module swap cluster/gallade
 
 prefix="/kyukon/data/gent/vo/000/gvo00038/suffix-array"
 
-# load Rust
-module load Rust/1.75.0-GCCcore-12.3.0
-module load Clang/16.0.6-GCCcore-12.3.0 # needed to build the bindings from Rust to C
-module load CMake/3.26.3-GCCcore-12.3.0
+# Load Rust and the C toolchain the libsais/libdivsufsort bindings are built with.
+#
+# Deliberately unpinned: the available modules change, and the versions this script used to pin
+# (Rust 1.75) no longer build the workspace, which needs Rust >= 1.87 for `usize::is_multiple_of`.
+# Run `module avail Rust` and pick the newest, keeping the GCCcore suffix consistent across all
+# three if you do pin them.
+module load Rust
+module load Clang # needed to build the bindings from Rust to C
+module load CMake
+
+# Printed so that a toolchain too old to build the workspace is obvious in the job log.
+rustc --version
 
 # go to current working dir and execute
 cd $PBS_O_WORKDIR
 
 # compile
-cargo build --release
+cargo build --release -p sa-builder
 
-# execute
-./target/release/sa-builder -d "$prefix"/proteins.tsv -o "$prefix"/sa_sparse3.bin -s 2 -a "lib-sais" -c false
+# Execute. All four --output-* paths come from one run and are only usable together, so they go
+# into one directory; --output-kmer-table is the only optional one (k defaults to 5).
+./target/release/sa-builder \
+  --database-file     "$prefix"/proteins.tsv \
+  --output-sa         "$prefix"/sa_sparse3.bin \
+  --output-proteins   "$prefix"/proteins.bin \
+  --output-mapping    "$prefix"/mapping.bin \
+  --output-kmer-table "$prefix"/kmer_table.bin \
+  --sparseness-factor 3 \
+  --construction-algorithm lib-sais
