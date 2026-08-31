@@ -1,10 +1,11 @@
-use criterion::black_box;
+use std::hint::black_box;
+
 use fa_compression::algorithm2::{CompressionTable, decode, encode};
 
 use super::util::generate_annotation;
 
 fn generate_encoded_annotations_and_table(count: usize) -> (Vec<u8>, CompressionTable) {
-    let mut random = rand::thread_rng();
+    let mut random = rand::rng();
 
     let mut compression_table1 = CompressionTable::new();
     let mut compression_table2 = CompressionTable::new();

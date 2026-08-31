@@ -49,7 +49,10 @@ use std::{
 
 use clap::Parser;
 use protein_text::ProteinTextBackend as _;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    Rng, RngExt, SeedableRng,
+    rngs::{StdRng, SysRng}
+};
 use rayon::prelude::*;
 use sa_index::{
     KmerTable, ProteinsBackend as _, SuffixArrayBackend,
@@ -591,8 +594,8 @@ fn first_byte_of(path: &Path) -> Result<u8, Box<dyn Error>> {
 fn generate_peptides(rng: &mut impl Rng, count: usize, min_len: usize, max_len: usize) -> Vec<String> {
     (0..count)
         .map(|_| {
-            let len = rng.gen_range(min_len..=max_len);
-            (0..len).map(|_| AMINO_ACIDS[rng.gen_range(0..AMINO_ACIDS.len())] as char).collect()
+            let len = rng.random_range(min_len..=max_len);
+            (0..len).map(|_| AMINO_ACIDS[rng.random_range(0..AMINO_ACIDS.len())] as char).collect()
         })
         .collect()
 }
@@ -1725,7 +1728,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("Random peptide seed: {}", s);
             StdRng::seed_from_u64(s)
         }
-        None => StdRng::from_entropy()
+        None => StdRng::try_from_rng(&mut SysRng).expect("could not seed from OS entropy")
     };
 
     for run in 1..=args.runs {
