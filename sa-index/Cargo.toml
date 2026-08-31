@@ -7,19 +7,15 @@ edition = "2021"
 
 [dev-dependencies]
 tempfile = "3"
-fa-compression = { path = "../fa-compression" }
 
 [dependencies]
-protein-metadata = { path = "../protein-metadata" }
-protein-text = { path = "../protein-text" }
-memory-hints = { path = "../memory-hints" }
 binary-traits = { path = "../binary-traits" }
-clap = { version = "4.4.8", features = ["derive"] }
 memmap2 = "0.9"
 rayon = "1.8.1"
+fa-compression = { path = "../fa-compression" }
 serde = { version = "1.0.197", features = ["derive"] }
-sa-mappings = { path = "../sa-mappings" }
-text-compression = { path = "../text-compression" }
+memory-hints = { path = "../memory-hints" }
+protein-metadata = { path = "../protein-metadata" }
+protein-text = { path = "../protein-text" }
 bitarray = { path = "../bitarray" }
 serde_json = "1.0.116"
-succinct = "0.5.2"
