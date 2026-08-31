@@ -17,7 +17,7 @@ preloaded-mapping = []
 
 [dependencies]
 binary-traits = { path = "../binary-traits" }
-axum = { version = "0.7.4", features = ["macros"] }
+axum = { version = "0.8.9", features = ["macros"] }
 serde = { version = "1.0.197", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros"] }
 sa-index = { path = "../sa-index" }
