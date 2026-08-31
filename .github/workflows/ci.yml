@@ -41,10 +41,10 @@ jobs:
       # `--all-targets` is not redundant with the `cargo test` below: it is the only thing that
       # compiles `fa-compression`'s criterion bench, which `cargo test` does not build.
       - name: Run cargo check
-        run: cargo check --all-targets
+        run: cargo check --all-targets --locked
 
       - name: Run cargo test
-        run: cargo test
+        run: cargo test --locked
 
   release-build:
     # `cargo check` proves the workspace typechecks; it does not prove it links, and it never
@@ -66,7 +66,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binaries
-        run: cargo build --release
+        run: cargo build --release --locked
 
   clippy:
     name: Run Clippy
