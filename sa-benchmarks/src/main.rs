@@ -63,7 +63,7 @@ use sa_index::{
 };
 use sa_server::{ActiveSearcher, load_kmer_table_file, load_mapping_file, load_proteins_file, load_suffix_array_file};
 use serde::{Deserialize, Serialize};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 /// Schema version — increment when the output JSON format changes.
 /// v2: matrix records aggregate `runs` reps into one line and carry a `stats` spread.
@@ -701,10 +701,18 @@ fn page_faults() -> (u64, u64) {
 }
 
 /// Returns the current process's resident set size in bytes via sysinfo.
+///
+/// Only memory is refreshed. The blanket `refresh_processes` also pulls CPU, disk usage, the
+/// executable path and the process's tasks, and upstream flags that last one as expensive on
+/// Linux — cost this function has no use for, paid around a timed region.
 fn measure_process_memory() -> u64 {
     let pid = Pid::from(std::process::id() as usize);
     let mut sys = System::new();
-    sys.refresh_process(pid);
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        false,
+        ProcessRefreshKind::nothing().with_memory()
+    );
     sys.process(pid).map(|p| p.memory()).unwrap_or(0)
 }
 
@@ -1860,5 +1868,15 @@ mod tests {
         assert_eq!(parse_proc_stat_faults(""), (0, 0));
         assert_eq!(parse_proc_stat_faults("1234 (no-close-paren 1 2 3"), (0, 0));
         assert_eq!(parse_proc_stat_faults("1234 (short) R 1 2"), (0, 0));
+    }
+
+    /// The RSS reading has the same silent-zero failure as the fault counters above: asking
+    /// `sysinfo` to refresh the wrong thing still compiles, and `measure_process_memory` then
+    /// falls through its `unwrap_or(0)` and reports a process using no memory at all. That is a
+    /// plausible-looking number in a results table, so nothing downstream would flag it. A live
+    /// process always has a non-zero resident set, which makes this cheap to assert.
+    #[test]
+    fn measures_a_non_zero_resident_set() {
+        assert!(measure_process_memory() > 0, "RSS reported as zero — the refresh kind is wrong");
     }
 }
