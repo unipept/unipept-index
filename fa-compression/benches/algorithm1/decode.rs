@@ -1,11 +1,12 @@
-use criterion::black_box;
+use std::hint::black_box;
+
 use fa_compression::algorithm1::{decode, decoded, encode};
 
 use super::util::generate_annotation;
 
 /// Generate `count` random annotations, encoded.
 fn generate_encoded_annotations(count: usize) -> Vec<u8> {
-    let mut random = rand::thread_rng();
+    let mut random = rand::rng();
 
     let mut annotations = String::new();
     for _ in 0..count {

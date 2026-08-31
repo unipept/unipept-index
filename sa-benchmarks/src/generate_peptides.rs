@@ -7,7 +7,7 @@ use std::{
 
 use clap::Parser;
 use protein_text::ProteinTextBackend;
-use rand::Rng;
+use rand::RngExt;
 use sa_index::ProteinsBackend as _;
 use sa_server::load_proteins_file;
 
@@ -90,12 +90,12 @@ fn sample_peptides<T: ProteinTextBackend>(text: &T, amount: usize, min_len: usiz
         min_len
     );
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut peptides = Vec::with_capacity(amount);
 
     for _ in 0..amount {
         // Pick a uniform random position among all valid starts.
-        let pos = rng.gen_range(0..total_valid_starts);
+        let pos = rng.random_range(0..total_valid_starts);
 
         // Map pos → (run_index, offset_within_run) via binary search on prefix sums.
         let run_idx = prefix_sums.partition_point(|&s| s <= pos);
@@ -105,7 +105,7 @@ fn sample_peptides<T: ProteinTextBackend>(text: &T, amount: usize, min_len: usiz
         let (run_start, run_len) = runs[run_idx];
         let start = run_start + offset;
         let available = run_len - offset;
-        let len = rng.gen_range(min_len..=max_len.min(available));
+        let len = rng.random_range(min_len..=max_len.min(available));
 
         let peptide: String = (0..len).map(|i| text.get(start + i) as char).collect();
         peptides.push(peptide);
