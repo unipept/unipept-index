@@ -138,18 +138,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     fetch_libsais()?;
 
     // compile the c library
-    Command::new("rm").args(["-f", "libsais-packed/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    let cmake_cache = format!("{}/CMakeCache.txt", LIBSAIS_DIRECTORY);
+    Command::new("rm").args(["-f", &cmake_cache]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    let cmake_build_dir = format!("-B{}", LIBSAIS_DIRECTORY);
     exit_status_to_result(
         "cmake",
         Command::new("cmake")
-            .args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais-packed", "-Blibsais-packed"])
+            .args(["-DCMAKE_BUILD_TYPE=\"Release\"", LIBSAIS_DIRECTORY, cmake_build_dir.as_str()])
             .status()?
     )?;
-    exit_status_to_result("make", Command::new("make").args(["-C", "libsais-packed"]).status()?)?;
+    exit_status_to_result("make", Command::new("make").args(["-C", LIBSAIS_DIRECTORY]).status()?)?;
 
-    // link the c libsais-packed library to rust
+    // link the c library to rust
     let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais-packed").display());
+    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join(LIBSAIS_DIRECTORY).display());
     println!("cargo:rustc-link-lib=static=libsais");
 
     // The bindgen::Builder is the main entry point
