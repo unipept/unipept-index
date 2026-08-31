@@ -13,12 +13,19 @@ pub mod bitpacking;
 ///
 /// # Arguments
 /// * `text` - The text used for suffix array construction
+/// * `libsais_sparseness` - How many consecutive residues are packed into one symbol before
+///   construction, which is how the array is sampled. 1 packs nothing and indexes every position.
 ///
 /// # Returns
 ///
-/// Returns Some with the suffix array build over the text if construction succeeds
-/// Returns None if construction of the suffix array failed
-pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'static str> {
+/// The suffix array over `text`, with every position multiplied back by `libsais_sparseness` so
+/// that callers see positions in the original text.
+///
+/// # Errors
+///
+/// If `text` holds a byte outside the protein alphabet, naming the byte and where it sits; or if
+/// libsais itself fails.
+pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, String> {
     let mut sa;
 
     let required_bits = libsais_sparseness * BITS_PER_CHAR;
@@ -39,14 +46,12 @@ pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'st
         unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) }
     } else if required_bits <= 16 {
         // bitpacked values fit in uint16_t
-        let packed_text =
-            bitpack_text_16(text, libsais_sparseness).map_err(|_| "text holds a byte outside the protein alphabet")?;
+        let packed_text = bitpack_text_16(text, libsais_sparseness).map_err(|err| err.to_string())?;
         sa = vec![0; packed_text.len()];
         // SAFETY: as above, with `T` a `*const u16` matching `bitpack_text_16`'s `Vec<u16>`.
         unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) }
     } else {
-        let packed_text =
-            bitpack_text_32(text, libsais_sparseness).map_err(|_| "text holds a byte outside the protein alphabet")?;
+        let packed_text = bitpack_text_32(text, libsais_sparseness).map_err(|err| err.to_string())?;
         sa = vec![0; packed_text.len()];
         let k = 1 << (libsais_sparseness * BITS_PER_CHAR);
         // SAFETY: as above, with `T` a `*const u32` matching `bitpack_text_32`'s `Vec<u32>`. This
@@ -63,7 +68,7 @@ pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'st
         }
         Ok(sa)
     } else {
-        Err("Failed building suffix array")
+        Err("Failed building suffix array".to_string())
     }
 }
 
@@ -78,5 +83,13 @@ mod tests {
         let sa = sais64(text, sparseness_factor);
         let correct_sa: Vec<i64> = vec![12, 8, 0, 4];
         assert_eq!(sa, Ok(correct_sa));
+    }
+
+    /// The offending byte and where it sits reach the caller, rather than a fixed string.
+    #[test]
+    fn reports_where_an_unsupported_byte_is() {
+        let error = sais64("BAN*NA$".as_bytes().to_vec(), 2).expect_err("'*' is not in the alphabet");
+        assert!(error.contains("0x2a"), "{error}");
+        assert!(error.contains("position 3"), "{error}");
     }
 }
