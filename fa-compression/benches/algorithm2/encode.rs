@@ -1,10 +1,11 @@
-use criterion::black_box;
+use std::hint::black_box;
+
 use fa_compression::algorithm2::{CompressionTable, encode};
 
 use super::util::generate_annotation;
 
 fn generate_decoded_annotations_and_table(count: usize) -> (String, CompressionTable) {
-    let mut random = rand::thread_rng();
+    let mut random = rand::rng();
 
     let mut compression_table = CompressionTable::new();
 
