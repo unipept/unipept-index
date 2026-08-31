@@ -38,12 +38,20 @@ const ASSUMED_PAGE_SIZE: usize = 4096;
 /// divide it by the elapsed time: a sweep running at disk bandwidth and one running at memcpy
 /// bandwidth do the same work and take an order of magnitude apart, and without the byte count the
 /// two are indistinguishable in a report.
+///
+/// # Panics
+///
+/// If `range` is not contained in `mmap`. Slicing is the only check `range` gets, so validating it
+/// is the caller's job. That matters for the `ReadBinaryMmap` implementations that call this: their
+/// contract is to return an error rather than panic on a truncated or corrupt file, so a section
+/// range derived from a bad header has to be rejected before it reaches this function.
 pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) -> u64 {
     #[cfg(unix)]
     let _ = mmap.advise(memmap2::Advice::Sequential);
 
-    let swept = mmap[range.clone()].len() as u64;
-    for chunk in mmap[range].chunks(ASSUMED_PAGE_SIZE) {
+    let section = &mmap[range];
+    let swept = section.len() as u64;
+    for chunk in section.chunks(ASSUMED_PAGE_SIZE) {
         std::hint::black_box(chunk[0]);
     }
 
