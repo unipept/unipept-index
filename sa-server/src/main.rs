@@ -1,7 +1,5 @@
-use std::{
-    error::Error,
-    sync::Arc
-};
+use std::{error::Error, sync::Arc};
+
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -14,8 +12,8 @@ use sa_index::{
     sa_searcher::Searcher,
     suffix_to_protein_index::SuffixToProteinMapping
 };
-use serde::Deserialize;
 use sa_server::{load_mapping_file, load_proteins_file, load_suffix_array_file};
+use serde::Deserialize;
 
 /// Enum that represents all possible commandline arguments
 #[derive(Parser, Debug)]

@@ -1,0 +1,41 @@
+# Dependency updates. Three ecosystems live in this repository:
+#
+#   * cargo          — the workspace's Cargo.toml/Cargo.lock (all members resolve against the one
+#                      lockfile at the root, so a single "/" entry covers every crate).
+#   * github-actions — the `uses:` pins in .github/workflows/*.yml.
+#   * devcontainers  — the image and features in .devcontainer/devcontainer.json.
+#
+# NOT covered, and deliberately so:
+#   * rust-toolchain.toml's pinned nightly. Dependabot does not know about it, and bumping it is a
+#     two-step manual ritual (bump, then `cargo fmt --all`) documented in that file.
+#   * the libsais-packed C library, which libsais64-rs/builder.rs clones at build time rather than
+#     declaring as a dependency.
+#
+# Monthly, ungrouped, and effectively uncapped: one PR per update, so each bump is reviewed and
+# merged on its own evidence rather than as part of a batch that is green as a whole.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+      time: "13:00"
+      timezone: Europe/Brussels
+    open-pull-requests-limit: 99
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+      time: "13:00"
+      timezone: Europe/Brussels
+    open-pull-requests-limit: 99
+
+  - package-ecosystem: devcontainers
+    directory: "/"
+    schedule:
+      interval: monthly
+      time: "13:00"
+      timezone: Europe/Brussels
+    open-pull-requests-limit: 99

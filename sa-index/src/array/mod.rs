@@ -6,14 +6,14 @@ use std::{
 
 use bitarray::{Binary, BitArray};
 use memmap2::Mmap;
-use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
+use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
-pub mod original;
 pub mod compressed;
 pub mod mmap;
+pub mod original;
 
-pub use original::dump_suffix_array;
 pub use compressed::{dump_compressed_suffix_array, load_compressed_suffix_array};
+pub use original::dump_suffix_array;
 
 /// Represents a suffix array.
 pub enum SuffixArray {
@@ -81,23 +81,17 @@ impl SuffixArray {
 impl WriteBinary for SuffixArray {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            SuffixArray::Original(sa, sparseness_factor) => {
-                original::dump_suffix_array(sa, sparseness_factor, writer)
-            }
+            SuffixArray::Original(sa, sparseness_factor) => original::dump_suffix_array(sa, sparseness_factor, writer),
             SuffixArray::Compressed(bit_array, sample_rate) => {
-                writer.write_all(&[bit_array.bits_per_value() as u8])
+                writer
+                    .write_all(&[bit_array.bits_per_value() as u8])
                     .map_err(|_| "Could not write the required bits")?;
-                writer.write_all(&[sample_rate])
-                    .map_err(|_| "Could not write the sparseness factor")?;
-                writer.write_all(&(bit_array.len() as u64).to_le_bytes())
-                    .map_err(|_| "Could not write the size")?;
-                bit_array.write_binary(writer)
-                    .map_err(|_| "Could not write the compressed suffix array")?;
+                writer.write_all(&[sample_rate]).map_err(|_| "Could not write the sparseness factor")?;
+                writer.write_all(&(bit_array.len() as u64).to_le_bytes()).map_err(|_| "Could not write the size")?;
+                bit_array.write_binary(writer).map_err(|_| "Could not write the compressed suffix array")?;
                 Ok(())
             }
-            SuffixArray::MmapBacked { .. } => {
-                Err("WriteBinary is not supported for SuffixArray::MmapBacked".into())
-            }
+            SuffixArray::MmapBacked { .. } => Err("WriteBinary is not supported for SuffixArray::MmapBacked".into())
         }
     }
 }
@@ -112,7 +106,9 @@ impl ReadBinary for SuffixArray {
         let sample_rate = buf1[0];
 
         let mut buf8 = [0u8; 8];
-        reader.read_exact(&mut buf8).map_err(|_| "Could not read the size of the suffix array from the binary file")?;
+        reader
+            .read_exact(&mut buf8)
+            .map_err(|_| "Could not read the size of the suffix array from the binary file")?;
         let size = u64::from_le_bytes(buf8) as usize;
 
         if bits_per_value == 64 {
@@ -264,8 +260,8 @@ mod tests {
     #[test]
     fn test_load_suffix_array() {
         let buffer = vec![
-            64, 1, 5, 0, 0, 0, 0, 0, 0, 0,
-            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0,
+            64, 1, 5, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4,
+            0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0,
         ];
 
         let mut reader = buffer.as_slice();
@@ -326,9 +322,9 @@ mod tests {
 
     #[test]
     fn test_load_suffix_array_mmap_uncompressed() {
-        use tempdir::TempDir;
+        use tempfile::TempDir;
 
-        let tmp = TempDir::new("mmap_test").unwrap();
+        let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("sa.bin");
 
         let sa = vec![1_i64, 2, 3, 4, 5];
@@ -348,9 +344,9 @@ mod tests {
 
     #[test]
     fn test_load_suffix_array_mmap_compressed() {
-        use tempdir::TempDir;
+        use tempfile::TempDir;
 
-        let tmp = TempDir::new("mmap_compressed_test").unwrap();
+        let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("sa_compressed.bin");
 
         let sa = vec![1_i64, 2, 3, 4, 5, 6, 7, 8, 9, 10];

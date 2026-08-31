@@ -6,10 +6,11 @@ use std::{
 
 use clap::Parser;
 use sa_builder::{Arguments, build_ssa};
-use sa_index::array::dump_compressed_suffix_array;
-use sa_index::array::dump_suffix_array;
-use sa_index::suffix_to_protein_index::dump_mapping;
-use sa_index::WriteBinary;
+use sa_index::{
+    WriteBinary,
+    array::{dump_compressed_suffix_array, dump_suffix_array},
+    suffix_to_protein_index::dump_mapping
+};
 use sa_mappings::proteins::Proteins;
 
 fn main() {
@@ -25,8 +26,7 @@ fn main() {
     } = Arguments::parse();
 
     let proteins = timed("loading the proteins", || {
-        Proteins::load_from_tsv(&database_file)
-            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
+        Proteins::load_from_tsv(&database_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()))
     });
     let bits_per_value = (proteins.text().len() as f64).log2().ceil() as usize;
 
@@ -68,7 +68,9 @@ fn main() {
         .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
 
     timed("writing proteins binary", || {
-        proteins.write_binary(&mut proteins_file).unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
+        proteins
+            .write_binary(&mut proteins_file)
+            .unwrap_or_else(|err| eprint_and_exit(err.to_string().as_str()));
     });
     eprintln!("\tOutput: {}", output_proteins);
 }

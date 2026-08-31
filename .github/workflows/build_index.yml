@@ -12,6 +12,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # rust-toolchain.toml pins a nightly and outranks `rustup default stable`, so without this the
+    # released binaries would be built by that nightly rather than the stable this ships from.
+    env:
+      RUSTUP_TOOLCHAIN: stable
 
     steps:
       # Check out the most recent version of the repository with submodules

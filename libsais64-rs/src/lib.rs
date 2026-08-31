@@ -19,30 +19,36 @@ pub mod bitpacking;
 /// Returns Some with the suffix array build over the text if construction succeeds
 /// Returns None if construction of the suffix array failed
 pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'static str> {
-    let exit_code;
     let mut sa;
 
     let required_bits = libsais_sparseness * BITS_PER_CHAR;
-    if required_bits <= 8 {
+    let exit_code = if required_bits <= 8 {
         // bitpacked values fit in uint8_t
         let packed_text = if libsais_sparseness == 1 { text } else { bitpack_text_8(text, libsais_sparseness) };
 
         sa = vec![0; packed_text.len()];
-        exit_code =
-            unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
+        // SAFETY: `T` points at `packed_text`'s `n` initialised `u8`s and libsais only reads them;
+        // `SA` points at `sa`, which was just allocated with exactly `n` `i64`s, and libsais writes
+        // `n + fs` of them with `fs = 0`. Both vectors outlive the call, and `freq` is documented as
+        // optional, so a null pointer means "do not collect frequencies". `n` cannot overflow `i64`
+        // because a `Vec`'s length is at most `isize::MAX`.
+        unsafe { libsais64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) }
     } else if required_bits <= 16 {
         // bitpacked values fit in uint16_t
         let packed_text = bitpack_text_16(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
-        exit_code =
-            unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) };
+        // SAFETY: as above, with `T` a `*const u16` matching `bitpack_text_16`'s `Vec<u16>`.
+        unsafe { libsais16x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, 0, null_mut()) }
     } else {
         let packed_text = bitpack_text_32(text, libsais_sparseness);
         sa = vec![0; packed_text.len()];
         let k = 1 << (libsais_sparseness * BITS_PER_CHAR);
-        exit_code =
-            unsafe { libsais32x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, k, 0, null_mut()) };
-    }
+        // SAFETY: as above, with `T` a `*const u32` matching `bitpack_text_32`'s `Vec<u32>`. This
+        // entry point also takes the alphabet size `k`, and libsais indexes a `k`-element bucket
+        // array with the values it reads: `bitpack_text_32` packs `libsais_sparseness` characters of
+        // `BITS_PER_CHAR` bits each, so every value is below the `k` computed on the line above.
+        unsafe { libsais32x64(packed_text.as_ptr(), sa.as_mut_ptr(), packed_text.len() as i64, k, 0, null_mut()) }
+    };
 
     if exit_code == 0 {
         for elem in sa.iter_mut() {

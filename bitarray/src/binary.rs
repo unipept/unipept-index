@@ -64,8 +64,8 @@ impl Binary for BitArray {
 
         loop {
             let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-            for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
-                self.data.push(u64::from_le_bytes(buffer_slice.try_into().unwrap()));
+            for buffer_slice in buffer[..bytes_read].as_chunks::<8>().0 {
+                self.data.push(u64::from_le_bytes(*buffer_slice));
             }
 
             if finished {
@@ -175,8 +175,10 @@ mod tests {
 
     #[test]
     fn test_read_binary() {
-        let buffer = [0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0];
+        let buffer = [
+            0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x56, 0x34, 0x12, 0xf0
+        ];
 
         let mut bitarray = BitArray::with_capacity(4, 40);
         bitarray.read_binary(&buffer[..]).unwrap();

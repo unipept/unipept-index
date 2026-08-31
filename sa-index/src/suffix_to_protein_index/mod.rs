@@ -1,20 +1,18 @@
-use std::io::Write;
-use std::error::Error;
-use std::path::Path;
-use std::fs::File;
+use std::{error::Error, fs::File, io::Write, path::Path};
 
 use clap::ValueEnum;
 use memmap2::Mmap;
 use text_compression::ProteinText;
+
 use crate::{ReadBinary, ReadBinaryMmap};
 
+pub mod bitvec;
 pub mod dense;
 pub mod sparse;
-pub mod bitvec;
 
+pub use bitvec::BitVecSuffixToProtein;
 pub use dense::DenseSuffixToProtein;
 pub use sparse::SparseSuffixToProtein;
-pub use bitvec::BitVecSuffixToProtein;
 
 /// Enum used to define the commandline arguments and choose which index style is used
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
@@ -81,7 +79,7 @@ impl ReadBinary for SuffixToProteinMapping {
             0 => Box::new(dense::read_dense_mapping(reader)?),
             1 => Box::new(sparse::read_sparse_mapping(reader)?),
             2 => Box::new(bitvec::read_bitvec_mapping(reader)?),
-            t => return Err(format!("Unknown mapping type byte: {}", t).into()),
+            t => return Err(format!("Unknown mapping type byte: {}", t).into())
         };
         Ok(SuffixToProteinMapping(index))
     }
@@ -133,8 +131,10 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
                 if mmap.len() < expected_size {
                     return Err(format!(
                         "Bitvec mapping file is truncated: expected {} bytes, got {}",
-                        expected_size, mmap.len()
-                    ).into());
+                        expected_size,
+                        mmap.len()
+                    )
+                    .into());
                 }
 
                 let bits_offset = 17;
@@ -142,7 +142,7 @@ impl ReadBinaryMmap for SuffixToProteinMapping {
 
                 Box::new(bitvec::MmapBitVecSuffixToProtein { mmap, bit_len, bits_offset, counts_offset })
             }
-            t => return Err(format!("Unknown mapping type byte: {}", t).into()),
+            t => return Err(format!("Unknown mapping type byte: {}", t).into())
         };
         Ok(SuffixToProteinMapping(index))
     }
@@ -156,8 +156,10 @@ mod tests {
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinary, ReadBinaryMmap};
-    use crate::suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingStyle, dump_mapping};
+    use crate::{
+        Nullable, ReadBinary, ReadBinaryMmap,
+        suffix_to_protein_index::{SuffixToProteinMapping, SuffixToProteinMappingStyle, dump_mapping}
+    };
 
     fn build_text() -> ProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));

@@ -41,8 +41,8 @@ fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result
 
     loop {
         let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-        for buffer_slice in buffer[..bytes_read].chunks_exact(8) {
-            vec.push(i64::from_le_bytes(buffer_slice.try_into().unwrap()));
+        for buffer_slice in buffer[..bytes_read].as_chunks::<8>().0 {
+            vec.push(i64::from_le_bytes(*buffer_slice));
         }
 
         if finished {
@@ -56,14 +56,22 @@ fn read_vec_i64(vec: &mut Vec<i64>, mut reader: impl BufRead) -> std::io::Result
 /// Writes the suffix array to a binary file.
 pub fn dump_suffix_array(sa: Vec<i64>, sparseness_factor: u8, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     writer.write(&[64_u8]).map_err(|_| "Could not write the required bits to the writer")?;
-    writer.write(&[sparseness_factor]).map_err(|_| "Could not write the sparseness factor to the writer")?;
-    writer.write(&(sa.len()).to_le_bytes()).map_err(|_| "Could not write the size of the suffix array to the writer")?;
+    writer
+        .write(&[sparseness_factor])
+        .map_err(|_| "Could not write the sparseness factor to the writer")?;
+    writer
+        .write(&(sa.len()).to_le_bytes())
+        .map_err(|_| "Could not write the size of the suffix array to the writer")?;
     write_vec_i64(sa, writer).map_err(|_| "Could not write the suffix array to the writer")?;
     Ok(())
 }
 
 /// Inner helper: load the original (uncompressed) suffix array body after the header is already read.
-pub(super) fn load_original(reader: &mut impl BufRead, sample_rate: u8, size: usize) -> Result<Vec<i64>, Box<dyn Error>> {
+pub(super) fn load_original(
+    reader: &mut impl BufRead,
+    sample_rate: u8,
+    size: usize
+) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut sa = Vec::with_capacity(size);
     read_vec_i64(&mut sa, reader).map_err(|_| "Could not read the suffix array from the binary file")?;
     let _ = sample_rate; // used by caller
@@ -146,8 +154,8 @@ mod tests {
         dump_suffix_array(sa, 1, &mut buffer).unwrap();
 
         assert_eq!(buffer, vec![
-            64, 1, 5, 0, 0, 0, 0, 0, 0, 0,
-            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0
+            64, 1, 5, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4,
+            0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0
         ]);
     }
 

@@ -1,13 +1,20 @@
 //! This module contains the `Protein` and `Proteins` structs, which are used to represent proteins
 //! and collections of proteins, respectively.
 
-use std::{error::Error, fs::File, io::{BufRead, BufReader, Write}, path::Path, str::from_utf8, sync::Arc};
+use std::{
+    error::Error,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    path::Path,
+    str::from_utf8,
+    sync::Arc
+};
 
 use bytelines::ByteLines;
 use fa_compression::algorithm1::{decode, encode};
 use memmap2::Mmap;
-pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
 use text_compression::{ProteinText, bit_array_byte_size};
+pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
 /// The separation character used in the input string
 pub static SEPARATION_CHARACTER: u8 = b'-';
@@ -60,7 +67,7 @@ pub enum Proteins {
         /// The compressed protein sequence text for all proteins, stored in memory.
         text: ProteinText,
         /// The collection of all proteins with their associated metadata.
-        proteins: Vec<Protein>,
+        proteins: Vec<Protein>
     },
     /// Data accessed via memory-mapped file.
     MmapBacked {
@@ -76,8 +83,8 @@ pub enum Proteins {
         /// Byte offset into `mmap` where the concatenated UniProt ID byte data begins.
         uid_data_offset: usize,
         /// Byte offset into `mmap` where the concatenated functional annotation byte data begins.
-        fa_data_offset: usize,
-    },
+        fa_data_offset: usize
+    }
 }
 
 impl Proteins {
@@ -90,7 +97,7 @@ impl Proteins {
     pub fn text(&self) -> &ProteinText {
         match self {
             Proteins::InMemory { text, .. } => text,
-            Proteins::MmapBacked { text, .. } => text,
+            Proteins::MmapBacked { text, .. } => text
         }
     }
 
@@ -98,7 +105,7 @@ impl Proteins {
     pub fn len(&self) -> usize {
         match self {
             Proteins::InMemory { proteins, .. } => proteins.len(),
-            Proteins::MmapBacked { protein_count, .. } => *protein_count,
+            Proteins::MmapBacked { protein_count, .. } => *protein_count
         }
     }
 
@@ -118,7 +125,9 @@ impl Proteins {
                     functional_annotations: &p.functional_annotations
                 }
             }
-            Proteins::MmapBacked { mmap, fixed_table_offset, uid_data_offset, fa_data_offset, .. } => {
+            Proteins::MmapBacked {
+                mmap, fixed_table_offset, uid_data_offset, fa_data_offset, ..
+            } => {
                 let entry_off = fixed_table_offset + index * 16;
                 let entry = &mmap[entry_off..entry_off + 16];
 
@@ -131,9 +140,10 @@ impl Proteins {
                 ProteinRef {
                     uniprot_id: std::str::from_utf8(
                         &mmap[uid_data_offset + uid_offset..uid_data_offset + uid_offset + uid_len]
-                    ).unwrap(),
+                    )
+                    .unwrap(),
                     taxon_id,
-                    functional_annotations: &mmap[fa_data_offset + fa_offset..fa_data_offset + fa_offset + fa_len],
+                    functional_annotations: &mmap[fa_data_offset + fa_offset..fa_data_offset + fa_offset + fa_len]
                 }
             }
         }
@@ -211,7 +221,6 @@ impl Proteins {
 
         Ok(input_string)
     }
-
 }
 
 impl WriteBinary for Proteins {
@@ -232,10 +241,8 @@ impl WriteBinary for Proteins {
                 WriteBinary::write_binary(text, writer)?;
 
                 let protein_count = proteins.len() as u64;
-                let uid_bytes_total: u64 =
-                    proteins.iter().map(|p| p.uniprot_id.len() as u64).sum();
-                let fa_bytes_total: u64 =
-                    proteins.iter().map(|p| p.functional_annotations.len() as u64).sum();
+                let uid_bytes_total: u64 = proteins.iter().map(|p| p.uniprot_id.len() as u64).sum();
+                let fa_bytes_total: u64 = proteins.iter().map(|p| p.functional_annotations.len() as u64).sum();
 
                 writer.write_all(&protein_count.to_le_bytes())?;
                 writer.write_all(&uid_bytes_total.to_le_bytes())?;
@@ -265,9 +272,7 @@ impl WriteBinary for Proteins {
 
                 Ok(())
             }
-            Proteins::MmapBacked { .. } => {
-                Err("write_binary() is not supported on MmapBacked Proteins".into())
-            }
+            Proteins::MmapBacked { .. } => Err("write_binary() is not supported on MmapBacked Proteins".into())
         }
     }
 }
@@ -350,7 +355,7 @@ impl ReadBinaryMmap for Proteins {
 
         // Parse metadata section
         let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
-        let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?, ) as usize;
+        let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?) as usize;
 
         let fixed_table_offset = meta_offset
             .checked_add(24)
@@ -375,7 +380,7 @@ impl ReadBinaryMmap for Proteins {
             protein_count,
             fixed_table_offset,
             uid_data_offset,
-            fa_data_offset,
+            fa_data_offset
         })
     }
 }
@@ -384,7 +389,7 @@ impl ReadBinaryMmap for Proteins {
 mod tests {
     use std::{fs::File, io::Write, path::PathBuf};
 
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -394,8 +399,10 @@ mod tests {
 
         file.write_all("P12345\t1\tMLPGLALLLLAAWTARALEV\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
             .unwrap();
-        file.write_all("P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
-            .unwrap();
+        file.write_all(
+            "P54321\t2\tPTDGNAGLLAEPQIAMFCGRLNMHMNVQNG\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes()
+        )
+        .unwrap();
         file.write_all("P67890\t6\tKWDSDPSGTKTCIDT\tGO:0009279;IPR:IPR016364;IPR:IPR008816\n".as_bytes())
             .unwrap();
         file.write_all(
@@ -448,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_get_taxon() {
-        let tmp_dir = TempDir::new("test_get_taxon").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
 
         let database_file = create_database_file(&tmp_dir);
 
@@ -462,29 +469,24 @@ mod tests {
 
     #[test]
     fn test_get_functional_annotations() {
-        let tmp_dir = TempDir::new("test_get_fa").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
 
         let database_file = create_database_file(&tmp_dir);
 
         let proteins = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
 
         for i in 0..proteins.len() {
-            assert_eq!(
-                proteins.get(i).get_functional_annotations(),
-                "GO:0009279;IPR:IPR016364;IPR:IPR008816"
-            );
+            assert_eq!(proteins.get(i).get_functional_annotations(), "GO:0009279;IPR:IPR016364;IPR:IPR008816");
         }
     }
 
     #[test]
     fn test_get_concatenated_proteins() {
-        let tmp_dir = TempDir::new("test_get_fa").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
 
         let database_file = create_database_file(&tmp_dir);
 
-        let proteins =
-            Proteins::text_from_tsv(database_file.to_str().unwrap())
-                .unwrap();
+        let proteins = Proteins::text_from_tsv(database_file.to_str().unwrap()).unwrap();
 
         let expected = b'L';
         assert_eq!(proteins.get(4), expected);
@@ -492,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_write_and_read_binary_buffered() {
-        let tmp_dir = TempDir::new("test_binary_roundtrip").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let database_file = create_database_file(&tmp_dir);
 
         let original = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
@@ -513,27 +515,17 @@ mod tests {
             let load = loaded.get(i);
             assert_eq!(orig.uniprot_id, load.uniprot_id, "uniprot_id mismatch at {}", i);
             assert_eq!(orig.taxon_id, load.taxon_id, "taxon_id mismatch at {}", i);
-            assert_eq!(
-                orig.functional_annotations,
-                load.functional_annotations,
-                "fa mismatch at {}",
-                i
-            );
+            assert_eq!(orig.functional_annotations, load.functional_annotations, "fa mismatch at {}", i);
         }
         assert_eq!(loaded.text().len(), original_save.text().len());
         for i in 0..original_save.text().len() {
-            assert_eq!(
-                loaded.text().get(i),
-                original_save.text().get(i),
-                "text mismatch at {}",
-                i
-            );
+            assert_eq!(loaded.text().get(i), original_save.text().get(i), "text mismatch at {}", i);
         }
     }
 
     #[test]
     fn test_load_from_binary_mmap() {
-        let tmp_dir = TempDir::new("test_mmap_roundtrip").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let database_file = create_database_file(&tmp_dir);
 
         let original = Proteins::load_from_tsv(database_file.to_str().unwrap()).unwrap();
@@ -552,21 +544,11 @@ mod tests {
             let mmap = mmap_loaded.get(i);
             assert_eq!(orig.uniprot_id, mmap.uniprot_id, "uniprot_id mismatch at {}", i);
             assert_eq!(orig.taxon_id, mmap.taxon_id, "taxon_id mismatch at {}", i);
-            assert_eq!(
-                orig.functional_annotations,
-                mmap.functional_annotations,
-                "fa mismatch at {}",
-                i
-            );
+            assert_eq!(orig.functional_annotations, mmap.functional_annotations, "fa mismatch at {}", i);
         }
         assert_eq!(mmap_loaded.text().len(), original_save.text().len());
         for i in 0..original_save.text().len() {
-            assert_eq!(
-                mmap_loaded.text().get(i),
-                original_save.text().get(i),
-                "text mismatch at {}",
-                i
-            );
+            assert_eq!(mmap_loaded.text().get(i), original_save.text().get(i), "text mismatch at {}", i);
         }
     }
 }

@@ -1,13 +1,15 @@
-use std::io::{Read, Write};
-use std::error::Error;
+use std::{
+    error::Error,
+    io::{Read, Write}
+};
 
 use memmap2::Mmap;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use succinct::{BitRankSupport, BitVec, BitVecPush, BitVector, Rank9};
 use text_compression::ProteinText;
 
-use crate::Nullable;
 use super::SuffixToProteinIndex;
+use crate::Nullable;
 
 /// Mapping that uses O(n) memory (1-2 bits per suffix) with n the size of the input text, with retrieval
 /// of the protein in O(1)
@@ -30,7 +32,7 @@ pub struct MmapBitVecSuffixToProtein {
     pub(super) mmap: Mmap,
     pub(super) bit_len: u64,
     pub(super) bits_offset: usize,   // byte offset to first raw block
-    pub(super) counts_offset: usize, // byte offset to first superblock cell
+    pub(super) counts_offset: usize  // byte offset to first superblock cell
 }
 
 impl SuffixToProteinIndex for BitVecSuffixToProtein {
@@ -65,11 +67,7 @@ impl MmapBitVecSuffixToProtein {
         let level1 = u64::from_le_bytes(self.mmap[cell_off..cell_off + 8].try_into().unwrap());
         let packed = u64::from_le_bytes(self.mmap[cell_off + 8..cell_off + 16].try_into().unwrap());
 
-        let level2 = if word_offset == 0 {
-            0u64
-        } else {
-            (packed >> ((word_offset - 1) * 9)) & 0x1FF
-        };
+        let level2 = if word_offset == 0 { 0u64 } else { (packed >> ((word_offset - 1) * 9)) & 0x1FF };
 
         // Count 1-bits in positions 0..=bit_offset of this block.
         // Shift left by (63 - bit_offset) so that bits 0..=bit_offset land in the
@@ -121,7 +119,10 @@ impl BitVecSuffixToProtein {
     }
 }
 
-pub(super) fn write_bitvec_mapping<W: Write>(mapping: &BitVecSuffixToProtein, writer: &mut W) -> Result<(), Box<dyn Error>> {
+pub(super) fn write_bitvec_mapping<W: Write>(
+    mapping: &BitVecSuffixToProtein,
+    writer: &mut W
+) -> Result<(), Box<dyn Error>> {
     let bit_len = mapping.rank.bit_len();
     let block_count = mapping.rank.block_len();
     writer.write_all(&bit_len.to_le_bytes())?;
@@ -197,15 +198,16 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-    use std::io::Write as IoWrite;
+    use std::io::{Cursor, Write as IoWrite};
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinaryMmap};
-    use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
-    use super::{BitVecSuffixToProtein, write_bitvec_mapping, read_bitvec_mapping};
+    use super::{BitVecSuffixToProtein, read_bitvec_mapping, write_bitvec_mapping};
+    use crate::{
+        Nullable, ReadBinaryMmap,
+        suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping}
+    };
 
     fn build_text() -> ProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -259,12 +261,7 @@ mod tests {
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 
@@ -291,28 +288,27 @@ mod tests {
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 
     #[test]
     fn test_mmap_bitvec_random_equivalence() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{Hash, Hasher}
+        };
 
         // Deterministic pseudo-random bit pattern, ~2000 bits (spans ~4 superblocks)
         let len = 2000usize;
-        let mut raw: String = (0..len).map(|i| {
-            let mut h = DefaultHasher::new();
-            i.hash(&mut h);
-            // separator/terminator at ~1/8 of positions, amino acid otherwise
-            if h.finish().is_multiple_of(8) { '-' } else { 'A' }
-        }).collect();
+        let mut raw: String = (0..len)
+            .map(|i| {
+                let mut h = DefaultHasher::new();
+                i.hash(&mut h);
+                // separator/terminator at ~1/8 of positions, amino acid otherwise
+                if h.finish().is_multiple_of(8) { '-' } else { 'A' }
+            })
+            .collect();
         // ensure valid termination
         raw.pop();
         raw.push('$');
@@ -326,12 +322,7 @@ mod tests {
         let mmap_idx = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                mmap_idx.suffix_to_protein(i),
-                "mismatch at position {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), mmap_idx.suffix_to_protein(i), "mismatch at position {}", i);
         }
     }
 

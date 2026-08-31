@@ -1,12 +1,14 @@
-use std::io::{Read, Write};
-use std::error::Error;
+use std::{
+    error::Error,
+    io::{Read, Write}
+};
 
 use memmap2::Mmap;
 use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use text_compression::ProteinText;
 
-use crate::Nullable;
 use super::SuffixToProteinIndex;
+use crate::Nullable;
 
 /// Mapping that uses O(n) memory with n the size of the input text, but retrieval of the protein is
 /// in O(1)
@@ -20,7 +22,7 @@ pub struct DenseSuffixToProtein {
 /// Format: [1 byte type=0x00] [8 bytes count (u64 LE)] [count × 4 bytes (u32 LE)]
 pub struct MmapDenseSuffixToProtein {
     pub(super) mmap: Mmap,
-    pub(super) data_offset: usize, // 9 = 1 (type) + 8 (count)
+    pub(super) data_offset: usize // 9 = 1 (type) + 8 (count)
 }
 
 impl SuffixToProteinIndex for DenseSuffixToProtein {
@@ -62,7 +64,10 @@ impl DenseSuffixToProtein {
     }
 }
 
-pub(super) fn write_dense_mapping<W: Write>(mapping: &DenseSuffixToProtein, writer: &mut W) -> Result<(), Box<dyn Error>> {
+pub(super) fn write_dense_mapping<W: Write>(
+    mapping: &DenseSuffixToProtein,
+    writer: &mut W
+) -> Result<(), Box<dyn Error>> {
     let count = mapping.mapping.len() as u64;
     writer.write_all(&count.to_le_bytes())?;
     for &val in &mapping.mapping {
@@ -86,15 +91,16 @@ pub(super) fn read_dense_mapping<R: Read>(reader: &mut R) -> Result<DenseSuffixT
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-    use std::io::Write as IoWrite;
+    use std::io::{Cursor, Write as IoWrite};
 
     use sa_mappings::proteins::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
     use text_compression::ProteinText;
 
-    use crate::{Nullable, ReadBinaryMmap};
-    use crate::suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping};
-    use super::{DenseSuffixToProtein, write_dense_mapping, read_dense_mapping};
+    use super::{DenseSuffixToProtein, read_dense_mapping, write_dense_mapping};
+    use crate::{
+        Nullable, ReadBinaryMmap,
+        suffix_to_protein_index::{SuffixToProteinIndex, SuffixToProteinMapping}
+    };
 
     fn build_text() -> ProteinText {
         let mut text = ["ACG", "CG", "AAA"].join(&format!("{}", SEPARATION_CHARACTER as char));
@@ -155,12 +161,7 @@ mod tests {
         let loaded = SuffixToProteinMapping::read_binary_mmap(tmp.path()).unwrap().0;
 
         for i in 0..text.len() as i64 {
-            assert_eq!(
-                original.suffix_to_protein(i),
-                loaded.suffix_to_protein(i),
-                "mismatch at suffix {}",
-                i
-            );
+            assert_eq!(original.suffix_to_protein(i), loaded.suffix_to_protein(i), "mismatch at suffix {}", i);
         }
     }
 

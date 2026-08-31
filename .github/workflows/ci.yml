@@ -1,0 +1,132 @@
+# Everything that gates a change, in one workflow, so branch protection has a single coherent set
+# of required checks to name.
+#
+# Every job runs on stable via `RUSTUP_TOOLCHAIN`, which takes precedence over rust-toolchain.toml.
+# The exception is `fmt`, which needs the pinned nightly and gets it by *not* setting that variable.
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+# A force-push replaces its predecessor rather than racing it. Not on develop or main: runs there
+# are the record of what the branch did.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Check + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # `--all-targets` is not redundant with the `cargo test` below: it is the only thing that
+      # compiles `fa-compression`'s criterion bench, which `cargo test` does not build.
+      - name: Run cargo check
+        run: cargo check --all-targets --locked
+
+      - name: Run cargo test
+        run: cargo test --locked
+
+  release-build:
+    # `cargo check` proves the workspace typechecks; it does not prove it links, and it never
+    # exercises the release profile.
+    name: Release build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --locked
+
+  clippy:
+    name: Run Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Clippy gates the workspace on the toolchain it ships from, and nightly's lint set is not
+    # stable's.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  docs:
+    # `-D warnings` turns a broken intra-doc link — which nothing else in CI notices — into a
+    # failure. `--no-deps` keeps it to this workspace's own documentation.
+    name: Check documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      RUSTDOCFLAGS: -D warnings
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features --document-private-items
+
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Deliberately does not set RUSTUP_TOOLCHAIN: .rustfmt.toml needs the nightly pinned in
+    # rust-toolchain.toml, and rustup reads that pin only when the variable is unset. Bump the
+    # nightly there, never here.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check formatting
+        run: cargo fmt --all --check
