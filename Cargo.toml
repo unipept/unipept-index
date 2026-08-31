@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 
-members = [ "bitarray",
+members = [ "binary-traits",
+    "bitarray",
     "fa-compression",
     "libsais64-rs",
     "sa-builder",
