@@ -181,8 +181,8 @@ pub struct SparsenessSplit {
 /// over its output.
 ///
 /// `libsais` can only sample at a factor it folds into its symbols, so this takes the largest
-/// such factor that divides the requested sparseness and leaves the remainder to [`sample_sa`].
-/// The walk down from [`MAX_SPARSENESS`] always terminates because 1 divides everything.
+/// such factor that divides the requested sparseness and leaves the remainder to `sample_sa`.
+/// The walk down from `MAX_SPARSENESS` always terminates because 1 divides everything.
 ///
 /// Only the `LibSais` construction algorithm splits the factor this way; `LibDivSufSort` builds
 /// the dense array and samples it at the full factor.

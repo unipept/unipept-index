@@ -427,7 +427,7 @@ mod tests {
     fn replacing_an_index_by_rename_keeps_a_live_mapping_valid() {
         use std::io::Write;
 
-        let dir = TempDir::new("rename_probe").unwrap();
+        let dir = TempDir::new().unwrap();
         let live = dir.path().join("index.bin");
         std::fs::write(&live, vec![0xAAu8; 4096]).unwrap();
 
@@ -453,7 +453,7 @@ mod tests {
 
     use binary_traits::{ReadBinaryMmap, WriteBinary};
     use protein_text::{ProteinTextBackend as _, bit_array_byte_size};
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     use super::{InMemoryProteinText, MmapBackedProteinText, MmapBackedProteins};
     use crate::{
@@ -488,7 +488,7 @@ mod tests {
     /// must tolerate an index no entry exists for, and neither may disturb the `get` that follows.
     #[test]
     fn prefetch_hints_are_harmless() {
-        let tmp_dir = TempDir::new("test_mmap_prefetch").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let proteins = <Mapped as ReadBinaryMmap>::read_binary_mmap(&bin_path).unwrap();
 
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_mmap_roundtrip_len() {
-        let tmp_dir = TempDir::new("test_mmap_len").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         assert_eq!(mmap.len(), 3);
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_mmap_roundtrip_taxon() {
-        let tmp_dir = TempDir::new("test_mmap_taxon").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         for (i, &taxon) in [1u32, 2, 6].iter().enumerate() {
@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_mmap_roundtrip_uniprot_id() {
-        let tmp_dir = TempDir::new("test_mmap_uid").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         assert_eq!(mmap.get(0).uniprot_id, "P12345");
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_mmap_roundtrip_functional_annotations() {
-        let tmp_dir = TempDir::new("test_mmap_fa").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let mmap = Mapped::read_binary_mmap(&bin_path).unwrap();
         for i in 0..mmap.len() {
@@ -571,7 +571,7 @@ mod tests {
     ///   answers from a differently-built server.
     #[test]
     fn matches_the_preloaded_backend_field_for_field() {
-        let tmp_dir = TempDir::new("test_mmap_parity").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let db = write_database_file(&tmp_dir, &TEST_PROTEINS);
         let preloaded = InMemoryProteins::load_from_tsv(db.to_str().unwrap()).unwrap();
 
@@ -600,7 +600,7 @@ mod tests {
     /// That would quietly cancel the point of holding the text in owned memory at all.
     #[test]
     fn warm_range_skips_the_text_only_when_the_text_is_owned() {
-        let tmp_dir = TempDir::new("test_mmap_warm_from").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
 
         assert_eq!(Mapped::read_binary_mmap(&bin_path).unwrap().warm_from, 0, "mapped text: warm the whole file");
@@ -621,7 +621,7 @@ mod tests {
     /// end offset is a panic here rather than a silently short sweep.
     #[test]
     fn owned_metadata_warms_its_mapped_text() {
-        let tmp_dir = TempDir::new("test_mmap_warm_owned_meta").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
 
         let proteins = OwnedMetaMappedText::read_binary_mmap(&bin_path).unwrap();
@@ -659,7 +659,7 @@ mod tests {
     /// below keeps the fixture's FA blob non-empty so that stretch is never empty.
     #[test]
     fn truncated_files_error_rather_than_panicking() {
-        let tmp_dir = TempDir::new("test_mmap_truncated").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let full = std::fs::read(&bin_path).unwrap();
 
@@ -691,7 +691,7 @@ mod tests {
     fn truncation_inside_the_annotation_blob_is_rejected_by_both_backends() {
         use binary_traits::ReadBinary;
 
-        let tmp_dir = TempDir::new("test_fa_truncation").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let buf = std::fs::read(&bin_path).unwrap();
 
@@ -720,7 +720,7 @@ mod tests {
     /// A header declaring more proteins than the file holds must be rejected.
     #[test]
     fn overlong_protein_count_is_rejected() {
-        let tmp_dir = TempDir::new("test_mmap_overlong").unwrap();
+        let tmp_dir = TempDir::new().unwrap();
         let bin_path = write_binary_to_tempfile(&tmp_dir);
         let mut bytes = std::fs::read(&bin_path).unwrap();
 

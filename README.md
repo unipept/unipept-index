@@ -1,7 +1,6 @@
 # Unipept Index
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&logo=Codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 The Unipept index, written entirely in `Rust`: given a peptide, find every protein that contains
 it. This repository is a Cargo workspace of several crates that depend on each other.
@@ -253,6 +252,12 @@ each one reports the backends it actually selected. Lints:
 cargo clippy --all-targets --all-features -- -D warnings
 cargo +nightly fmt --all --check    # nightly is required, see below
 ```
+
+Everything that gates a change lives in one workflow, `.github/workflows/ci.yml`: the checks and
+tests above, a release build, and `cargo doc` with warnings denied, so an intra-doc link left
+dangling by a rename fails rather than rots. Two workflows run on their own schedule instead —
+`audit.yml`, which reads `Cargo.lock` against the RustSec advisory database weekly, and
+`build_index.yml`, which publishes the monthly index release.
 
 `cargo fmt` **must** run on nightly: `.rustfmt.toml` enables `unstable_features` along with
 `imports_granularity`, `group_imports` and `normalize_comments`, all of which stable rustfmt

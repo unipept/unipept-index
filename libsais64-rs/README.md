@@ -1,6 +1,6 @@
 # libsais64-rs
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 Rust bindings to [`unipept/libsais-packed`](https://github.com/unipept/libsais-packed), the
 suffix-array construction library `sa-builder` uses. One function does the work: `sais64(text,
@@ -8,16 +8,22 @@ sparseness)` returns the suffix array over `text`, or an error.
 
 ## Building
 
-The build script (`builder.rs`) clones the C library, compiles it with CMake, and generates the
+The build script (`builder.rs`) fetches the C library, compiles it with CMake, and generates the
 FFI bindings with `bindgen`. So building this crate — and therefore `sa-builder`, and therefore a
 plain `cargo build` of the workspace — needs:
 
-* `git`, and **network access on the first build** (the clone is `--depth=1` from GitHub)
+* `git`, and **network access on the first build** (a shallow fetch of one commit from GitHub)
 * `cmake` and `make`
 * a C compiler, and `libclang` for `bindgen`
 
-The clone lands in `libsais64-rs/libsais-packed/`, which is gitignored: it is a build artefact, not
-a vendored dependency or a submodule.
+The checkout lands in `libsais64-rs/libsais-packed/`, which is gitignored: it is a build artefact,
+not a vendored dependency or a submodule.
+
+**The commit is pinned**, in `LIBSAIS_COMMIT` at the top of `builder.rs`. It used to be whatever
+the C repository's default branch pointed at when you happened to build, which made two builds of
+the same Rust commit two different binaries and let a change over there arrive without a commit
+here. Bump it by editing that constant. A build whose checkout is already at the pinned commit
+skips the fetch and the recompile entirely.
 
 ## Sparseness and bit packing
 

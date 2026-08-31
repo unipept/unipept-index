@@ -1,7 +1,6 @@
 # sa-server
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=sa-server&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 An HTTP server over a prebuilt index: one route, `POST /search`, taking a list of peptides and
 returning the proteins that contain them.

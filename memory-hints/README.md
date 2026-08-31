@@ -1,7 +1,6 @@
 # memory-hints
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=memory-hints&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 Best-effort hints to the memory subsystem. The index is far larger than any cache and larger than
 the TLB can map at 4 KB granularity — the suffix array alone is 160 GB of a 223 GB full-UniProt

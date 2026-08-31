@@ -1,7 +1,6 @@
 # protein-metadata
 
-![Test](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/test.yml?logo=github&label=test)
-![Codecov](https://img.shields.io/codecov/c/github/unipept/unipept-index?token=IZ75A2FY98&flag=protein-metadata&logo=codecov)
+![CI](https://img.shields.io/github/actions/workflow/status/unipept/unipept-index/ci.yml?logo=github&label=ci)
 
 Protein metadata — accessions, taxon ids and functional annotations — addressed by index. A suffix
 array search returns positions in the concatenated protein text; the suffix-to-protein mapping
