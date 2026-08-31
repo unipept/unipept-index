@@ -1,14 +1,242 @@
-pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
+//! Suffix-array search over the concatenated protein text.
+//!
+//! Given a peptide, find every protein containing it. The pipeline is:
+//!
+//! 1. [`sa_searcher`] binary-searches the suffix array for the range of suffixes sharing the
+//!    peptide as a prefix, optionally starting from bounds looked up in a [`kmer_table`];
+//! 2. it validates each candidate in that range against the text, since a sparse suffix array
+//!    only indexes every n-th position and I/L equating and tryptic filtering add further
+//!    conditions;
+//! 3. [`suffix_to_protein_index`] maps surviving text positions to protein indices;
+//! 4. [`peptide_search`] turns those into results with accessions and annotations.
+//!
+//! # Storage: two backends per structure, chosen by the caller
+//!
+//! Every storage structure has two implementations — one holding owned memory, one borrowing a
+//! memory mapping — and **this crate has no opinion about which**. Both are always compiled, the
+//! searcher is generic over all three of them, and nothing here names a concrete one:
+//!
+//! | structure | owned | mapped |
+//! |---|---|---|
+//! | suffix array | [`array::InMemorySA`] | [`array::MmapBackedSA`] |
+//! | protein text | `protein_text::InMemoryProteinText` | `protein_text::MmapBackedProteinText` |
+//! | protein metadata | `protein_metadata::InMemoryProteins<T>` | `protein_metadata::MmapBackedProteins<T>` |
+//! | suffix→protein | [`suffix_to_protein_index::InMemorySuffixToProteinMapping`] | [`suffix_to_protein_index::MmapBackedSuffixToProteinMapping`] |
+//!
+//! The choice is made once per build, by the binary: `sa-server`'s `backends` module resolves four
+//! Cargo features into one concrete type per structure. That is the *only* place in the workspace
+//! a storage feature is read. Selection is by type, so there is still no runtime branch and no
+//! dispatch anywhere in the search path.
+//!
+//! Sixteen combinations are constructible, of which the binaries expose nine. The point is that
+//! the best place for one structure is not the best place for another: the text is read once per
+//! character compared and is the hottest thing in the index, while the metadata table is read once
+//! per reported result and is the one that grows most when preloaded — roughly tripling, since it
+//! becomes a `Vec` of owned strings rather than bytes in a file. So, for instance,
+//! `--features mmap,preloaded-text` keeps the multi-gigabyte index mapped while the text sits in
+//! owned RAM: ~190 MB over the ~300 M-residue reference database, packed at 5 bits.
+//!
+//! Two database scales appear throughout these docs and are not interchangeable. The ~300 M-residue
+//! one is the reference for every per-structure size quoted in this crate; the full UniProt index
+//! of the memory-ceiling section below is roughly 250x larger, and is always named as such.
+//!
+//! Consequences worth knowing before reading further:
+//!
+//! * The protein text and the protein metadata share one file (`proteins.bin`) but are separate
+//!   axes, which is why the protein structs are generic over their text type. All four pairings
+//!   load from the same file; see `protein_metadata::mmap`.
+//! * Which reader a structure needs is not a decision any caller makes — it is the `LoadIndex`
+//!   implementation on that concrete type. That is what lets a test build all sixteen combinations
+//!   without a single `#[cfg]`; see `sa_searcher::tests::every_backend_combination_returns_identical_results`,
+//!   which asserts they answer identically.
+//! * The owned half owns the `WriteBinary` implementations that produce the files the mapped half
+//!   reads, which is why `sa-builder` never mentions a backend.
+//! * The two halves are kept deliberately separate rather than sharing code, so that a tuning
+//!   change to one cannot perturb the other. Where that produces near-duplicate code it is marked
+//!   as intentional at the site.
+//!
+//! # Measurement code
+//!
+//! **This crate declares no Cargo features at all and carries no instrumentation**: nothing in the
+//! search path reads a clock or bumps a counter, and there is no build configuration that makes it
+//! do so. A `measure` feature once gated that instrumentation, but its atomics and clock reads
+//! perturbed the very numbers they produced (~2% at `mlp_batch=1`), so it was deleted along with
+//! the counters once the two questions it existed to answer were settled — the binary-search /
+//! range-scan split and tryptic's candidate acceptance rate, both recorded below. Anything in
+//! these docs attributed to instrumentation is a historical measurement; it cannot be reproduced
+//! by rebuilding this crate.
+//!
+//! Measurement that is a property of a whole run rather than of the hot path — load timings,
+//! page-fault counts — lives in the `sa-benchmarks` crate, which is excluded from the workspace's
+//! `default-members` and never ships.
+//!
+//! # Why this crate is written the way it is
+//!
+//! Search is dominated by DRAM latency, not by instruction count: the suffix array and the
+//! suffix-to-protein mapping are far larger than any cache and are walked in an order the
+//! hardware prefetcher cannot predict. Most of the non-obvious code here — two-pass batching,
+//! software prefetch hints, cross-query batching, the k-mer table — exists to overlap those
+//! misses rather than to do less work.
+//!
+//! One consequence shows up everywhere and is easy to undo by accident: because the workspace
+//! sets no `[profile.release]`, there is **no cross-crate LTO**, so a call into `bitarray`,
+//! `protein-text`, `protein-metadata` or `memory-hints` is a real cross-crate call unless the callee's
+//! body reaches the caller's codegen unit — which happens only when the callee is `#[inline]` or
+//! generic (both export their MIR). Those attributes on the small getters are load-bearing, not
+//! decoration.
+//!
+//! **Enabling LTO was measured and rejected** (2026-08-09, at c00cc53, full UniProt index on the
+//! benchmark server; n=200 timed reps per cell, ABBA-interleaved, both backends). Adding
+//! `[profile.release] lto = "thin", codegen-units = 1` moved median throughput by **-0.1% on
+//! mmap and -3.0% on preloaded** — no gain on either backend, in exchange for a materially
+//! slower clean release build.
+//!
+//! Neither delta is an effect. On mmap the two arms interleave and the base arm's own two
+//! invocations spread wider (1.7%) than the difference between arms. On preloaded the base
+//! arm's two invocations differ by **8.4%** — far more than the 3.0% gap — and all four
+//! invocations decline monotonically with position, i.e. the machine drifted over the ~50
+//! minutes the block ran. That drift decays rather than being linear, which the ABBA ordering
+//! does not cancel: base holds the two endpoint slots and LTO the two middle ones, and for a
+//! convex-decaying curve the endpoint average is the higher one. The preloaded arm therefore
+//! cannot resolve anything below roughly 8%, and there is no evidence of a real regression
+//! either.
+//!
+//! The likely reason for the null result is that this crate has already hand-annotated the hot
+//! path, so the bodies LTO would have inlined were reaching the caller anyway. Do not re-add the
+//! profile block without re-measuring on the full database.
+//!
+//! Decisions that were measured and *rejected* are recorded next to the code they would have
+//! touched, so they are not rediscovered and retried.
+//!
+//! # When the index does not fit in RAM
+//!
+//! Everything above was tuned with the whole index resident. That is not the regime the mmap
+//! backend exists for, and **several of those decisions do not survive the regime it does exist
+//! for.** The numbers below come from the full-database session at 660befd7ee (2026-08-18): the
+//! 223 GB UniProt index on a 295 GB / 12-core Xeon Silver 4410Y, ceilings imposed with cgroup v2
+//! `MemoryMax` and swap off, page cache dropped before every cell, 100 reps x 10,000 mixed-length
+//! peptides per cell, a 6-mer table attached throughout. Every cell runs `tryptic=false`, which is
+//! the regime that flatters preloading — see the caveat below.
+//!
+//! For scale, the index divides as SA 160.2 GB, text 43.3 GB, mapping 10.8 GB and protein metadata
+//! 8.3 GB, the last of which becomes ~24 GB once preloaded — the RSS delta observed when
+//! `preloaded-proteins` moves it to the heap. The ratios are what matter: the SA is 72% of the
+//! index by size, so it dominates residency, and nothing can preload it — there is no
+//! `preloaded-sa`.
+//!
+//! **The degradation is a concurrency limit, not a bandwidth one.** A major fault blocks its
+//! thread, and `prefetch_read` cannot help: a CPU hint instruction cannot fault, so every prefetch
+//! in this crate is inert against an absent page. With rayon at the core count, each faulting
+//! thread idles a core. Raising `RAYON_NUM_THREADS` leaves the fault *count* unchanged to within
+//! 0.4% and still buys, on the `mmap` arm:
+//!
+//! | ceiling | major faults/rep | default threads | tuned | change |
+//! |---|---|---|---|---|
+//! | none | 0 | **38,081** | 34,264 @ 48 | **-10.0%** |
+//! | 167 GB (75%) | 23,828 | 15,518 | **25,734** @ 96 | **+65.8%** |
+//! | 112 GB (50%) | 45,572 | 10,503 | **20,473** @ 96 | **+94.9%** |
+//!
+//! Unconstrained the default is already the peak, and every tuned value is a loss; under a ceiling
+//! 96 threads is the best of the three everywhere, and the peak is at or below it (an earlier
+//! sweep found the curve monotonically downward from 96 through 128 and 192). Every arm has the
+//! same shape. At 96 threads under a 167 GB ceiling the gains are +65.8% (`mmap`), +86.2%
+//! (`preloaded-proteins`), +102.7% (`preloaded-text,preloaded-proteins`) and +94.9% (that plus
+//! `preloaded-mapping`); at 112 GB, +94.9%, +116.4%, +112.8% and +116.4%. The fully preloaded
+//! build did not fit under either ceiling. Unconstrained every arm loses — between -5.4%
+//! (preloaded) and -18.1% (`preloaded-proteins`) at 96 threads — so this is a deployment knob, not
+//! a default. It is also the largest single effect anywhere in this investigation, larger than any
+//! storage-backend choice.
+//!
+//! Reproduced across three months and a rewritten harness: at 3259427 (2026-08-10/11) the `mmap`
+//! gains were +65.6% and +86.1% at the same two ceilings, at 2dfa6517b7 (2026-08-16) +62.6% and
+//! +92.2%, each time with the cost unconstrained and major faults flat across thread counts. Every
+//! sign and rough magnitude has held.
+//!
+//! **Every `preloaded-*` feature is a bet on full residency.** With the index resident they all
+//! pay: against plain `mmap`, `preloaded-proteins` is +22.1%, `preloaded-text,preloaded-proteins`
+//! is +46.1% and adding `preloaded-mapping` is +52.7%, with the fully preloaded build +57.6%. But
+//! preloaded memory is non-evictable anonymous memory, so under pressure it cannot be reclaimed
+//! and instead displaces the file-backed page cache the mapped structures live in — both bigger
+//! and hotter per query. Sweeping the ceiling down, with each column adding one structure to the
+//! one on its left:
+//!
+//! | ceiling | mmap | +proteins | +text | +mapping | preloaded |
+//! |---|---|---|---|---|---|
+//! | none | 35,725 | 43,603 | 52,198 | 54,553 | **56,297** |
+//! | 223 GB | 27,740 | 19,045 | 29,187 | 30,202 | did not fit |
+//! | 167 GB | 14,748 | 13,832 | 15,161 | 15,617 | did not fit |
+//! | 140 GB | 12,724 | 11,683 | 12,497 | 12,658 | did not fit |
+//! | 112 GB | 10,679 | 9,582 | 10,212 | 10,425 | did not fit |
+//! | 78 GB | **7,411** | 292 | 169 | did not fit | did not fit |
+//!
+//! The unconstrained `mmap` figure here (35,725) and the one in the thread table above (38,081)
+//! are the same configuration measured by two different suites in the same session. They differ by
+//! 6.6%, which is inside both cells' own resolution floors; neither suite can tell them apart, and
+//! nothing should be read into the gap. Compare within a table, never across.
+//!
+//! There is no crossover to find above 78 GB: from the first ceiling that binds, no preloading arm
+//! is ahead of plain `mmap` by more than the floor, and `preloaded-proteins` is behind it at every
+//! one. At 78 GB — roughly a third of the index — the preloaded arms do not degrade, they
+//! collapse: 31x and 55x `mmap`'s fault rate (2,310,152 and 4,173,435 major faults per rep against
+//! 75,383) for a 96% and 98% loss. The fully preloaded build was OOM-killed at every ceiling in
+//! the sweep. So preloading is worth having exactly when the whole index is guaranteed resident,
+//! and is the wrong default anywhere the ceiling might move.
+//!
+//! Note the run's own caveats: the `mmap` and `preloaded-proteins` cells at 223 GB and the `mmap`
+//! cell at 78 GB had not reached steady state (drift +25.2%, +13.0% and -62.5% from the first
+//! quarter of reps to the last), so those three are softer than the rows between them.
+//!
+//! **Even when residency is guaranteed, `preloaded-proteins` is not the arm to reach for.** This
+//! sweep is its best case: at `tryptic=false` the search accepts 9-13% of the candidates it
+//! examines, so retrieval is a third of the work and the structure it preloads is hot. Under
+//! `tryptic` acceptance falls to ~0.5%, retrieval drops to 1-7% of the work, and the same
+//! session's 16-cell throughput sweep put `mmap,preloaded-text,preloaded-proteins` ahead of it in
+//! all sixteen, at a lower resident footprint (242 GB against 250 GB — `preloaded-proteins` has
+//! the highest of any arm). Preloading the metadata alone closes the retrieval gap and none of the
+//! search one, which is the larger half.
+//!
+//! **A 6-mer k-mer table is worth its 3.06 GB here**, against the resident-case measurement that
+//! cannot separate it from a 5-mer. Established by the ceiling sweep at 3259427 and carried as
+//! background since: at a 167 GB ceiling the 6-mer is +18.4% and -27.9% faults versus no table,
+//! where a 5-mer is +3.2% and -6.2%, i.e. barely distinguishable from nothing. The difference is
+//! working-set size, not probe count — a 5-mer narrows the search to ~7 SA pages per query, a
+//! 6-mer to ~1 — and that only matters once pages can be evicted. Every cell of the sweeps above
+//! therefore has a 6-mer attached, since the table removes exactly the phase that degrades under a
+//! cap and a sweep without it would answer a different question. This is why `sa-builder
+//! --kmer-size` documents 6 as the tuning step for constrained deployments; the default stays 5,
+//! which is the size the resident measurements support.
+//!
+//! **All of the loss is in the search phase**, measured at 3259427 by instrumentation since
+//! removed: retrieval was flat at ~147 ms per rep across every ceiling while search went
+//! 135 ms -> 1127 ms, so the two-pass prefetch pipeline in `sa_searcher::retrieval` keeps working
+//! under paging and needs nothing. Within search, the split is roughly even between the dependent
+//! binary-search chain and the contiguous SA range scan (52% / 48% of thread-time at a 167 GB
+//! ceiling).
+//!
+//! Two further ideas were measured and rejected. **`MADV_WILLNEED` over the SA range about to be
+//! scanned does not pay**: the advice lands (major faults -23-25% under a ceiling) but the
+//! throughput decays from +12.0% at the core count to ~0% at 96 threads, since oversubscription
+//! already overlaps those faults, and it costs -3.7% resident. It was swept once more at
+//! 660befd7ee and removed from the searcher afterwards; the comment where it used to live in
+//! `array::mmap` carries the full numbers. And **sorting queries by k-mer prefix to create page
+//! locality does not work either**: it changed the fault count by -0.1% and cost 4.4% throughput.
+//! With 10,000 queries per rep drawn against 20^6 possible
+//! 6-mers, the expected number of queries sharing a prefix is under one, so there is no page reuse
+//! for sorting to expose. Locality needs reuse, and this workload has none.
 
 pub mod array;
+pub mod kmer_table;
 pub mod peptide_search;
 pub mod sa_searcher;
 pub mod suffix_to_protein_index;
 
-pub use array::SuffixArray;
+pub use array::SuffixArrayBackend;
+pub use kmer_table::KmerTable;
+pub use protein_metadata::ProteinsBackend;
 
 /// Custom trait implemented by types that have a value that represents NULL
 pub trait Nullable<T> {
+    /// The sentinel value standing for "no value".
     const NULL: T;
 
     /// Returns whether the value is NULL.
