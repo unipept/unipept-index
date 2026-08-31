@@ -99,21 +99,33 @@ pub trait LoadIndex: Sized {
     fn load(path: &Path) -> Result<Self, Box<dyn Error>>;
 }
 
+/// The capacity of the [`BufReader`] every owned-route load reads through.
+///
+/// [`BufReader`]'s `Read` impl hands a caller's buffer straight to the underlying reader only when
+/// that buffer is at least as large as this capacity; below it, every byte is copied twice — once
+/// into the `BufReader` and once out of it. Readers that stream a payload therefore size their chunk at
+/// or above this constant.
+///
+/// It is public so that a reader can check its chunk size against it in a `const` assertion:
+///
+/// ```
+/// use binary_traits::BUFREADER_CAPACITY;
+///
+/// const READ_CHUNK_BYTES: usize = 64 * 1024;
+/// const _: () = assert!(READ_CHUNK_BYTES >= BUFREADER_CAPACITY);
+/// ```
+///
+/// Raising this value past a reader's chunk size restores that double copy, so it is not a local
+/// change to make: it fails the assertion in every reader it would slow down.
+pub const BUFREADER_CAPACITY: usize = 8 * 1024;
+
 /// Opens `path` and reads one structure out of it, for [`LoadIndex`] impls that take the owned
 /// route.
 ///
 /// Every such impl is a one-line call to this, so the buffering is decided once here rather than
-/// per structure.
-///
-/// That makes the `BufReader` capacity — [`BufReader::new`]'s default 8 KiB — a shared constant
-/// three readers are calibrated against: the `READ_CHUNK_BYTES` in `bitarray::binary`,
-/// `sa_index::array::preloaded::original` and `sa_index::suffix_to_protein_index::preloaded::bitvec`
-/// are all sized *above* it so that `BufReader::read` bypasses its internal buffer instead of
-/// copying every byte twice. Switching this to `BufReader::with_capacity` is therefore not a local
-/// change: raising the capacity past those constants silently restores the double copy. The
-/// measurement behind that is at `bitarray::binary`'s constant.
+/// per structure, at [`BUFREADER_CAPACITY`].
 pub fn load_owned<T: ReadBinary>(path: &Path) -> Result<T, Box<dyn Error>> {
-    T::read_binary(&mut BufReader::new(File::open(path)?))
+    T::read_binary(&mut BufReader::with_capacity(BUFREADER_CAPACITY, File::open(path)?))
 }
 
 #[cfg(test)]
