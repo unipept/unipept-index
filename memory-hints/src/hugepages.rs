@@ -13,12 +13,10 @@
 //! advice buys is eligibility for khugepaged to collapse them in the background — at a default
 //! 4096 pages per 10 s scan, which for a 160 GB suffix array is on the order of a day.
 //!
-//! Two versions of that mistake have already been made here. The advice was first issued by the
-//! loaders, after `read_binary` had filled the buffer. Moving it into the constructors did not fix
-//! it: they reserved the allocation and then `resize`d it to zero, and that `resize` memsets the
-//! whole buffer — 1 GiB of `Vec<u64>` goes from 1.5 MB resident after `try_reserve_exact` to
-//! 1025 MB after `resize`, so every page was faulted in before the advice was issued. Anything
-//! that writes to the buffer, zeroes included, counts as populating it.
+//! Anything that writes to the buffer counts as populating it, zeroes included: a `resize` that
+//! only fills a reserved `Vec` with zeroes memsets the whole allocation, taking 1 GiB of
+//! `Vec<u64>` from 1.5 MB resident after `try_reserve_exact` to 1025 MB. So the advice has to
+//! come before that too, not merely before the real contents are written.
 //!
 //! Consequence worth knowing when reading a benchmark: on a box with
 //! `/sys/kernel/mm/transparent_hugepage/enabled` at `[always]` this is all moot, because every
