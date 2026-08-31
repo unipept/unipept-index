@@ -43,10 +43,6 @@ pub mod preloaded;
 #[cfg(test)]
 mod test_utils;
 
-// TEMPORARY, removed in the searcher PR: the pre-split enum, moved here unchanged so that
-// sa_searcher, sa-builder and sa-server keep compiling while the two backends land.
-pub mod legacy;
-pub use legacy::SuffixArray;
 pub use mmap::MmapBackedSA;
 pub use preloaded::{
     CompressedSA, InMemoryRangeIter, InMemorySA, OriginalRangeIter, OriginalSA, dump_compressed_suffix_array,

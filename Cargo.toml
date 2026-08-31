@@ -10,6 +10,5 @@ members = [ "protein-metadata",
     "libsais64-rs",
     "sa-builder",
     "sa-index",
-    "sa-mappings",
     "sa-server"
 ]

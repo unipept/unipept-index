@@ -1052,17 +1052,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sa-mappings"
-version = "0.1.0"
-dependencies = [
- "bytelines",
- "fa-compression",
- "memmap2",
- "tempfile",
- "text-compression",
-]
-
-[[package]]
 name = "sa-server"
 version = "0.1.0"
 dependencies = [
@@ -1226,15 +1215,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "text-compression"
-version = "0.1.0"
-dependencies = [
- "bitarray",
- "memmap2",
- "tempfile",
 ]
 
 [[package]]
