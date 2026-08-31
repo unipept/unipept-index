@@ -22,11 +22,6 @@ permissions:
 
 jobs:
   test:
-    # One cell, because the libraries no longer have a storage feature to vary. Both backends of
-    # every structure are always compiled, and the searcher's fixtures load each combination by
-    # naming its types, so a single `cargo test` exercises all of them — see
-    # `sa-index/src/sa_searcher/test_utils.rs`. What the features still choose is which combination
-    # the *binaries* are built for; a `server-backends` job covering that arrives with sa-server.
     name: Check + test
     runs-on: ubuntu-latest
     timeout-minutes: 30
