@@ -11,7 +11,7 @@ use bitarray::{Binary, BitArray, data_to_writer};
 use memmap2::Mmap;
 
 pub mod traits;
-pub use traits::{WriteBinary, ReadBinary, ReadBinaryMmap};
+pub use traits::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
 /// The 5-bit-to-char lookup table for mmap-backed ProteinText.
 const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
@@ -28,14 +28,10 @@ pub enum ProteinText {
     InMemory {
         bit_array: BitArray,
         char_to_5bit: HashMap<u8, u8>,
-        bit5_to_char: Vec<u8>,
+        bit5_to_char: Vec<u8>
     },
     /// Memory-mapped representation backed by a file.
-    MmapBacked {
-        mmap: Arc<Mmap>,
-        data_offset: usize,
-        len: usize,
-    },
+    MmapBacked { mmap: Arc<Mmap>, data_offset: usize, len: usize }
 }
 
 impl ProteinText {
@@ -134,9 +130,7 @@ impl ProteinText {
                 let char_5bit = bit_array.get(index) as usize;
                 bit5_to_char[char_5bit]
             }
-            ProteinText::MmapBacked { mmap, data_offset, .. } => {
-                Self::get_mmap(mmap, *data_offset, index)
-            }
+            ProteinText::MmapBacked { mmap, data_offset, .. } => Self::get_mmap(mmap, *data_offset, index)
         }
     }
 
@@ -144,9 +138,8 @@ impl ProteinText {
     pub fn set(&mut self, index: usize, value: u8) {
         match self {
             ProteinText::InMemory { bit_array, char_to_5bit, .. } => {
-                let char_5bit: u8 = *char_to_5bit
-                    .get(&value)
-                    .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
+                let char_5bit: u8 =
+                    *char_to_5bit.get(&value).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
                 bit_array.set(index, char_5bit as u64);
             }
             ProteinText::MmapBacked { .. } => {
@@ -159,7 +152,7 @@ impl ProteinText {
     pub fn len(&self) -> usize {
         match self {
             ProteinText::InMemory { bit_array, .. } => bit_array.len(),
-            ProteinText::MmapBacked { len, .. } => *len,
+            ProteinText::MmapBacked { len, .. } => *len
         }
     }
 
@@ -187,7 +180,6 @@ impl ProteinText {
     pub fn slice(&self, start: usize, end: usize) -> ProteinTextSlice<'_> {
         ProteinTextSlice::new(self, start, end)
     }
-
 }
 
 impl WriteBinary for ProteinText {
@@ -247,8 +239,8 @@ impl ReadBinaryMmap for ProteinText {
             return Err("File is too small to contain ProteinText header (8 bytes required)".into());
         }
 
-        let text_length = u64::from_le_bytes(mmap[0..8].try_into()
-            .map_err(|_| "Failed to parse ProteinText header")?) as usize;
+        let text_length =
+            u64::from_le_bytes(mmap[0..8].try_into().map_err(|_| "Failed to parse ProteinText header")?) as usize;
 
         // Ensure the file is large enough to contain the BitArray data for the declared text length.
         if mmap.len() < 8 + bit_array_byte_size(text_length) {
@@ -598,8 +590,10 @@ mod tests {
 
     #[test]
     fn test_load_compressed_text() {
-        let data = [10, 0, 0, 0, 0, 0, 0, 0, // compressed text
-            0, 128, 74, 232, 152, 66, 134, 8];
+        let data = [
+            10, 0, 0, 0, 0, 0, 0, 0, // compressed text
+            0, 128, 74, 232, 152, 66, 134, 8
+        ];
 
         let mut reader = std::io::BufReader::new(&data[..]);
         let compressed_text = load_compressed_text(&mut reader).unwrap();
@@ -661,6 +655,7 @@ mod tests {
     #[test]
     fn test_mmap_roundtrip() {
         use std::fs::File;
+
         use memmap2::Mmap;
 
         let input = "ACACA-CAC$MLPGLALLLL$";

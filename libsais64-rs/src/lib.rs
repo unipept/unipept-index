@@ -19,7 +19,6 @@ pub mod bitpacking;
 /// Returns Some with the suffix array build over the text if construction succeeds
 /// Returns None if construction of the suffix array failed
 pub fn sais64(text: Vec<u8>, libsais_sparseness: usize) -> Result<Vec<i64>, &'static str> {
-    
     let mut sa;
 
     let required_bits = libsais_sparseness * BITS_PER_CHAR;

@@ -1,8 +1,6 @@
-use std::io::Write;
-use std::process::Command;
+use std::{io::Write, process::Command};
 
-use sa_index::suffix_to_protein_index::SuffixToProteinMapping;
-use sa_index::{Nullable, ReadBinaryMmap, SuffixArray};
+use sa_index::{Nullable, ReadBinaryMmap, SuffixArray, suffix_to_protein_index::SuffixToProteinMapping};
 use sa_mappings::proteins::Proteins;
 
 /// Four proteins used as test input, matching the fixture in sa-mappings unit tests.
@@ -20,7 +18,7 @@ const PROTEINS: &[(&str, u32, &str, &str)] = &[
     ("P12345", 1, "MLPGLALLLLAAWTARALEV", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
     ("P54321", 2, "PTDGNAGLLAEPQIAMFCGRLNMHMNVQNG", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
     ("P67890", 6, "KWDSDPSGTKTCIDT", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
-    ("P13579", 17, "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH", "GO:0009279;IPR:IPR016364;IPR:IPR008816"),
+    ("P13579", 17, "KEGILQYCQEVYPELQITNVVEANQPVTIQNWCKRGRKQCKTHPH", "GO:0009279;IPR:IPR016364;IPR:IPR008816")
 ];
 
 const TEXT_LENGTH: usize = 114; // sum of sequence lengths + 3 separators + 1 terminator
@@ -45,18 +43,22 @@ fn test_build_creates_all_output_files() {
 
     let status = Command::new(env!("CARGO_BIN_EXE_sa-builder"))
         .args([
-            "--database-file", db.to_str().unwrap(),
-            "--output-sa",     out_sa.to_str().unwrap(),
-            "--output-proteins", out_proteins.to_str().unwrap(),
-            "--output-mapping",  out_mapping.to_str().unwrap(),
+            "--database-file",
+            db.to_str().unwrap(),
+            "--output-sa",
+            out_sa.to_str().unwrap(),
+            "--output-proteins",
+            out_proteins.to_str().unwrap(),
+            "--output-mapping",
+            out_mapping.to_str().unwrap()
         ])
         .status()
         .expect("failed to run sa-builder");
 
     assert!(status.success(), "sa-builder exited with non-zero status");
-    assert!(out_sa.exists(),       "suffix array file not created");
+    assert!(out_sa.exists(), "suffix array file not created");
     assert!(out_proteins.exists(), "proteins binary not created");
-    assert!(out_mapping.exists(),  "mapping binary not created");
+    assert!(out_mapping.exists(), "mapping binary not created");
 }
 
 #[test]
@@ -72,10 +74,14 @@ fn test_suffix_array_output() {
 
     Command::new(env!("CARGO_BIN_EXE_sa-builder"))
         .args([
-            "--database-file",   db.to_str().unwrap(),
-            "--output-sa",       out_sa.to_str().unwrap(),
-            "--output-proteins", out_proteins.to_str().unwrap(),
-            "--output-mapping",  out_mapping.to_str().unwrap(),
+            "--database-file",
+            db.to_str().unwrap(),
+            "--output-sa",
+            out_sa.to_str().unwrap(),
+            "--output-proteins",
+            out_proteins.to_str().unwrap(),
+            "--output-mapping",
+            out_mapping.to_str().unwrap()
         ])
         .status()
         .unwrap();
@@ -106,10 +112,14 @@ fn test_proteins_output() {
 
     Command::new(env!("CARGO_BIN_EXE_sa-builder"))
         .args([
-            "--database-file",   db.to_str().unwrap(),
-            "--output-sa",       out_sa.to_str().unwrap(),
-            "--output-proteins", out_proteins.to_str().unwrap(),
-            "--output-mapping",  out_mapping.to_str().unwrap(),
+            "--database-file",
+            db.to_str().unwrap(),
+            "--output-sa",
+            out_sa.to_str().unwrap(),
+            "--output-proteins",
+            out_proteins.to_str().unwrap(),
+            "--output-mapping",
+            out_mapping.to_str().unwrap()
         ])
         .status()
         .unwrap();
@@ -139,10 +149,14 @@ fn test_mapping_output() {
 
     Command::new(env!("CARGO_BIN_EXE_sa-builder"))
         .args([
-            "--database-file",   db.to_str().unwrap(),
-            "--output-sa",       out_sa.to_str().unwrap(),
-            "--output-proteins", out_proteins.to_str().unwrap(),
-            "--output-mapping",  out_mapping.to_str().unwrap(),
+            "--database-file",
+            db.to_str().unwrap(),
+            "--output-sa",
+            out_sa.to_str().unwrap(),
+            "--output-proteins",
+            out_proteins.to_str().unwrap(),
+            "--output-mapping",
+            out_mapping.to_str().unwrap()
         ])
         .status()
         .unwrap();
@@ -151,14 +165,14 @@ fn test_mapping_output() {
     let idx = &*mapping.0;
 
     // Positions inside each protein resolve to the correct protein index.
-    assert_eq!(idx.suffix_to_protein(0),   0, "position 0 should map to protein 0");
-    assert_eq!(idx.suffix_to_protein(21),  1, "position 21 should map to protein 1");
-    assert_eq!(idx.suffix_to_protein(52),  2, "position 52 should map to protein 2");
-    assert_eq!(idx.suffix_to_protein(68),  3, "position 68 should map to protein 3");
+    assert_eq!(idx.suffix_to_protein(0), 0, "position 0 should map to protein 0");
+    assert_eq!(idx.suffix_to_protein(21), 1, "position 21 should map to protein 1");
+    assert_eq!(idx.suffix_to_protein(52), 2, "position 52 should map to protein 2");
+    assert_eq!(idx.suffix_to_protein(68), 3, "position 68 should map to protein 3");
 
     // Separator and terminator positions resolve to NULL.
-    assert!(idx.suffix_to_protein(20).is_null(),  "position 20 (separator) should be NULL");
-    assert!(idx.suffix_to_protein(51).is_null(),  "position 51 (separator) should be NULL");
-    assert!(idx.suffix_to_protein(67).is_null(),  "position 67 (separator) should be NULL");
+    assert!(idx.suffix_to_protein(20).is_null(), "position 20 (separator) should be NULL");
+    assert!(idx.suffix_to_protein(51).is_null(), "position 51 (separator) should be NULL");
+    assert!(idx.suffix_to_protein(67).is_null(), "position 67 (separator) should be NULL");
     assert!(idx.suffix_to_protein(113).is_null(), "position 113 (terminator) should be NULL");
 }

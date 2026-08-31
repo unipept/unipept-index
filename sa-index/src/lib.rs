@@ -1,4 +1,4 @@
-pub use text_compression::{WriteBinary, ReadBinary, ReadBinaryMmap};
+pub use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
 pub mod array;
 pub mod peptide_search;

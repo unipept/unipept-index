@@ -6,7 +6,9 @@ use text_compression::ProteinTextSlice;
 use crate::{
     Nullable, SuffixArray,
     sa_searcher::BoundSearch::{Maximum, Minimum},
-    suffix_to_protein_index::{DenseSuffixToProtein, SparseSuffixToProtein, BitVecSuffixToProtein, SuffixToProteinIndex}
+    suffix_to_protein_index::{
+        BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex
+    }
 };
 
 /// Enum indicating if we are searching for the minimum, or maximum bound in the suffix array
@@ -218,11 +220,7 @@ impl Searcher {
                     search_string[index_in_search_string]
                 };
 
-                let protein_char = if text.get(index_in_suffix) == b'L' {
-                    b'I'
-                } else {
-                    text.get(index_in_suffix)
-                };
+                let protein_char = if text.get(index_in_suffix) == b'L' { b'I' } else { text.get(index_in_suffix) };
 
                 is_cond_or_equal = condition_check(peptide_char, protein_char);
             }
@@ -514,7 +512,9 @@ mod tests {
     use text_compression::ProteinText;
 
     use crate::{
-        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher}, suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}, SuffixArray
+        SuffixArray,
+        sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
+        suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
     };
 
     #[test]
