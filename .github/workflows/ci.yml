@@ -1,13 +1,8 @@
-# Everything that gates a change, in one workflow.
+# Everything that gates a change, in one workflow, so branch protection has a single coherent set
+# of required checks to name.
 #
-# This was two files (lint.yml and test.yml) with identical triggers, runner, toolchain override
-# and cache setup. One workflow keeps those in sync by construction and gives branch protection a
-# single coherent set of required checks to name.
-#
-# Toolchains: every job here runs on stable via `RUSTUP_TOOLCHAIN`, which takes precedence over
-# rust-toolchain.toml. The workspace ships from stable, so that is what has to compile. The one
-# exception is `fmt`, which needs the pinned nightly and gets it by *not* setting that variable —
-# see the comment on that job.
+# Every job runs on stable via `RUSTUP_TOOLCHAIN`, which takes precedence over rust-toolchain.toml.
+# The exception is `fmt`, which needs the pinned nightly and gets it by *not* setting that variable.
 name: CI
 
 on:
@@ -16,13 +11,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Previously `on: push` with no filter, which ran the whole of CI on every branch pushed to the
-# remote — including throwaway worktree and baseline branches, two of which sat permanently red.
-# Work now gets its CI through the pull request instead, which also means a fork's PR is tested;
-# under `push` alone it never was.
-
 # A force-push replaces its predecessor rather than racing it. Not on develop: runs there are the
-# record of what the branch did, and cancelling one leaves a commit with no verdict.
+# record of what the branch did.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
@@ -53,9 +43,6 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
-      # Deliberately no `--workspace`: that would override the root `default-members`
-      # and drag `sa-benchmarks` (a heavy, long-running bench harness) into every CI run.
-      #
       # `--all-targets` is not redundant with the `cargo test` below: it is the only thing that
       # compiles `fa-compression`'s criterion bench, which `cargo test` does not build.
       - name: Run cargo check
@@ -66,8 +53,7 @@ jobs:
 
   release-build:
     # `cargo check` proves the workspace typechecks; it does not prove it links, and it never
-    # exercises the release profile. Until this job existed the only release build in CI was the
-    # monthly index build, so a release-only failure had a month to hide.
+    # exercises the release profile.
     name: Release build
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -109,15 +95,11 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
-      # No `--workspace` here on purpose: it overrides the root `default-members`, which
-      # exists to keep `sa-benchmarks` out of the default build. A dedicated step linting
-      # that package is added when the package itself lands.
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   docs:
-    # The crates carry a lot of prose, and prose rots quietly: a renamed item leaves an intra-doc
-    # link pointing at nothing, which nothing else in CI notices. `-D warnings` turns that into a
+    # `-D warnings` turns a broken intra-doc link — which nothing else in CI notices — into a
     # failure. `--no-deps` keeps it to this workspace's own documentation.
     name: Check documentation
     runs-on: ubuntu-latest
@@ -144,15 +126,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    # The only job that runs on rust-toolchain.toml's pinned nightly, and it does so by *not*
-    # setting RUSTUP_TOOLCHAIN: rustup reads the pin straight out of that file and installs it,
-    # components included. Nightly is required because .rustfmt.toml sets `unstable_features`
-    # together with `imports_granularity`, `group_imports`, `normalize_comments` and
-    # `normalize_doc_attributes`; stable rustfmt warns about those and then formats against the
-    # rest, producing a different tree from the one the repo targets.
-    #
-    # The pin lives in rust-toolchain.toml alone, so a local `cargo fmt` and this gate cannot
-    # disagree about the nightly. Bump it there, never here.
+    # Deliberately does not set RUSTUP_TOOLCHAIN: .rustfmt.toml needs the nightly pinned in
+    # rust-toolchain.toml, and rustup reads that pin only when the variable is unset. Bump the
+    # nightly there, never here.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
