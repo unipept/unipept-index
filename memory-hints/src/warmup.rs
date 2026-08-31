@@ -38,10 +38,6 @@ const ASSUMED_PAGE_SIZE: usize = 4096;
 /// divide it by the elapsed time: a sweep running at disk bandwidth and one running at memcpy
 /// bandwidth do the same work and take an order of magnitude apart, and without the byte count the
 /// two are indistinguishable in a report.
-///
-/// It previously existed as five near-identical copies, then as one copy in the protein-text
-/// crate — which every caller happened to depend on, but which has nothing to do with warming a
-/// mapping. It sits here with the other memory hints instead.
 pub fn touch_all_pages(mmap: &Mmap, range: std::ops::Range<usize>) -> u64 {
     #[cfg(unix)]
     let _ = mmap.advise(memmap2::Advice::Sequential);
