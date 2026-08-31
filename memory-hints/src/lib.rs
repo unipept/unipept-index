@@ -2,8 +2,8 @@
 //!
 //! The index is far larger than any cache and larger than the TLB can map at 4 KB granularity — a
 //! full UniProt suffix array runs to ~160 GB out of 223 GB total; see the crate docs of `sa-index`
-//! for the breakdown — so both backends spend most of their time waiting on memory. The two hints
-//! here attack that from opposite ends:
+//! for the breakdown — so both backends spend most of their time waiting on memory. The three hints
+//! here attack that at three different grains:
 //!
 //! * [`prefetch::prefetch_read`] starts a load early, so its ~80-100 ns DRAM latency overlaps
 //!   with useful work. See [`prefetch`].
@@ -17,10 +17,10 @@
 //! guards. [`warmup`] is the exception: it does the faulting itself and costs real time, which is
 //! why it runs once at startup rather than per query.
 //!
-//! # Two hints, opposite disciplines
+//! # Three hints, three disciplines
 //!
-//! They are grouped here because they share a rationale, not a usage pattern, and getting either
-//! one wrong is silent. The mistakes are not the same mistake:
+//! They are grouped here because they share a rationale, not a usage pattern, and getting any of
+//! them wrong is silent. The three mistakes are not the same mistake:
 //!
 //! * [`prefetch::prefetch_read`] is issued **per access, on the hot path** — thousands of times
 //!   per query, from the innermost loops of binary search and protein retrieval. What matters is
@@ -34,15 +34,15 @@
 //!   deletes the loop and the warmup silently does nothing.
 //!
 //! So the thing to read before using `prefetch_read` is its `inline(always)` note; the thing to
-//! read before using `advise_capacity` is the ordering argument in [`hugepages`].
+//! read before using `advise_capacity` is the ordering argument in [`hugepages`]; the thing to read
+//! before using `touch_all_pages` is why its read goes through `black_box`.
 //!
 //! # Why a separate crate
 //!
 //! `protein-text`, `protein-metadata`, `sa-index` and `bitarray` all need these hints without
-//! depending on one another. Both modules were previously separate crates for exactly that reason
-//! — `prefetch`, and `hugepages` inside `bitarray` — and were merged once it was clear the second
-//! had nothing to do with bit packing: four of its six call sites advise plain `Vec`s in
-//! `sa-index` with no bit array in sight.
+//! depending on one another, so the hints cannot live in any one of them. None of the three is
+//! specific to a data structure either: four of `hugepages`' six call sites advise plain `Vec`s in
+//! `sa-index`, with no bit array in sight.
 #![warn(missing_docs)]
 
 pub mod hugepages;
