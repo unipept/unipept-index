@@ -45,11 +45,6 @@ macro_rules! delegate_suffix_to_protein_mapping {
     };
 }
 
-// TEMPORARY, removed in the searcher PR: the pre-split implementation, moved here unchanged.
-// Not re-exported at this module root -- the new backends use the same type names, so callers
-// name `legacy` explicitly until they switch.
-pub mod legacy;
-
 pub mod mmap;
 pub mod preloaded;
 #[cfg(test)]
@@ -91,7 +86,7 @@ pub trait SuffixToProteinMappingBackend: Send + Sync {
     /// The text length this mapping was built for, when the representation records it.
     ///
     /// Used to check that the three index files came from the same `sa-builder` run — see
-    /// `Searcher::try_new`. Dense stores one entry per
+    /// [`Searcher::try_new`](crate::sa_searcher::Searcher::try_new). Dense stores one entry per
     /// text position and BitVec one bit, so both know the length exactly. Sparse stores protein
     /// start positions, which says nothing about the text length, so it keeps the `None` default:
     /// a mapping that cannot be compared is not the same as one that disagrees.
