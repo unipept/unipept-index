@@ -7,13 +7,12 @@
 //!
 //! Prefetching reads like an mmap concern — hiding page faults — but the two-pass loop below is
 //! just as valuable when everything is in owned RAM, and the reason is that "loaded" is not
-//! "cached". Even on the smaller ~300 M-residue index the structures this phase touches are orders
-//! of magnitude larger than any L3 (the full UniProt index multiplies each by roughly 250 — see
-//! the crate docs for that breakdown):
+//! "cached". Every structure this phase touches is orders of magnitude larger than any L3, on the
+//! smaller reference database as much as on the full one:
 //!
-//! * suffix-to-protein mapping: ~1.2 GB dense, ~50 MB as a bit vector (~1.25 bits per position)
-//! * protein metadata table: gigabytes
-//! * protein text: ~190 MB packed at 5 bits per residue
+//! * suffix-to-protein mapping: 4 bytes per text position dense, ~1.25 bits as a bit vector
+//! * protein metadata table: the largest structure after the suffix array
+//! * protein text: 5 bits per residue
 //!
 //! Retrieval walks them at positions the suffix array happened to produce, which is effectively
 //! random, so nearly every lookup is a last-level miss — ~80-100 ns, whether or not the page is
