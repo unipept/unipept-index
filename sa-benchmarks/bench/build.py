@@ -14,6 +14,7 @@ what catches it.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from filecmp import cmp as file_cmp
 from pathlib import Path
@@ -62,9 +63,14 @@ def _cargo_build(repo: Path, features: str) -> None:
     if dropping_privileges():
         # A login shell, because cargo lives on the user's PATH and sudo's secure_path drops it.
         # `cd` inside the shell rather than passing cwd=, which sudo would evaluate as root.
-        wrapped = as_user(
-            ["bash", "-lc", f'cd "$1" && {subprocess.list2cmdline(command)}', "_", str(repo)]
-        )
+        #
+        # `shlex.join`, not `subprocess.list2cmdline`: the latter implements cmd.exe's quoting, and
+        # quotes with double quotes only when an argument contains whitespace. A feature string is
+        # one word, so it would arrive unquoted, and one containing a `$(...)` would arrive inside
+        # double quotes — which bash expands. The features come from a committed suite file rather
+        # than from anything untrusted, but the shell that runs them is a real one and wants a real
+        # quoter.
+        wrapped = as_user(["bash", "-lc", f'cd "$1" && {shlex.join(command)}', "_", str(repo)])
         result = subprocess.run(wrapped, check=False)
     else:
         result = subprocess.run(command, cwd=repo, check=False)
