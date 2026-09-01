@@ -277,20 +277,32 @@ def _slot_spread(records: list[Record]) -> float:
 
 
 def _drift(records: list[Record]) -> float:
-    """First quarter of the reps against the last, in run order, within a single slot.
+    """First quarter of the reps against the last, in run order — the widest any one slot shows.
 
     Reps of different slots are not consecutive in time, so pooling them would compare a slot's
-    early reps with another slot's late ones and report drift that is really the slot gap.
+    early reps with another slot's late ones and report drift that is really the slot gap. Each
+    slot is measured on its own and the largest movement wins, the way `noise_floor` takes the
+    widest of the statistics it combines.
+
+    Reading one slot instead would answer for a fraction of the cell's time on the machine: under a
+    palindrome ordering an arm's two invocations sit at opposite ends of the process, so a cell
+    whose first pass was steady and whose last never settled would report itself steady — which is
+    the one thing this statistic exists to catch.
     """
     by_slot: dict[str, list[float]] = {}
     for record in records:
         by_slot.setdefault(record.dims.get("slot", "a"), []).append(record.qps)
-    values = by_slot[sorted(by_slot)[0]]
-    if len(values) < 4:
-        return float("nan")
-    quarter = max(1, len(values) // 4)
-    first, last = median(values[:quarter]), median(values[-quarter:])
-    return (last - first) / first * 100 if first else float("nan")
+
+    drifts = []
+    for values in by_slot.values():
+        if len(values) < 4:
+            continue
+        quarter = max(1, len(values) // 4)
+        first, last = median(values[:quarter]), median(values[-quarter:])
+        if first:
+            drifts.append((last - first) / first * 100)
+
+    return max(drifts, key=abs) if drifts else float("nan")
 
 
 def _startup(records: list[Record]) -> dict[str, float]:
