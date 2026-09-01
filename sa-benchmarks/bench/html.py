@@ -844,8 +844,17 @@ tr.hidden { display: none; }
 """
 
 _SCRIPT = """
+// Every `localStorage` access goes through these two. The report is written to be opened from
+// disk — it gets copied off a benchmark server and double-clicked — and a `file://` page has no
+// storage origin in every browser: Safari throws `SecurityError` on the first access. Unguarded,
+// and being the first statement in this script, that throw took the whole script with it: no
+// theme, no folding, no filtering, no sorting, no tooltips, no sidebar, and nothing on screen to
+// say why. A remembered preference is worth having and worth nothing if it costs the page.
+const recall = (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (e) {} };
+
 // Theme: follow the system until someone picks, then remember the pick.
-const saved = localStorage.getItem('bench-theme');
+const saved = recall('bench-theme');
 if (saved) document.documentElement.dataset.theme = saved;
 document.getElementById('theme').onclick = () => {
   const dark = document.documentElement.dataset.theme === 'dark'
@@ -853,7 +862,7 @@ document.getElementById('theme').onclick = () => {
         && matchMedia('(prefers-color-scheme: dark)').matches);
   const next = dark ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  localStorage.setItem('bench-theme', next);
+  remember('bench-theme', next);
 };
 
 // Chart hover. One tooltip element for the page, following the cursor over any `[data-tip]` mark.
@@ -979,13 +988,13 @@ function applyTryptic(mode) {
       chip.classList.toggle('on', mode !== '' && chip.dataset.value === mode);
     });
   });
-  localStorage.setItem('bench-tryptic', mode);
+  remember('bench-tryptic', mode);
   applyFilters();
 }
 
 // Non-tryptic on a first visit: it halves the page, and it is the workload the other suites hold
 // their defaults against. The pick is remembered, empty string meaning "show both".
-const savedTryptic = localStorage.getItem('bench-tryptic');
+const savedTryptic = recall('bench-tryptic');
 trypticBar.querySelectorAll('.chip').forEach(chip => {
   chip.onclick = () => applyTryptic(chip.dataset.tryptic);
 });
@@ -1047,7 +1056,15 @@ document.querySelectorAll('table.grid th').forEach(th => {
 });
 
 // Sidebar follows the scroll position: highlight the topmost heading currently on screen.
-const headings = [...document.querySelectorAll('main [id]')];
+//
+// Only the elements the sidebar actually links to. `main [id]` also matched each table, whose id
+// is a filter target with no nav entry, so a table scrolling into view could win `find` and blank
+// the highlight — `links.get('t0')` is undefined and the `?.` swallows it.
+//
+// The section elements are still included, and have to be: a `<details>` carries the id its nav
+// link points at. That an open one encloses its subsections is why `find` reads in document order
+// and takes the outermost — the suite highlights until its first part is reached.
+const headings = [...document.querySelectorAll('main details[id], main h4[id]')];
 const links = new Map([...document.querySelectorAll('nav a')].map(a => [a.hash.slice(1), a]));
 const onScreen = new Set();
 const spy = new IntersectionObserver(entries => {
