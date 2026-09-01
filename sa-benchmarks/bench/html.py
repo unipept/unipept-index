@@ -196,7 +196,15 @@ _MAX_CATEGORY_LENGTH = 20
 #: A number carrying a unit, or written with a decimal point or thousands separators, is a
 #: measurement — that is what keeps a `ratio` column of 0.90x/0.92x/0.94x from becoming filter
 #: buttons.
-_MEASURED = re.compile(r"^[\d,]+(\.\d+)?\s*(%|x|s|ms|min|[KMGT]B?|G)$|^[\d,]*\.\d+$|^\d{1,3}(,\d{3})+$", re.IGNORECASE)
+#:
+#: The leading sign includes `±`, which is how `report.band()` writes a noise band. Without it a
+#: `floor` or `noise` column reads as a set of labels and gets filter chips — turning the width of
+#: the noise into something to click, in the one column that says how much of the table is not a
+#: result.
+_MEASURED = re.compile(
+    r"^[+\-±]?[\d,]+(\.\d+)?\s*(%|x|s|ms|min|[KMGT]B?|G)$|^[+\-±]?[\d,]*\.\d+$|^\d{1,3}(,\d{3})+$",
+    re.IGNORECASE
+)
 #: A signed number is a comparison against something else. Never a category, whatever else shares
 #: the column — which is what a "vs baseline" column of `base, +9.1%, +16.6%` looks like.
 _SIGNED_VALUE = re.compile(r"^[+-]\d")
