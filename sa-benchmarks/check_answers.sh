@@ -12,6 +12,18 @@
 #   bash sa-benchmarks/check_answers.sh
 set -uo pipefail
 
+# No `-e`: a configuration that fails to build or to answer is reported and skipped, so the other
+# eight still get compared. Each failure path below is checked explicitly instead.
+
+# The server runs in the background, so it has to be killed on every exit — not only the normal
+# one. Left alive it keeps $PORT bound, and the next configuration's readiness probe then succeeds
+# against the STALE server: every remaining config would record the previous build's answers and
+# the gate would print PASS. A leaked process is not the risk; a false PASS is.
+pid=""
+cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null; return 0; }
+trap 'cleanup; exit 130' INT TERM
+trap cleanup EXIT
+
 # ============================================================================
 TREE="$(git rev-parse --show-toplevel)"
 PROFILE="${PROFILE:-local}"
@@ -97,16 +109,27 @@ for f in "${CONFIGS[@]}"; do
   if [ "$ready" != "1" ]; then
     echo "  NOT READY — no answer recorded for $tag"
     kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    pid=""
     continue
   fi
 
-  curl -s "http://127.0.0.1:$PORT/search" -H 'content-type: application/json' -d "$BODY" \
-    | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin), sort_keys=True, indent=1))' \
-    > "$OUT/$tag.json"
-
-  grep -i "Storage backends" "$OUT/$tag.log" || echo "  (no backend line — did it start?)"
-  echo "  answer bytes: $(wc -c < "$OUT/$tag.json")"
+  # Written to a temporary and moved only once it parses, for the reason the NOT READY branch
+  # above gives: `>` creates the file before the pipeline runs, so a failed request leaves a
+  # 0-byte answer behind and the comparison at the end reports "the configurations disagree" —
+  # blaming the storage backends for a request that never succeeded. `curl -f` also rejects a
+  # non-2xx body, which would otherwise be recorded as this configuration's answer.
+  if curl -sf "http://127.0.0.1:$PORT/search" -H 'content-type: application/json' -d "$BODY" \
+      | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin), sort_keys=True, indent=1))' \
+      > "$OUT/$tag.json.tmp"; then
+    mv "$OUT/$tag.json.tmp" "$OUT/$tag.json"
+    grep -i "Storage backends" "$OUT/$tag.log" || echo "  (no backend line — did it start?)"
+    echo "  answer bytes: $(wc -c < "$OUT/$tag.json")"
+  else
+    echo "  QUERY FAILED — no answer recorded for $tag (see $OUT/$tag.log)"
+    rm -f "$OUT/$tag.json.tmp"
+  fi
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  pid=""
 done
 
 echo "===== comparison ====="
