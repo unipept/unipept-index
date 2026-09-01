@@ -4,7 +4,7 @@
 //! header, which the caller reads and writes itself. See [`Binary`] for what that leaves the
 //! caller responsible for.
 
-use std::io::{BufRead, Read, Result, Write};
+use std::io::{BufRead, Error, ErrorKind, Read, Result, Write};
 
 /// Reads and writes a bit array's backing words as packed binary data.
 ///
@@ -44,7 +44,10 @@ pub trait Binary {
     ///   unless the caller compares `word_len()` against `required_words()` afterwards. Both
     ///   implementations expose that pair for exactly this check.
     ///
-    /// Errors only on an I/O error from `reader`; a short stream is not one.
+    /// Errors on an I/O error from `reader`, and on a stream whose length is not a whole number of
+    /// words — a body ending mid-word cannot be part of a bit array this crate wrote, so the
+    /// trailing bytes are rejected rather than discarded. A stream that is short by a *whole*
+    /// number of words is still not an error here; that is what the count check above is for.
     fn read_binary<R: BufRead>(&mut self, reader: R) -> Result<()>;
 }
 
@@ -71,13 +74,29 @@ pub(crate) fn write_words<W: Write>(data: &[u64], writer: &mut W) -> Result<()> 
 const READ_CHUNK_BYTES: usize = 4 << 20;
 
 /// Clears `data` and refills it by reading little-endian `u64` words from `reader`.
+///
+/// Errors if the stream does not end on a word boundary. `READ_CHUNK_BYTES` is a multiple of 8 and
+/// `fill_buffer` only returns short at EOF, so a remainder can appear on the final iteration only —
+/// but when it does it means the payload was truncated mid-word, and pushing the whole words and
+/// discarding the rest would hand back a silently short array that reads as valid.
 pub(crate) fn read_words_into<R: BufRead>(data: &mut Vec<u64>, mut reader: R) -> Result<()> {
     data.clear();
     let mut buffer = vec![0u8; READ_CHUNK_BYTES];
     loop {
         let (finished, bytes_read) = fill_buffer(&mut reader, &mut buffer)?;
-        for chunk in buffer[..bytes_read].as_chunks::<8>().0 {
+        let (words, remainder) = buffer[..bytes_read].as_chunks::<8>();
+        for chunk in words {
             data.push(u64::from_le_bytes(*chunk));
+        }
+        if !remainder.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "bit array payload ends mid-word: {} trailing byte(s) after {} whole words",
+                    remainder.len(),
+                    data.len()
+                )
+            ));
         }
         if finished {
             break;
@@ -112,6 +131,29 @@ mod tests {
         fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
             Err(std::io::Error::other("read error"))
         }
+    }
+
+    /// A payload that ends mid-word is rejected rather than silently truncated to whole words.
+    ///
+    /// Discarding the remainder left the array shorter than the stream implied while still
+    /// reporting success, so the damage only surfaced later — as a panic on the first lookup past
+    /// the real data, in whatever was reading the index at the time.
+    #[test]
+    fn a_stream_ending_mid_word_is_an_error() {
+        let mut data = vec![0u64; 4];
+        let payload = [0xAAu8; 20]; // two whole words and four trailing bytes
+        let err = read_words_into(&mut data, payload.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(err.to_string().contains("ends mid-word"), "unexpected message: {err}");
+    }
+
+    /// The boundary case the check must not reject: an exact multiple of 8 bytes.
+    #[test]
+    fn a_stream_ending_on_a_word_boundary_is_accepted() {
+        let mut data = Vec::new();
+        let payload = [0xAAu8; 24];
+        read_words_into(&mut data, payload.as_slice()).unwrap();
+        assert_eq!(data, vec![0xAAAA_AAAA_AAAA_AAAA_u64; 3]);
     }
 
     #[test]
