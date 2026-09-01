@@ -698,12 +698,18 @@ mod tests {
         let expected = fingerprint::<InMemorySA, OwnedProteins, InMemorySuffixToProteinMapping>();
 
         // An agreement test over a fingerprint that stopped distinguishing anything would pass
-        // forever, so check the reference has both kinds of row before comparing against it.
+        // forever, so check the reference has every kind of row before comparing against it.
         assert!(
-            expected.iter().any(|row| !row.6.is_empty()),
+            expected.iter().any(|row| !row.7.is_empty()),
             "the fixture retrieved no proteins — it can no longer tell the backends apart"
         );
-        assert!(expected.iter().any(|row| row.4 == "none"), "the fixture has no miss to check");
+        assert!(expected.iter().any(|row| row.5 == "none"), "the fixture has no miss to check");
+        // The left-extended tryptic search only runs at `sample >= 2`, so without a sparse fixture
+        // the sixteen combinations would agree about a path none of them took.
+        assert!(
+            expected.iter().any(|row| row.0 == "s3" && row.4 && !row.7.is_empty()),
+            "the fixture has no sparse tryptic hit — the left-extended search is not being compared"
+        );
 
         // Spelled out rather than generated: sixteen lines that a failure can name, against a macro
         // whose expansion nothing could read.

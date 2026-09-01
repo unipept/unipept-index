@@ -284,12 +284,14 @@ pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> TestSearcher {
     build_searcher(text, proteins, positions, sparseness, Mapping::BitVec)
 }
 
-/// One row per (mapping representation, peptide, equate_il, tryptic): the result-variant tag, the
-/// sorted matching suffixes, and the `(taxon_id, uniprot_id)` pairs they retrieve.
+/// One row per (sparseness, mapping representation, peptide, equate_il, tryptic): the
+/// result-variant tag, the sorted matching suffixes, and the `(taxon_id, uniprot_id)` pairs they
+/// retrieve.
 ///
 /// Suffixes are sorted because the batched path may emit them in a different order than the scalar
 /// one; that ordering is not part of the contract, but the set is.
-pub(crate) type Fingerprint = Vec<(&'static str, &'static str, bool, bool, &'static str, Vec<i64>, Vec<(u32, String)>)>;
+pub(crate) type Fingerprint =
+    Vec<(&'static str, &'static str, &'static str, bool, bool, &'static str, Vec<i64>, Vec<(u32, String)>)>;
 
 /// Peptides over [`EXAMPLE_TEXT`] (`"AI-CLACVAA-AC-KCRLY$"`), chosen to hit every branch a backend
 /// could get wrong: a hit in several proteins, a single hit, one that only matches with I/L
@@ -307,40 +309,53 @@ where
 
     // The three suffix-to-protein representations are a runtime choice, not a type parameter, so
     // covering them here is free — it does not multiply the monomorphisations.
-    for (mapping_name, mapping) in [("dense", Mapping::Dense), ("sparse", Mapping::Sparse), ("bitvec", Mapping::BitVec)]
-    {
-        let searcher =
-            build_searcher::<SA, P, STPM>(EXAMPLE_TEXT, example_protein_list(), EXAMPLE_SA_FULL.to_vec(), 1, mapping);
+    //
+    // Both sparseness values, because the searcher takes a different path through the tryptic
+    // search at each: `use_extended = tryptic && sample >= 2`, so a sparseness-1 fixture alone
+    // exercises the truncating skip loop and never the left-extended search. That is the half most
+    // likely to differ between backends — it reads `text[ms - 1]` and `text[match_end]`, which is
+    // exactly where a mapped text and an owned one are documented to behave differently past the
+    // end. See `check_tryptic_c_term`.
+    let fixtures: [(&'static str, &[i64], u8); 2] = [("s1", &EXAMPLE_SA_FULL, 1), ("s3", &EXAMPLE_SA_SPARSE3, 3)];
 
-        for equate_il in [false, true] {
-            for tryptic in [false, true] {
-                for peptide in PEPTIDES {
-                    let (tag, mut suffixes) = match searcher
-                        .search_all_matching_suffixes_batched(&[peptide], usize::MAX, equate_il, tryptic)
-                        .remove(0)
-                    {
-                        SearchAllSuffixesResult::NoMatches => ("none", Vec::new()),
-                        SearchAllSuffixesResult::MaxMatches(s) => ("max", s),
-                        SearchAllSuffixesResult::SearchResult(s) => ("found", s)
-                    };
-                    suffixes.sort();
+    for (sparseness_name, sa, sparseness) in fixtures {
+        for (mapping_name, mapping) in
+            [("dense", Mapping::Dense), ("sparse", Mapping::Sparse), ("bitvec", Mapping::BitVec)]
+        {
+            let searcher =
+                build_searcher::<SA, P, STPM>(EXAMPLE_TEXT, example_protein_list(), sa.to_vec(), sparseness, mapping);
 
-                    let mut proteins: Vec<(u32, String)> = searcher
-                        .retrieve_proteins(&suffixes)
-                        .iter()
-                        .map(|p| (p.taxon_id, p.uniprot_id.to_string()))
-                        .collect();
-                    proteins.sort();
+            for equate_il in [false, true] {
+                for tryptic in [false, true] {
+                    for peptide in PEPTIDES {
+                        let (tag, mut suffixes) = match searcher
+                            .search_all_matching_suffixes_batched(&[peptide], usize::MAX, equate_il, tryptic)
+                            .remove(0)
+                        {
+                            SearchAllSuffixesResult::NoMatches => ("none", Vec::new()),
+                            SearchAllSuffixesResult::MaxMatches(s) => ("max", s),
+                            SearchAllSuffixesResult::SearchResult(s) => ("found", s)
+                        };
+                        suffixes.sort();
 
-                    rows.push((
-                        mapping_name,
-                        std::str::from_utf8(peptide).unwrap(),
-                        equate_il,
-                        tryptic,
-                        tag,
-                        suffixes,
-                        proteins
-                    ));
+                        let mut proteins: Vec<(u32, String)> = searcher
+                            .retrieve_proteins(&suffixes)
+                            .iter()
+                            .map(|p| (p.taxon_id, p.uniprot_id.to_string()))
+                            .collect();
+                        proteins.sort();
+
+                        rows.push((
+                            sparseness_name,
+                            mapping_name,
+                            std::str::from_utf8(peptide).unwrap(),
+                            equate_il,
+                            tryptic,
+                            tag,
+                            suffixes,
+                            proteins
+                        ));
+                    }
                 }
             }
         }
