@@ -18,8 +18,9 @@
 //!
 //! Both structs are generic over their text backend, so the metadata and the text are stored
 //! independently: the text is the hottest structure in the index and the metadata table the one
-//! that grows most when preloaded — ~8 GB in the file becomes ~24 GB resident — and the best place
-//! for one is not the best place for the other. All four pairings
+//! that grows most when preloaded — roughly tripling, since it becomes owned strings rather than
+//! bytes in a file — and the best place for one is not the best place for the other. All four
+//! pairings
 //! load from the same `proteins.bin`, which holds both sections — and which reader each pairing
 //! needs is its own `LoadIndex` impl, since the file must be mapped whenever *either* section is.
 //!

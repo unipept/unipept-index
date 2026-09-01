@@ -61,10 +61,10 @@ impl InMemoryProteins<InMemoryProteinText> {
     /// id. Every one of them names the file and line, because the input is a multi-hundred-megabyte
     /// TSV and "invalid digit found in string" on its own is not something anyone can act on.
     ///
-    /// Two of these used to be worse than an error. A row with fewer than four fields panicked on
-    /// an `unwrap` with no message at all; and a mid-file read error ended the loop *successfully*,
-    /// returning the rows read so far — so a truncated read produced a silently partial database,
-    /// and every protein after the failure simply did not exist as far as the index was concerned.
+    /// Both a short row and a mid-file read error are reported rather than absorbed. A read error
+    /// that ended the loop successfully would return the rows read so far, which is a silently
+    /// partial database: every protein after the failure simply would not exist as far as the
+    /// index is concerned.
     pub fn load_from_tsv(file: &str) -> Result<Self, Box<dyn Error>> {
         let mut input_string = String::new();
         let mut proteins: Vec<Protein> = Vec::new();
@@ -90,11 +90,11 @@ impl InMemoryProteins<InMemoryProteinText> {
 
             // `SEPARATION_CHARACTER` and `TERMINATION_CHARACTER` are documented as "must not appear
             // in any sequence", and this is where that becomes true rather than hoped for. Both are
-            // inside the 5-bit alphabet, so a sequence containing one used to be accepted and
-            // concatenated verbatim — producing a text with *more* protein boundaries than there
-            // are proteins. Every protein id after the offending row then shifts by one, and the
-            // last one resolves past the end of the table: fabricated metadata on the mmap backend,
-            // a panic on the preloaded one. Silently, from one stray byte in the input.
+            // inside the 5-bit alphabet, so without this check a sequence containing one is
+            // accepted and concatenated verbatim — producing a text with *more* protein boundaries
+            // than there are proteins. Every protein id after the offending row then shifts by one,
+            // and the last one resolves past the end of the table: fabricated metadata on the mmap
+            // backend, a panic on the preloaded one. Silently, from one stray byte in the input.
             if let Some(offset) = sequence.bytes().position(|b| b == SEPARATION_CHARACTER || b == TERMINATION_CHARACTER)
             {
                 let byte = sequence.as_bytes()[offset] as char;
@@ -249,31 +249,25 @@ fn check_entry_lengths(proteins: &[Protein]) -> Result<(), String> {
 /// # Size limits, and why they are checked
 ///
 /// `uid_offset` and `fa_offset` are `u32`, so neither blob can exceed 4 GiB, and `uid_len` /
-/// `fa_len` are `u16`, so no single entry can exceed 64 KiB. Exceeding either used to be silent:
-/// the offset accumulators wrap in release builds and the length casts truncate, producing a
-/// file whose entries alias each other. Nothing detected it — the index simply returned the
-/// wrong accession and annotations for every protein past the wrap.
+/// `fa_len` are `u16`, so no single entry can exceed 64 KiB. Both ceilings are properties of the
+/// entry layout above, not of any particular database.
 ///
-/// Both are now validated up front, before a single byte is written, so an over-large database
-/// fails the build loudly instead and leaves no partial file behind.
+/// Exceeding either is silent without a check: the offset accumulators wrap in release builds and
+/// the length casts truncate, producing a file whose entries alias each other, and the index then
+/// returns the wrong accession and annotations for every protein past the wrap. So both are
+/// validated up front, before a single byte is written, and an over-large database fails the build
+/// loudly instead of leaving a subtly wrong file behind.
 ///
-/// For scale: measured over a 573,911-protein UniProt release, accessions run 6.04 bytes and
-/// encoded annotations 41.58 bytes per protein, which puts the accession blob's capacity at ~711M
-/// proteins and the annotation blob's at ~103M.
+/// How close a given database is to either ceiling is three `u64`s into its own `proteins.bin`:
+/// `protein_count`, `uid_bytes_total` and `fa_bytes_total` sit immediately after the text section,
+/// in that order. Read them off the index in hand — the annotation length per protein is exactly
+/// the quantity that does not transfer between a curated subset and a whole release, so a figure
+/// measured elsewhere does not predict it.
 ///
-/// **Treat those two figures as an order of magnitude, not a budget.** They come from a sample
-/// two to three orders of magnitude smaller than the release the index is actually built over —
-/// the full UniProt index the benchmarks run against carries a metadata section of ~8.3 GB, of
-/// which this 4 GiB ceiling is already at most half — and the annotation length per protein is
-/// exactly the quantity that does not transfer between a curated subset and a whole release.
-///
-/// The real headroom is three `u64`s into any built `proteins.bin`: `protein_count`,
-/// `uid_bytes_total` and `fa_bytes_total` sit immediately after the text section, in that order.
-/// Read them off the index in hand rather than scaling the numbers above.
-///
-/// Raising the annotation ceiling means widening the offsets to `u64` and rebuilding every index,
-/// so it is deliberately not done pre-emptively — the check exists so that the need announces
-/// itself.
+/// The annotation blob is the half that runs out first, since encoded annotations are several
+/// times the length of an accession. Raising its ceiling means widening the offsets to `u64` and
+/// rebuilding every index, so it is deliberately not done pre-emptively — the check exists so that
+/// the need announces itself.
 impl<T: WriteBinary> WriteBinary for InMemoryProteins<T> {
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         let protein_count = self.proteins.len() as u64;
@@ -333,7 +327,7 @@ pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Pr
     let fa_bytes_total = u64::from_le_bytes(buf8) as usize;
 
     // Held as bytes rather than as `[u8; 16]`s so the whole table can be read in one call instead
-    // of ~200 M sixteen-byte ones; the decode loop below walks it back in `chunks_exact`.
+    // of one per protein; the decode loop below walks it back in `chunks_exact`.
     let table_bytes = protein_count
         .checked_mul(16)
         .ok_or_else(|| format!("The proteins header declares {protein_count} proteins, which cannot be allocated"))?;
@@ -356,9 +350,9 @@ pub(super) fn read_metadata_section<R: BufRead>(reader: &mut R) -> Result<Vec<Pr
         let fa_offset = u32::from_le_bytes(entry[10..14].try_into()?) as usize;
         let fa_len = u16::from_le_bytes(entry[14..16].try_into()?) as usize;
 
-        // An entry's offsets are as untrusted as the header. Unchecked, a corrupt one indexed
-        // outside the blob and panicked here — at load in this path, but the mapped sibling defers
-        // the same slicing to `get`, i.e. into a request handler.
+        // An entry's offsets are as untrusted as the header: unchecked, a corrupt one indexes
+        // outside the blob. Caught at load here, whereas the mapped sibling defers the same slicing
+        // to `get`, i.e. into a request handler.
         let uniprot_id = slice_of(&uid_data, uid_offset, uid_len, index, "UID")?;
         let functional_annotations = slice_of(&fa_data, fa_offset, fa_len, index, "annotation")?;
 
@@ -533,8 +527,8 @@ mod tests {
 
     /// A sequence containing the separator or terminator must be rejected at load.
     ///
-    /// Both bytes are inside the 5-bit alphabet, so this used to be accepted and concatenated
-    /// verbatim: three proteins whose middle sequence held a `-` produced the text
+    /// Both bytes are inside the 5-bit alphabet, so without the check the sequence is accepted and
+    /// concatenated verbatim: three proteins whose middle sequence holds a `-` produce the text
     /// `"AAA-CC-DD-EEE$"` — four boundaries for three proteins. Every id after the offending row
     /// shifts, and the last resolves past the end of the protein table, which is the out-of-range
     /// index that returns fabricated metadata on the mmap backend and panics on the preloaded one.
@@ -562,8 +556,8 @@ mod tests {
 
     /// A malformed row must name the file, the line and the missing field — not panic.
     ///
-    /// The input is a multi-hundred-megabyte generated TSV, so "which line" is the whole of the
-    /// useful information. This used to be `fields.next().unwrap()`, i.e. a panic with no message.
+    /// The input is a large generated TSV, so "which line" is the whole of the useful information;
+    /// an `unwrap` here would be a panic with no message and nothing to act on.
     #[test]
     fn a_short_row_reports_where_and_what_is_missing() {
         let (_dir, path) = tsv_with(&[

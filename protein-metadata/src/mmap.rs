@@ -156,26 +156,24 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
     /// than a panic; only an index far enough past the end to leave the mapping entirely trips
     /// either the assert or the slice. The preloaded sibling does panic on the same index, so the
     /// two backends disagree here and callers must not rely on either. `load_from_tsv` in
-    /// [`crate::preloaded`] rejects the input that used to produce such an index.
+    /// [`crate::preloaded`] rejects the input that would produce such an index.
     ///
     /// # Why this is not checked here
     ///
-    /// A *truncated* file no longer reaches this point: `layout` bounds all four sections —
-    /// including the annotation blob, whose length header it used to skip — so the realistic
-    /// damage (a build killed part-way, a partial copy, a full disk) is now a load error rather
-    /// than a panic in a request handler. What remains is an entry whose offsets were edited to
-    /// point elsewhere while the section headers stayed consistent, which truncation cannot
-    /// produce.
+    /// A *truncated* file does not reach this point: `layout` bounds all four sections, the
+    /// annotation blob included, so the realistic damage (a build killed part-way, a partial copy,
+    /// a full disk) is a load error rather than a panic in a request handler. What remains is an
+    /// entry whose offsets point elsewhere while the section headers stay consistent, which
+    /// truncation cannot produce.
     ///
-    /// Closing that last gap is a deliberate non-goal, not an oversight. Validating every entry at
-    /// load is O(protein_count) and would fault in the whole entry table, which is precisely the
-    /// lazy startup this backend exists to provide; checking on each lookup would put two bounds
-    /// checks on the retrieval hot path. The preloaded sibling *does* check per entry, because it
-    /// materialises both blobs anyway and the check is free there — so the two backends differ
-    /// here on purpose.
+    /// Closing that last gap is a deliberate non-goal. Validating every entry at load is
+    /// O(protein_count) and faults in the whole entry table, which is precisely the lazy startup
+    /// this backend exists to provide; checking on each lookup would put two bounds checks on the
+    /// retrieval hot path. The preloaded sibling *does* check per entry, because it materialises
+    /// both blobs anyway and the check is free there — so the two backends differ here on purpose.
     ///
     /// See `truncation_inside_the_annotation_blob_is_rejected_by_both_backends` for what the load
-    /// path now catches.
+    /// path catches.
     #[inline]
     fn get(&self, index: usize) -> ProteinRef<'_> {
         use entry_offsets as eo;
@@ -253,9 +251,9 @@ fn layout(mmap: &Mmap) -> Result<Layout, Box<dyn Error>> {
 
     let protein_count = u64::from_le_bytes(mmap[meta_offset..meta_offset + 8].try_into()?) as usize;
     let uid_bytes_total = u64::from_le_bytes(mmap[meta_offset + 8..meta_offset + 16].try_into()?) as usize;
-    // The third header field. It used to be skipped entirely, which left the annotation blob as
-    // the one section never bounded against the file: a `proteins.bin` truncated anywhere inside
-    // it mapped cleanly and panicked later, in a query for one of the last proteins.
+    // The third header field. Reading it is what bounds the annotation blob against the file: a
+    // `proteins.bin` truncated anywhere inside that blob would otherwise map cleanly and panic
+    // later, in a query for one of the last proteins.
     let fa_bytes_total = u64::from_le_bytes(mmap[meta_offset + 16..meta_offset + 24].try_into()?) as usize;
 
     let fixed_table_offset = meta_offset
@@ -355,8 +353,8 @@ impl ReadBinaryMmap for MmapBackedProteins<InMemoryProteinText> {
             fixed_table_offset: l.fixed_table_offset,
             uid_data_offset: l.uid_data_offset,
             fa_data_offset: l.fa_data_offset,
-            // The text now lives in owned memory; warming its pages would fault in ~190 MB at
-            // UniProt scale that nothing reads again.
+            // The text now lives in owned memory; warming its pages would fault in the whole text
+            // section, which nothing reads again.
             warm_from: l.meta_offset
         })
     }
@@ -388,7 +386,7 @@ impl ReadBinaryMmap for crate::InMemoryProteins<MmapBackedProteinText> {
 // `proteins.bin` holds the text and the metadata in one file, so it has to be *mapped* whenever
 // either section is mapped — not merely when the metadata is. The odd one out is the last impl
 // below, whose metadata is owned; the fourth pairing, with nothing mapped, takes the owned route
-// in `crate::preloaded`. This used to be a `#[cfg]` predicate spelled out at every loader.
+// in `crate::preloaded`.
 
 impl LoadIndex for MmapBackedProteins<MmapBackedProteinText> {
     fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
@@ -595,8 +593,7 @@ mod tests {
     /// The warm range must skip the text section exactly when the text is not in the mapping.
     ///
     /// Getting this wrong is silent: the pages fault in, nothing ever reads them again, and the
-    /// only symptoms are startup time and page-cache pressure — ~190 MB of it over the
-    /// ~300 M-residue reference database, and ~43 GB at full UniProt scale.
+    /// only symptoms are startup time and page-cache pressure, over the whole text section.
     /// That would quietly cancel the point of holding the text in owned memory at all.
     #[test]
     fn warm_range_skips_the_text_only_when_the_text_is_owned() {

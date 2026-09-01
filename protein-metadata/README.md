@@ -28,9 +28,9 @@ writer, on the `impl WriteBinary for InMemoryProteins` block in `src/preloaded.r
 ## Two axes, not one
 
 `proteins.bin` holds two things: the concatenated protein text and the metadata table. The text is
-the hottest structure in the index and the metadata table the one that grows most when preloaded
-(~8 GB on disk becomes ~24 GB resident), so the best storage for one is not the best storage for
-the other — and both structs above are generic over their text backend so the two can be chosen
+the hottest structure in the index and the metadata table the one that grows most when preloaded —
+roughly tripling, since it becomes owned strings rather than bytes in a file — so the best storage
+for one is not the best storage for the other — and both structs above are generic over their text backend so the two can be chosen
 independently.
 
 | pairing | metadata | text |
