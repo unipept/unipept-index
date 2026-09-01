@@ -139,28 +139,41 @@ mod tests {
 
     /// A corrupt count must be a load error on both backends, not a process abort.
     ///
-    /// All three preloaded readers used to size a `Vec` straight from the header, so an
-    /// implausible count reached `handle_alloc_error` and `abort()`ed — un-catchable, and the
-    /// opposite of the `Err` the mmap readers return for the same nine bytes.
+    /// A preloaded reader that sized a `Vec` straight from the header would reach
+    /// `handle_alloc_error` and `abort()` — un-catchable, and the opposite of the `Err` the mmap
+    /// readers return for the same bytes. `try_alloc_exact` is what keeps the two agreeing.
+    ///
+    /// All three representations, which means two header shapes: dense and sparse declare one
+    /// count in nine bytes, while bitvec declares `bit_len` *and* `block_count` in seventeen. A
+    /// nine-byte fixture cannot reach bitvec's allocation at all — its second `read_exact` fails
+    /// first, and the test would pass while proving nothing — so it gets a header of its own, with
+    /// a `block_count` large enough to clear the "enough blocks for `bit_len`" check and leave
+    /// `try_alloc_exact` as the thing that refuses it.
     #[test]
     fn an_implausible_count_is_an_error_not_an_abort() {
         use binary_traits::ReadBinary;
 
         use crate::suffix_to_protein_index::InMemorySuffixToProteinMapping;
 
-        for tag in [0u8, 1u8] {
+        // (tag, header after the tag). 2^60 entries is far beyond any allocation and is not a
+        // length any builder can produce.
+        let dense_or_sparse = (1u64 << 60).to_le_bytes().to_vec();
+        let mut bitvec = (1u64 << 60).to_le_bytes().to_vec();
+        bitvec.extend_from_slice(&(1u64 << 54).to_le_bytes()); // ceil(2^60 / 64) blocks
+
+        for (tag, header) in [(0u8, &dense_or_sparse), (1u8, &dense_or_sparse), (2u8, &bitvec)] {
             let mut bytes = vec![tag];
-            bytes.extend_from_slice(&(1u64 << 60).to_le_bytes());
+            bytes.extend_from_slice(header);
 
             assert!(
                 InMemorySuffixToProteinMapping::read_binary(&mut bytes.as_slice()).is_err(),
-                "tag {tag}: preloaded accepted a count of 2^60"
+                "tag {tag}: preloaded accepted an implausible count"
             );
 
             let tmp = write_to_tempfile(&bytes);
             assert!(
                 MmapBackedSuffixToProteinMapping::read_binary_mmap(tmp.path()).is_err(),
-                "tag {tag}: mmap accepted a count of 2^60"
+                "tag {tag}: mmap accepted an implausible count"
             );
         }
     }
