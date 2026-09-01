@@ -30,4 +30,8 @@ order = [
 
 # Suites that need root. When it is unavailable they are SKIPPED and the report says so in their
 # section — never omitted, which would read as "nothing to report here".
-optional = ["ram", "threads"]
+#
+# Every suite declaring `needs_root` belongs here. A suite that needs it and is left out is a hard
+# FAIL instead of a skip (`preflight._plan_suite`), which stops the whole session on a machine that
+# was only ever going to run the other suites — `startup` was in that position.
+optional = ["startup", "ram", "threads"]
