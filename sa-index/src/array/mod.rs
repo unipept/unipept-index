@@ -150,6 +150,13 @@ pub trait SuffixArrayBackend: Send + Sync {
     ///
     /// Preferred over a `get` loop when the range is walked in order: implementations amortise
     /// the unpacking across consecutive entries instead of re-deriving it per call.
+    ///
+    /// `end <= start` yields an empty iterator on every backend. Beyond that, the range must lie
+    /// within [`len`](Self::len): what a wider one does is unspecified and differs per backend, in
+    /// the same way and for the same reason as [`get`](Self::get). It generally panics, but a
+    /// packed backend rounds its backing store up to whole `u64` words, so a range ending in that
+    /// slack yields entries that were never written rather than faulting. Callers pass ranges the
+    /// bound search produced, which are in range by construction.
     fn iter_range(&self, start: usize, end: usize) -> Self::RangeIter<'_>;
 
     /// Issues a hardware prefetch hint for the storage holding `index`, without reading it.

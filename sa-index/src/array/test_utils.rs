@@ -30,6 +30,20 @@ pub fn owned_compressed(sa: &[i64], sparseness: u8, bits: usize) -> CompressedSA
     CompressedSA(bit_array, sparseness)
 }
 
+/// Asserts every backend answers a degenerate `iter_range` the same way.
+///
+/// `end <= start` is empty everywhere, including when `start` is past the end — the packed
+/// iterators derive their length with `saturating_sub` and return before touching storage, and the
+/// owned uncompressed one checks before it indexes. Pinned because the three arrive at it by three
+/// different routes, so it is exactly the kind of agreement that decays silently.
+pub fn assert_empty_ranges_agree(backend: &impl SuffixArrayBackend) {
+    let n = backend.len();
+    assert_eq!(backend.iter_range(0, 0).count(), 0, "0..0 should be empty");
+    assert_eq!(backend.iter_range(n, n).count(), 0, "len..len should be empty");
+    assert_eq!(backend.iter_range(2, 1).count(), 0, "a reversed range should be empty");
+    assert_eq!(backend.iter_range(n + 10, n + 5).count(), 0, "a reversed range past the end should be empty");
+}
+
 /// Asserts a backend reports the metadata it was built with and reproduces `sa` entry for entry,
 /// through both access paths — `get`, and `iter_range`, which decodes by its own route.
 pub fn assert_backend_holds(backend: &impl SuffixArrayBackend, sa: &[i64], sparseness: u8, bits_per_value: usize) {
@@ -42,6 +56,7 @@ pub fn assert_backend_holds(backend: &impl SuffixArrayBackend, sa: &[i64], spars
         assert_eq!(backend.get(index), expected, "entry {index} differs");
     }
     assert_eq!(backend.iter_range(0, sa.len()).collect::<Vec<i64>>(), sa, "iter_range disagrees with get");
+    assert_empty_ranges_agree(backend);
 }
 
 /// Walks `prefetch_sa_index` over the whole array and well past its end, then re-reads every entry.

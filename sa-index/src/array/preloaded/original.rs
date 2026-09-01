@@ -48,7 +48,20 @@ impl SuffixArrayBackend for OriginalSA {
     }
 
     fn iter_range(&self, start: usize, end: usize) -> OriginalRangeIter<'_> {
-        OriginalRangeIter(self.0.get(start..end).unwrap_or(&[]).iter())
+        // `end <= start` is an empty range on every backend — both packed iterators derive their
+        // length with `saturating_sub` and return before touching their storage — so it is handled
+        // here rather than left to the slice, which would panic for a reversed range starting past
+        // the end.
+        //
+        // Anything else indexes, and so panics when the range leaves the array. It used to be
+        // `get(start..end).unwrap_or(&[])`, which made this the one backend that answered an
+        // out-of-range range with an empty iterator instead: a bad range from the bound search read
+        // as "no matches" here and crashed on every other storage choice, so which one a
+        // deployment got depended on its backend. See the note on `iter_range` in the trait.
+        if end <= start {
+            return OriginalRangeIter(self.0[..0].iter());
+        }
+        OriginalRangeIter(self.0[start..end].iter())
     }
 
     #[inline]
@@ -201,6 +214,20 @@ mod tests {
     #[should_panic(expected = "Could not write the required bits to the writer")]
     fn test_dump_suffix_array_fail_required_bits() {
         dump_suffix_array(vec![], 1, &mut FailingWriter { valid_write_count: 0 }).unwrap();
+    }
+
+    /// A range past the end faults rather than reading as "no matches".
+    ///
+    /// This backend answered such a range with an empty iterator while the packed and mapped ones
+    /// panicked, so the same out-of-range bug was a silent wrong answer on a preloaded uncompressed
+    /// index and a crash on every other storage choice — a difference the caller does not choose
+    /// and would not see reported.
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn iter_range_past_the_end_panics() {
+        let sa = OriginalSA(vec![1i64, 2, 3, 4], 1);
+        let n = SuffixArrayBackend::len(&sa);
+        let _ = sa.iter_range(n + 10, n + 20).count();
     }
 
     #[test]
