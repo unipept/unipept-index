@@ -33,8 +33,10 @@ impl DynBitArray {
     /// not by the caller once it has filled it: see [`memory_hints::hugepages`] for why that ordering is
     /// the whole point.
     pub fn with_capacity(capacity: usize, bits_per_value: usize) -> Self {
-        Self::try_with_capacity(capacity, bits_per_value)
-            .expect("DynBitArray::with_capacity: capacity * bits_per_value does not fit, or allocation failed")
+        Self::try_with_capacity(capacity, bits_per_value).expect(
+            "DynBitArray::with_capacity: bits_per_value is outside 1..=64, capacity * bits_per_value \
+             does not fit, or allocation failed"
+        )
     }
 
     /// Like [`Self::with_capacity`], but reports failure instead of aborting the process.
@@ -45,8 +47,18 @@ impl DynBitArray {
     /// allocation failure, which turns a damaged index into a dead process; this returns `None` so
     /// the caller can turn it into a load error instead.
     ///
-    /// Returns `None` if `capacity * bits_per_value` overflows or the allocation fails.
+    /// The width is as untrusted as the count and is checked here too. `sa-index` reads it as a
+    /// single byte out of the file header, so the whole `0..=255` range reaches this constructor:
+    /// above 64 the `1 << bits_per_value` below is a shift overflow — a panic in debug, a masked
+    /// shift and a nonsense mask in release — and a zero width with a non-zero capacity yields
+    /// `len > 0` over an empty backing store, where every lookup indexes past the end.
+    ///
+    /// Returns `None` if `bits_per_value` is outside `1..=64`, if `capacity * bits_per_value`
+    /// overflows, or if the allocation fails.
     pub fn try_with_capacity(capacity: usize, bits_per_value: usize) -> Option<Self> {
+        if bits_per_value == 0 || bits_per_value > 64 {
+            return None;
+        }
         let words = capacity.checked_mul(bits_per_value)?.div_ceil(64);
         let mut data: Vec<u64> = Vec::new();
         data.try_reserve_exact(words).ok()?;
@@ -297,6 +309,24 @@ mod dynamic_only_tests {
 
     /// The runtime counterpart of `BitArray::MASK`, including the `1 << 64` overflow case that
     /// the const version sidesteps by construction.
+    /// The documented width range is enforced, not merely described.
+    ///
+    /// Both ends used to be accepted. A width above 64 reached `1 << bits_per_value`, which panics
+    /// in debug and silently builds a nonsense mask in release; a zero width with a non-zero
+    /// capacity produced `len > 0` over zero backing words, so every `get` indexed past the end.
+    /// `sa-index` takes this value from a single header byte, so neither is only reachable through
+    /// a caller bug.
+    #[test]
+    fn a_width_outside_one_to_sixty_four_is_refused() {
+        assert!(DynBitArray::try_with_capacity(4, 0).is_none(), "zero width should be refused");
+        assert!(DynBitArray::try_with_capacity(0, 0).is_none(), "zero width should be refused when empty too");
+        assert!(DynBitArray::try_with_capacity(4, 65).is_none(), "width above 64 should be refused");
+        assert!(DynBitArray::try_with_capacity(4, 255).is_none(), "a full header byte should be refused");
+
+        assert!(DynBitArray::try_with_capacity(4, 1).is_some(), "width 1 is valid");
+        assert!(DynBitArray::try_with_capacity(4, 64).is_some(), "width 64 is valid");
+    }
+
     #[test]
     fn mask_is_derived_from_the_runtime_width() {
         assert_eq!(DynBitArray::with_capacity(4, 40).mask, 0xff_ffff_ffff);

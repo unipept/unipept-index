@@ -252,7 +252,10 @@ mod tests {
         let sa = SuffixArray::Original(vec![], 1);
         assert!(sa.is_empty());
 
-        let bitarray = DynBitArray::with_capacity(0, 0);
+        // Width 40 to match the sibling tests; any width in 1..=64 does, since the array is
+        // empty either way. It was 0, which `DynBitArray` now refuses as outside its documented
+        // range — the assertion below is about the *length*, not the width.
+        let bitarray = DynBitArray::with_capacity(0, 40);
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert!(sa.is_empty());
     }
