@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use clap::{Parser, ValueEnum};
-use sa_index::suffix_to_protein_index::SuffixToProteinMappingStyle;
+use sa_index::suffix_to_protein_index::legacy::SuffixToProteinMappingStyle;
 
 /// Build a (sparse, compressed) suffix array from the given text
 #[derive(Parser, Debug)]

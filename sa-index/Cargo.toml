@@ -10,6 +10,8 @@ tempfile = "3"
 fa-compression = { path = "../fa-compression" }
 
 [dependencies]
+protein-metadata = { path = "../protein-metadata" }
+protein-text = { path = "../protein-text" }
 memory-hints = { path = "../memory-hints" }
 binary-traits = { path = "../binary-traits" }
 clap = { version = "4.4.8", features = ["derive"] }

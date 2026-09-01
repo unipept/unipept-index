@@ -1078,6 +1078,8 @@ dependencies = [
  "fa-compression",
  "memmap2",
  "memory-hints",
+ "protein-metadata",
+ "protein-text",
  "rayon",
  "sa-mappings",
  "serde",

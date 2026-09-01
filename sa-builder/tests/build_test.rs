@@ -1,6 +1,6 @@
 use std::{io::Write, process::Command};
 
-use sa_index::{Nullable, ReadBinaryMmap, SuffixArray, suffix_to_protein_index::SuffixToProteinMapping};
+use sa_index::{Nullable, ReadBinaryMmap, SuffixArray, suffix_to_protein_index::legacy::SuffixToProteinMapping};
 use sa_mappings::proteins::Proteins;
 
 /// Four proteins used as test input, matching the fixture in sa-mappings unit tests.

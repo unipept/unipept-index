@@ -9,7 +9,7 @@ use sa_builder::{Arguments, build_ssa};
 use sa_index::{
     WriteBinary,
     array::{dump_compressed_suffix_array, dump_suffix_array},
-    suffix_to_protein_index::dump_mapping
+    suffix_to_protein_index::legacy::dump_mapping
 };
 use sa_mappings::proteins::Proteins;
 

@@ -6,7 +6,7 @@ use text_compression::ProteinTextSlice;
 use crate::{
     Nullable, SuffixArray,
     sa_searcher::BoundSearch::{Maximum, Minimum},
-    suffix_to_protein_index::{
+    suffix_to_protein_index::legacy::{
         BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein, SuffixToProteinIndex
     }
 };
@@ -514,7 +514,7 @@ mod tests {
     use crate::{
         SuffixArray,
         sa_searcher::{BoundSearchResult, SearchAllSuffixesResult, Searcher},
-        suffix_to_protein_index::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
+        suffix_to_protein_index::legacy::{BitVecSuffixToProtein, DenseSuffixToProtein, SparseSuffixToProtein}
     };
 
     #[test]
