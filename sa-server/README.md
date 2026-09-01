@@ -16,12 +16,13 @@ caller that exposes those functions to the network. See the note on resource lim
 ```bash
 cargo build --release -p sa-server
 
+# --kmer-table-file and --address are both optional; the address shown is the default.
 ./target/release/sa-server \
   --database-file proteins.bin \
   --index-file    sa.bin \
   --mapping-file  mapping.bin \
-  --kmer-table-file kmer_table.bin \   # optional
-  --address 0.0.0.0:3000               # optional, this is the default
+  --kmer-table-file kmer_table.bin \
+  --address 0.0.0.0:3000
 ```
 
 All four files come from one `sa-builder` run and only mean anything as a set. Each is loaded and
