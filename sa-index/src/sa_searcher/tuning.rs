@@ -5,9 +5,9 @@
 //! # Why they are constants and not knobs
 //!
 //! They were four fields of a `SearchTuning` struct, settable at runtime and swept by the benchmark
-//! harness. The full-database run at 660befd7ee (11 suites, 3,063 min, 100 reps x 10,000 peptides,
-//! five storage arms, measured 3.9% noise floor) could not distinguish three of them from noise
-//! anywhere it looked:
+//! harness. A full-database sweep — eleven suites across five storage arms, against a measured
+//! noise floor — could not distinguish three of them from noise anywhere it looked. The run itself
+//! is in `sa-index/BENCHMARKS.md`; what it found:
 //!
 //! * `validate_batch`, swept 16..256 over 40 contexts — **0 of 40** cleared their own floor. The
 //!   largest gain any value showed was +5.6%, against that context's own floor of ±11.2%; the

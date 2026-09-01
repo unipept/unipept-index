@@ -17,10 +17,10 @@
 //! dead — `peptide_search::search_proteins_for_peptide` is the single-query path and calls
 //! `search_matching_suffixes_scalar` directly — it simply is not something this path selects between.
 //!
-//! Retrieval deliberately has no counterpart here. A cross-query batched retrieval was built
-//! and measured (run3): the `retrieval_batch` sweep moved throughput by a median of +1.7%,
-//! never clearing the 3.9% noise floor in any of 12 (file, backend, baseline) combinations —
-//! including long peptides, the case it was designed for. It was reverted rather than carried.
+//! Retrieval deliberately has no counterpart here. A cross-query batched retrieval was built and
+//! measured: the `retrieval_batch` sweep never cleared its own noise floor in any combination of
+//! file, backend and baseline — including long peptides, the case it was designed for. It was
+//! reverted rather than carried.
 //! `retrieve_proteins`' own two-pass prefetch already covers queries with many matches, and
 //! queries with few matches are dominated by peptides where retrieval is a small share of the
 //! work.

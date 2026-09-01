@@ -206,9 +206,8 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // Tryptic searches replace the most expensive skip pass with left-extended searches.
         //
         // A `skip = j` pass finds matches at `ms ≡ -j (mod s)` by searching a j-character-shorter
-        // string, so its SA range grows ~20x per character dropped — `skip = s-1` alone is ~95 %
-        // of all candidates examined, a ~40x overscan (measured: 195,293 candidates per 5-10aa
-        // peptide to find 134 matches).
+        // string, so its SA range grows ~20x per character dropped — `skip = s-1` alone accounts
+        // for ~95 % of all candidates examined, a ~40x overscan on a short peptide.
         //
         // But a tryptic match at `ms` requires `text[ms-1]` to be K, R or a separator — which is
         // exactly the character needed to extend the search string *leftward* instead of
@@ -219,13 +218,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // Only for s >= 2: at s = 1 every position is sampled, `skip = 0` already covers
         // everything, and there is no truncated pass to replace (extending would drop ms = 0).
         //
-        // Measured on the full DB (run5 vs run4, 20 reps, results bit-identical — the
-        // `candidates_accepted` counters match exactly):
-        //
-        //   bucket   candidates examined      throughput        tryptic vs non-tryptic
-        //   5-10aa   1.95e9 -> 1.87e8 (10.4x)  741 -> 7,632 qps   12.1x slower -> 1.2x
-        //   11-25aa  3.96e7 -> 1.96e7 ( 2.0x)  29k  ->  60k  qps   6.6x slower -> 3.3x
-        //   26-50aa  4.44e6 -> 2.29e6 ( 1.9x) 247k  -> 346k  qps   1.3x slower -> 0.9x
+        // Measured on the full database, results bit-identical to the truncating pass. Candidates
+        // examined fall by ~10x on 5-10aa peptides, ~2x on 11-25aa and ~2x on 26-50aa; the tryptic
+        // penalty against a non-tryptic query goes from ~12x slower to ~1.2x on the shortest
+        // bucket, and long peptides end up slightly faster than non-tryptic. See
+        // `sa-index/BENCHMARKS.md` for the run.
         //
         // The gain concentrates on short peptides because the ~20x-per-character range growth
         // only holds while the range is dominated by random-match statistics. A 26-50aa peptide

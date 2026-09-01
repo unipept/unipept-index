@@ -72,10 +72,10 @@ pub struct Arguments {
     ///
     /// 5 is the default because it is the size that pays in both regimes. With the index fully
     /// resident, the 6-mer's edge over it sits inside the noise floor on most length regimes and
-    /// reaches only +4.1% on large peptides, which does not buy 2.9 GB. Raise it to 6 only under
-    /// a memory ceiling, where the table's value is working-set size rather than probe count: a
-    /// 5-mer narrows the search to ~7 SA pages per query and a 6-mer to ~1, which is +18.4%
-    /// against no table where the 5-mer manages +3.2%.
+    /// reaches only a few percent on large peptides, which does not buy the extra ~24x of memory.
+    /// Raise it to 6 only under a memory ceiling, where the table's value is working-set size
+    /// rather than probe count: a 5-mer narrows the search to several SA pages per query and a
+    /// 6-mer to about one, which is where the difference between them stops being noise.
     // The upper bound is enforced here rather than left to the `k <= MAX_KMER_K` assertion inside
     // `KmerTable::build_kmer_table`, which does not run until the suffix array has already been
     // built — hours into a full-database build. The bound itself is taken from `sa_index` so the
@@ -109,9 +109,9 @@ pub enum SAConstructionAlgorithm {
 /// `sa_index::suffix_to_protein_index` documents the three representations in full.
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum SuffixToProteinMappingStyle {
-    /// One `u32` per text position: a single load per lookup, at 4 bytes per residue — ~1.2 GB
-    /// over the ~300 M-residue reference text, and ~300 GB at full UniProt scale, which exceeds
-    /// the whole rest of the index. For small databases only.
+    /// One `u32` per text position: a single load per lookup, at 4 bytes per residue — roughly
+    /// 25x the BitVec below, and at any real scale larger than the whole rest of the index put
+    /// together. For small databases only.
     Dense,
     /// The start position of each protein, binary-searched. Smallest, at O(log m) dependent
     /// loads per lookup for m proteins, each likely a cache miss.

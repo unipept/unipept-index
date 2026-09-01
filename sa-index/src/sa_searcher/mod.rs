@@ -214,11 +214,11 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// # Cost of the fallback
     ///
     /// A full-height binary search: ~35 random SA reads instead of ~12 at the default k=5 on the
-    /// full UniProt index — see [`KmerTable`]. Measured on the full DB that is affordable: even
-    /// 26-50aa tryptic queries, where this fixed cost is the largest share of a ~4 µs budget, came
-    /// out 1.40x *faster* overall (run5), because the left-extension replaced a far more expensive
-    /// truncated pass. Adding `-` to `ALPHABET` would remove the fallback at +29 MB and a rebuild
-    /// of every table file — not worth it while the fallback is this cheap.
+    /// full UniProt index — see [`KmerTable`]. Measured, that is affordable: even 26-50aa tryptic
+    /// queries, where this fixed cost is the largest share of the budget, came out faster overall,
+    /// because the left-extension replaced a far more expensive truncated pass. Adding `-` to
+    /// `ALPHABET` would remove the fallback, at a table roughly a quarter larger and a rebuild of
+    /// every table file — not worth it while the fallback is this cheap.
     #[inline]
     fn opening_window(&self, search_string: &[u8]) -> Option<(usize, usize, usize)> {
         let full_range = (0, self.sa.len(), 0);

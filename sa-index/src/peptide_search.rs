@@ -276,9 +276,9 @@ where
     // Retrieve the proteins for each hit and build the result, dropping peptides with no matches
     // (preserves the previous filter_map semantics and result ordering).
     //
-    // Retrieval is per peptide by design: a cross-query batched variant was built and measured
-    // (run3) and moved throughput by a median of +1.7%, never clearing the noise floor. See the
-    // module comment on `sa_searcher::batched` for the full result.
+    // Retrieval is per peptide by design: a cross-query batched variant was built and measured,
+    // and moved throughput by a median well inside the noise floor. See the module comment on
+    // `sa_searcher::batched` for the full result.
     prepared
         .par_iter()
         .zip(suffix_results.par_iter())
