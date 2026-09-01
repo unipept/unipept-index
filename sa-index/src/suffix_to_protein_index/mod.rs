@@ -7,10 +7,9 @@
 //! Three representations, trading space against lookup cost, chosen at build time
 //! (`sa-builder --mapping-style`) and recorded in the file:
 //!
-//! * **Dense** — one `u32` per text position. One load per lookup, but 4 bytes per residue: ~1.2
-//!   GB over the ~300 M-residue reference text, and ~300 GB at the scale of the full UniProt
-//!   index, where it would be larger than the 160 GB suffix array and larger than everything else
-//!   in that index put together. A choice for small databases only.
+//! * **Dense** — one `u32` per text position. One load per lookup, but 4 bytes per residue, which
+//!   is ~25x the BitVec below and, at any real scale, larger than the suffix array it serves and
+//!   larger than everything else in the index put together. A choice for small databases only.
 //! * **Sparse** — the start position of each protein, binary-searched. Smallest, but with m
 //!   proteins it costs O(log m) dependent loads per lookup, each likely a cache miss.
 //! * **BitVec** — a bit per text position marking the separators and the terminator, with a rank
