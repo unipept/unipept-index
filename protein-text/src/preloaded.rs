@@ -56,13 +56,17 @@ impl InMemoryProteinText {
     ///
     /// # Panics
     ///
-    /// If any byte is outside the alphabet in [`crate::BIT5_TO_CHAR`].
+    /// If any byte is outside the alphabet in [`crate::BIT5_TO_CHAR`]. The message carries both the
+    /// byte value and its ASCII rendering: this path is byte-based, so formatting the `u8` alone
+    /// printed a bare number in quotes — `'74'` rather than `'J'` — and `J` is exactly the residue
+    /// a real UniProt export is most likely to trip on, since it is absent from the alphabet.
     pub fn from_vec(input_vec: &[u8]) -> Self {
         let char_to_5bit = Self::create_char_to_5bit_hashmap();
         let mut bit_array = BitArray::<5>::with_capacity(input_vec.len());
         for (i, e) in input_vec.iter().enumerate() {
-            let char_5bit: u8 =
-                *char_to_5bit.get(e).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
+            let char_5bit: u8 = *char_to_5bit
+                .get(e)
+                .unwrap_or_else(|| panic!("Input byte {e} ({:?}) at index {i} is not in the alphabet", *e as char));
             bit_array.set(i, char_5bit as u64);
         }
         Self { bit_array, char_to_5bit }
@@ -82,12 +86,13 @@ impl InMemoryProteinText {
     ///
     /// # Panics
     ///
-    /// If `value` is outside the alphabet, or `index` is out of bounds.
+    /// If `value` is outside the alphabet, or `index` is out of bounds. As in [`Self::from_vec`],
+    /// the message gives the byte and its ASCII rendering rather than a bare number.
     pub fn set(&mut self, index: usize, value: u8) {
         let char_5bit: u8 = *self
             .char_to_5bit
             .get(&value)
-            .unwrap_or_else(|| panic!("Input character '{}' not in alphabet", value));
+            .unwrap_or_else(|| panic!("Input byte {value} ({:?}) is not in the alphabet", value as char));
         self.bit_array.set(index, char_5bit as u64);
     }
 
@@ -194,6 +199,31 @@ mod tests {
     use std::io::{BufRead, Read};
 
     use super::*;
+
+    /// The alphabet-rejection messages name the residue, not its byte value.
+    ///
+    /// `J` is the case that matters: UniProt emits it for a Leu/Ile ambiguity and it is absent from
+    /// `BIT5_TO_CHAR`, so this is a plausible failure at the end of a long TSV load. Formatting the
+    /// `u8` with `'{}'` printed `'74'`, which the reader then has to decode by hand.
+    #[test]
+    fn an_out_of_alphabet_byte_is_named_in_the_panic() {
+        let err = std::panic::catch_unwind(|| {
+            InMemoryProteinText::from_vec(b"ACJ");
+        })
+        .unwrap_err();
+        let msg = err.downcast_ref::<String>().expect("panic payload should be a String");
+        assert!(msg.contains("'J'"), "message should show the residue, got: {msg}");
+        assert!(msg.contains("74"), "message should show the byte value, got: {msg}");
+
+        let text = InMemoryProteinText::with_capacity(4);
+        let err = std::panic::catch_unwind(move || {
+            let mut text = text;
+            text.set(0, b'J');
+        })
+        .unwrap_err();
+        let msg = err.downcast_ref::<String>().expect("panic payload should be a String");
+        assert!(msg.contains("'J'"), "message should show the residue, got: {msg}");
+    }
 
     pub struct FailingWriter {
         pub valid_write_count: usize
