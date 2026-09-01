@@ -239,12 +239,47 @@ struct PendingRename {
 /// can still leave a mix. Making that impossible needs a directory swap, which is a bigger change
 /// than this is worth — the window is microseconds of `rename` calls rather than the minutes a
 /// build takes.
+///
+/// # Why the directory is synced too
+///
+/// [`Output::seal`] fsyncs each file's *contents*, which is what makes them survive a crash. It
+/// says nothing about the directory entry the rename creates: on a crash the file can be fully
+/// durable while the name still points at the old inode, or at nothing. Syncing the containing
+/// directory after the renames is what turns "the bytes are on disk" into "the index is on disk
+/// under its own name", which is the guarantee `seal` claims on the caller's behalf.
+///
+/// One sync per directory rather than per rename: every section of an index normally lands in the
+/// same one, and the entries are already written by then.
 fn commit_all(pending: Vec<PendingRename>) -> Result<(), String> {
+    let mut directories: Vec<PathBuf> = Vec::new();
+
     for PendingRename { temporary, destination } in pending {
         std::fs::rename(&temporary, &destination).map_err(|err| {
             format!("Could not move {} into place at {}: {err}", temporary.display(), destination.display())
         })?;
+
+        // `parent()` is `Some("")` for a bare filename, which does not open; normalise it to ".".
+        let directory = match destination.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+            _ => PathBuf::from(".")
+        };
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
     }
+
+    for directory in directories {
+        // Opening a directory read-only and fsyncing it is the portable way to force the entries
+        // out; `File::open` on a directory is fine on Unix. On platforms where it is not, this is
+        // a durability nicety rather than a correctness requirement, so a failure to open is not
+        // worth aborting a completed build for — the rename has already happened.
+        if let Ok(handle) = File::open(&directory) {
+            handle
+                .sync_all()
+                .map_err(|err| format!("Could not flush the directory {} to disk: {err}", directory.display()))?;
+        }
+    }
+
     Ok(())
 }
 
