@@ -37,7 +37,7 @@ large = "../peptides/large.txt"
 # file is the one that fails, with the list of what this profile has — a query file cannot be
 # reconstructed.)
 #
-# k5 is the shipped default, mirroring `sa-builder --kmer-size` (127 MB). k6 is 3.06 GB and is a
+# k5 is the shipped default, mirroring `sa-builder --kmer-size` (0.12 GB). k6 is 2.85 GB and is a
 # documented tuning step for memory-constrained deployments, where the table's value is working-set
 # size rather than probe count — see the `kmer` and `ram` suites' notes. The `kmer` suite sweeps both
 # against no table, so both have to be here for a full run.

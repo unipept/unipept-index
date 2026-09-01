@@ -4,10 +4,10 @@ Every row is a delta from the `none` cell in the same length regime on the same 
 that is the only comparison the suite is for: absolute throughput here is `defaults`' job, and a
 table's value only means something relative to not having one.
 
-The resident cost travels with the win everywhere it is shown. A table is a space-for-probes trade —
-on the full database the 6-mer is 3.06 GB against the 5-mer's 127 MB — and this suite runs
-unconstrained, which is exactly the regime in which the cost is invisible in the throughput. A
-report that showed the win without the bytes would recommend the 6-mer every time.
+The resident cost travels with the win everywhere it is shown. A table is a space-for-probes trade,
+and each extra letter multiplies its size by the alphabet — a 6-mer is 24x a 5-mer — while this
+suite runs unconstrained, which is exactly the regime in which that cost is invisible in the
+throughput. A report that showed the win without the bytes would recommend the 6-mer every time.
 """
 
 from __future__ import annotations
@@ -46,7 +46,13 @@ BYTES_PER_ENTRY = 16
 
 
 def table_gb(k: int) -> float:
-    """What attaching a k-mer table costs, in GB. 127 MB at k=5, 3.06 GB at k=6."""
+    """What attaching a k-mer table costs, as GiB labelled GB — 0.12 at k=5, 2.85 at k=6.
+
+    The unit matters because the same byte count has two spellings: `24^6 * 16` is 2.85 GiB and
+    3.06 decimal GB, and quoting one while computing the other reads as two different figures for
+    one table. This returns GiB, matching `records`' other sizes, and `suites/kmer.toml` quotes the
+    same pair.
+    """
     return 0.0 if k <= 0 else AMINO_ACIDS**k * BYTES_PER_ENTRY / 2**30
 
 
