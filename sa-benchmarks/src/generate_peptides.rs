@@ -6,14 +6,19 @@ use std::{
 };
 
 use clap::Parser;
+use protein_metadata::{SEPARATION_CHARACTER, TERMINATION_CHARACTER};
 use protein_text::ProteinTextBackend;
 use rand::RngExt;
 use sa_index::ProteinsBackend as _;
 use sa_server::load_proteins_file;
 
-/// Characters that delimit protein boundaries in the text.
-/// b'-' is SEPARATION_CHARACTER, b'$' is TERMINATION_CHARACTER.
-const BOUNDARY_CHARS: [u8; 2] = *b"-$";
+/// Whether `c` delimits a protein boundary, and so cannot appear inside a sampled peptide.
+///
+/// Taken from `protein-metadata` rather than spelled as a literal: these two bytes define the
+/// structure of the concatenated text, and every other reader of that text tests them by name.
+fn is_boundary(c: u8) -> bool {
+    c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER
+}
 
 /// Sample real protein subsequences from proteins.bin for use as benchmark peptides.
 ///
@@ -52,7 +57,7 @@ fn collect_protein_runs<T: ProteinTextBackend>(text: &T, min_len: usize) -> Vec<
 
     for i in 0..total {
         let c = text.get(i);
-        if BOUNDARY_CHARS.contains(&c) {
+        if is_boundary(c) {
             let run_len = i - run_start;
             if run_len >= min_len {
                 runs.push((run_start, run_len));
@@ -70,7 +75,12 @@ fn collect_protein_runs<T: ProteinTextBackend>(text: &T, min_len: usize) -> Vec<
     runs
 }
 
-fn sample_peptides<T: ProteinTextBackend>(text: &T, amount: usize, min_len: usize, max_len: usize) -> Vec<String> {
+fn sample_peptides<T: ProteinTextBackend>(
+    text: &T,
+    amount: usize,
+    min_len: usize,
+    max_len: usize
+) -> Result<Vec<String>, Box<dyn Error>> {
     let runs = collect_protein_runs(text, min_len);
 
     // Prefix sums over the number of valid start positions per run.
@@ -83,12 +93,19 @@ fn sample_peptides<T: ProteinTextBackend>(text: &T, amount: usize, min_len: usiz
         })
         .collect();
 
+    // An error rather than an assertion: `min_len` is a command-line argument, so a value larger
+    // than the longest protein is ordinary bad input, not a broken invariant. The two neighbouring
+    // argument checks in `main` already return `Err`, and a panic here exits with a different
+    // status than they do. It also guards the `random_range(0..0)` below, which panics on an
+    // empty range.
     let total_valid_starts = *prefix_sums.last().unwrap_or(&0);
-    assert!(
-        total_valid_starts > 0,
-        "No valid start positions found — the index may be too small for min_len = {}",
-        min_len
-    );
+    if total_valid_starts == 0 {
+        return Err(format!(
+            "no protein in the index is at least {min_len} residues long, so --min-len {min_len} \
+             selects no peptides; lower it or point at a larger index"
+        )
+        .into());
+    }
 
     let mut rng = rand::rng();
     let mut peptides = Vec::with_capacity(amount);
@@ -111,7 +128,7 @@ fn sample_peptides<T: ProteinTextBackend>(text: &T, amount: usize, min_len: usiz
         peptides.push(peptide);
     }
 
-    peptides
+    Ok(peptides)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -132,7 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("  Text length: {} characters", text.len());
     eprintln!("Sampling {} peptides (length {}-{})...", args.amount, args.min_len, args.max_len);
 
-    let peptides = sample_peptides(text, args.amount, args.min_len, args.max_len);
+    let peptides = sample_peptides(text, args.amount, args.min_len, args.max_len)?;
 
     let mut out = BufWriter::new(File::create(&args.output_file)?);
     for p in &peptides {

@@ -1527,7 +1527,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let proteins_path = args.index_dir.join("proteins.bin");
     let mapping_path = args.index_dir.join("mapping.bin");
 
-    // Detect mapping type before loading (peek at the type byte)
+    // Detect mapping type before loading (peek at the type byte).
+    //
+    // `"unknown"` never reaches a record: `load_mapping_file` below propagates the reader's own
+    // "Unknown mapping type byte" error, so an unrecognised byte ends the run before anything is
+    // written. It is a placeholder for the window between this peek and that load, not a label.
+    //
+    // The arms duplicate the table in `sa_index::suffix_to_protein_index`, which is the drift to
+    // watch: a fourth representation added there would load correctly and be recorded here as
+    // `"unknown"` with `mapping_bytes = 0`, understating memory in a report rather than failing.
     let mapping_type_str = match first_byte_of(&mapping_path)? {
         0 => "dense",
         1 => "sparse",

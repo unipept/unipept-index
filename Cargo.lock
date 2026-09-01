@@ -1117,6 +1117,7 @@ name = "sa-benchmarks"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "protein-metadata",
  "protein-text",
  "rand",
  "rayon",
