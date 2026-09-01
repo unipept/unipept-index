@@ -1,4 +1,7 @@
-"""Exercises every suite's analysis against fabricated records.
+"""Exercises four of the six suites' analyses against fabricated records.
+
+`stream` and `startup` have no fixtures here; `analysis_for` reaches them, but nothing calls it.
+
 
     python3 -m bench.selftest
 

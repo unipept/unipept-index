@@ -428,16 +428,17 @@ show exactly the same analysis.
 PYTHONPATH=sa-benchmarks python3 -m bench.selftest
 ```
 
-runs every analysis against fabricated records with known shapes. `ram` and `threads` need root,
+runs the `defaults`, `kmer`, `ram` and `threads` analyses against fabricated records with known
+shapes. `stream` and `startup` have no fixtures yet, so their `analyse` is not covered — worth
+knowing for `startup`, which is not optional and runs first on the benchmark server. `ram` and
+`threads` need root,
 cgroup v2 and Linux, so on a development machine this is the only thing that exercises them — and
 they are where the crossover detection, the void-cell rule and the fault-flatness warning live. It
 asserts that a cell which was OOM-killed, one whose cap did not bind, and one that never ran each
 appear in the output and stay distinguishable from one another, and that all three renderings
 survive: the page is well-formed, self-contained, and marks those cells.
 
-It also builds a process whose fabricated machine slows by 30% over the run, and puts the one real
-win late in it — so the check passes only if the drift cadence was actually applied, not merely
-recorded. The grid expander is checked separately: that two blocks describing the same measurement
+The grid expander is checked separately: that two blocks describing the same measurement
 collapse while the same measurement at two precisions does not, that cells land in the process their
 block named, and that a misspelled context key — or a suite still carrying a `tune` table — is an
 error rather than a silently different sweep.
