@@ -88,10 +88,10 @@ mod tests {
 
     /// A truncated mapping file must be refused by *all three* representations, on both backends.
     ///
-    /// Dense and sparse used to validate only their 9-byte header, so a file whose body was short
-    /// loaded cleanly and panicked on the first lookup — inside a request handler, since this is a
-    /// server startup path. Bitvec always checked. The contract in `binary_traits` requires all
-    /// three to behave the same way, and now they do.
+    /// A reader that validated only its 9-byte header would accept a file whose body is short,
+    /// then panic on the first lookup — inside a request handler, since this is a server startup
+    /// path. The contract in `binary_traits` requires all three representations to behave the same
+    /// way, so all three bound their body against the mapping before the struct exists.
     #[test]
     fn every_mmap_representation_rejects_a_truncated_body() {
         use binary_traits::ReadBinary;

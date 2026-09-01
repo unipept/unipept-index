@@ -25,8 +25,8 @@ pub use sparse::SparseSuffixToProtein;
 ///
 /// Every reader below takes its capacity from a count in the file header. `Vec::with_capacity`
 /// reaches `handle_alloc_error` on an implausible one, which `abort()`s — un-catchable, and a very
-/// different outcome from the `Err` the mmap readers return for the very same bytes. A crafted
-/// 9-byte header declaring `2^60` entries used to kill the process here and load-error there.
+/// different outcome from the `Err` the mmap readers return for the very same bytes: a crafted
+/// header declaring `2^60` entries would kill the process here and load-error there.
 ///
 /// The capacity stays exact on purpose: the dense and bitvec readers issue
 /// `memory_hints::hugepages::advise_capacity` against what this returns — the two large allocations

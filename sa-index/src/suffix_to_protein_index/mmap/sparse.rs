@@ -48,11 +48,11 @@ impl SuffixToProteinMappingBackend for MmapSparseSuffixToProtein {
 /// Maps a sparse mapping file, validating the header *and* the body it declares.
 ///
 /// The count is checked against the mapping's actual length before the struct is built, so every
-/// lookup below can index the mapping without re-checking. It used to be validated only as far as
-/// the 9-byte header, which meant a file whose body was short — a build killed part-way, a partial
-/// copy, a full disk — loaded cleanly and then panicked on the first lookup, inside a request
-/// handler. That is what [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap)'s contract forbids,
-/// and what the bitvec reader next door already did correctly.
+/// lookup below can index the mapping without re-checking. Validating only the 9-byte header
+/// would let a file whose body is short — a build killed part-way, a partial copy, a full disk —
+/// load cleanly and then panic on the first lookup, inside a request handler, which is what
+/// [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap)'s contract forbids. All three readers bound
+/// their body the same way.
 ///
 /// This also bounds `touch_all_pages`, whose sweep is `data_offset .. data_offset + count * 8`:
 /// with the count validated, that range is guaranteed to lie inside the mapping, so the sweep no

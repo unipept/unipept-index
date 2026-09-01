@@ -231,10 +231,11 @@ const READ_CHUNK_BYTES: usize = 4 << 20;
 /// Reads the body of a bitvec mapping, after the type byte
 /// [`InMemorySuffixToProteinMapping::read_binary`](super::InMemorySuffixToProteinMapping) consumed.
 ///
-/// Reads whole words and whole cells, in large chunks. It used to read one `u64` per `read_exact`
-/// and then `push_bit` once **per bit** — a call per position in the protein text, which at UniProt
-/// scale is the most expensive thing in a preloaded startup — and then throw the file's superblocks
-/// away and recompute them. Both halves of the body now land as they are stored.
+/// Reads whole words and whole cells, in large chunks, and takes the file's superblocks as stored
+/// rather than recomputing them. Both matter at scale: reading a `u64` at a time and setting one
+/// bit per position would cost a call per position in the protein text, and rebuilding the counts
+/// repeats work the file already carries — together the most expensive part of a preloaded
+/// startup.
 pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffixToProtein, Box<dyn Error>> {
     let mut buf8 = [0u8; 8];
     reader.read_exact(&mut buf8)?;
