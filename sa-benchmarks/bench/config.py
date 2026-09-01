@@ -231,7 +231,7 @@ def load(name: str, repo: Path) -> Suite:
 
     axes = raw.get("axes", {})
     defaults = raw.get("defaults", {})
-    deprecations = _normalise_kmer(axes, path) + _normalise_kmer(defaults, path)
+    deprecations = _normalise_kmer(axes, path, axis=True) + _normalise_kmer(defaults, path)
 
     for axis, values in axes.items():
         if axis not in KNOWN_AXES:
@@ -286,8 +286,11 @@ def load(name: str, repo: Path) -> Suite:
     return suite
 
 
-def _normalise_kmer(table: dict, path: Path) -> list[str]:
+def _normalise_kmer(table: dict, path: Path, axis: bool = False) -> list[str]:
     """Rewrites a deprecated `kmer_table = "k6"` into `kmer = 6`, in place.
+
+    `axis` says whether this table may hold several values. `[axes]` may; `[defaults]` names one
+    value per setting, and a list there reaches consumers that treat it as a scalar.
 
     One vocabulary downstream. `[[sweep]]` blocks have always named the integer k, because a matrix
     process keeps a pool of tables keyed by k and swaps them per cell; `[axes]` and `[defaults]`
@@ -314,8 +317,20 @@ def _normalise_kmer(table: dict, path: Path) -> list[str]:
             )
         return int(name[1:])
 
+    if isinstance(value, list) and not axis:
+        # A list is a sweep, and only an axis can sweep. In `[defaults]` it would be accepted here
+        # and then fail far away: `runner._kmer_args` does `int(settings.get("kmer"))` and
+        # `preflight._table_notes` indexes it, and the `TypeError` from either escapes
+        # `_plan_suite`, which catches only `ConfigError` — so one mis-typed default takes down a
+        # session that was meant to report it and carry on.
+        raise ConfigError(
+            f"{path}: kmer_table = {value!r} lists several tables in [defaults], which names one "
+            f"value per setting. List them in [axes] to sweep them, or pick one here."
+        )
+
     table["kmer"] = [k_of(item) for item in value] if isinstance(value, list) else k_of(value)
     shown = table["kmer"]
+    # `kmer = [5, 6]` is only valid advice for an axis; in [defaults] it is the shape just rejected.
     return [
         f"`kmer_table` is deprecated: write `kmer = {shown}` instead (same meaning, and the same "
         f"spelling a [[sweep]] block uses)"
