@@ -1,7 +1,9 @@
 [workspace]
 resolver = "2"
 
-members = [ "memory-hints",
+members = [ "protein-metadata",
+    "protein-text",
+    "memory-hints",
     "binary-traits",
     "bitarray",
     "fa-compression",

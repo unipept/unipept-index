@@ -4,7 +4,7 @@ use std::{
     path::Path
 };
 
-use bitarray::{Binary, BitArray};
+use bitarray::{Binary, DynBitArray};
 use memmap2::Mmap;
 use text_compression::{ReadBinary, ReadBinaryMmap, WriteBinary};
 
@@ -20,10 +20,10 @@ pub enum SuffixArray {
     /// The original suffix array.
     Original(Vec<i64>, u8),
     /// The compressed suffix array.
-    Compressed(BitArray, u8),
+    Compressed(DynBitArray, u8),
     /// A suffix array backed by a memory-mapped file. Works for both compressed and uncompressed
     /// formats: bits_per_value == 64 means uncompressed (i64 values), otherwise compressed
-    /// (BitArray-style packed bit values with the given bits per element).
+    /// (DynBitArray-style packed bit values with the given bits per element).
     MmapBacked {
         mmap: Mmap,
         data_offset: usize,
@@ -161,7 +161,7 @@ impl ReadBinaryMmap for SuffixArray {
 mod tests {
     use std::io::{BufRead, Read};
 
-    use bitarray::BitArray;
+    use bitarray::DynBitArray;
 
     use super::*;
     use crate::ReadBinaryMmap;
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_suffix_array_compressed() {
-        let mut bitarray = BitArray::with_capacity(5, 40);
+        let mut bitarray = DynBitArray::with_capacity(5, 40);
         bitarray.set(0, 1_u64);
         bitarray.set(1, 2_u64);
         bitarray.set(2, 3_u64);
@@ -222,7 +222,7 @@ mod tests {
         let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
         assert_eq!(sa.len(), 5);
 
-        let bitarray = BitArray::with_capacity(5, 40);
+        let bitarray = DynBitArray::with_capacity(5, 40);
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.len(), 5);
     }
@@ -232,7 +232,7 @@ mod tests {
         let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
         assert_eq!(sa.bits_per_value(), 64);
 
-        let bitarray = BitArray::with_capacity(5, 40);
+        let bitarray = DynBitArray::with_capacity(5, 40);
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.bits_per_value(), 40);
     }
@@ -242,7 +242,7 @@ mod tests {
         let sa = SuffixArray::Original(vec![1, 2, 3, 4, 5], 1);
         assert_eq!(sa.sample_rate(), 1);
 
-        let bitarray = BitArray::with_capacity(5, 40);
+        let bitarray = DynBitArray::with_capacity(5, 40);
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert_eq!(sa.sample_rate(), 1);
     }
@@ -252,7 +252,10 @@ mod tests {
         let sa = SuffixArray::Original(vec![], 1);
         assert!(sa.is_empty());
 
-        let bitarray = BitArray::with_capacity(0, 0);
+        // Width 40 to match the sibling tests; any width in 1..=64 does, since the array is
+        // empty either way. It was 0, which `DynBitArray` now refuses as outside its documented
+        // range — the assertion below is about the *length*, not the width.
+        let bitarray = DynBitArray::with_capacity(0, 40);
         let sa = SuffixArray::Compressed(bitarray, 1);
         assert!(sa.is_empty());
     }
@@ -296,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_compressed_write_binary_roundtrip() {
-        let mut bitarray = BitArray::with_capacity(5, 40);
+        let mut bitarray = DynBitArray::with_capacity(5, 40);
         bitarray.set(0, 10_u64);
         bitarray.set(1, 20_u64);
         bitarray.set(2, 30_u64);

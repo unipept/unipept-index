@@ -7,7 +7,7 @@ use std::{
     sync::Arc
 };
 
-use bitarray::{Binary, BitArray, data_to_writer};
+use bitarray::{Binary, DynBitArray, data_to_writer};
 use memmap2::Mmap;
 
 pub mod traits;
@@ -16,7 +16,7 @@ pub use traits::{ReadBinary, ReadBinaryMmap, WriteBinary};
 /// The 5-bit-to-char lookup table for mmap-backed ProteinText.
 const BIT5_TO_CHAR: &[u8; 27] = b"ABCDEFGHIKLMNOPQRSTUVWXYZ-$";
 
-/// Returns the number of bytes the BitArray data occupies for a given text length at 5 bits/value.
+/// Returns the number of bytes the DynBitArray data occupies for a given text length at 5 bits/value.
 pub fn bit_array_byte_size(text_length: usize) -> usize {
     let extra = if (text_length * 5).is_multiple_of(64) { 0 } else { 1 };
     (text_length * 5 / 64 + extra) * 8
@@ -24,9 +24,9 @@ pub fn bit_array_byte_size(text_length: usize) -> usize {
 
 /// Structure representing the proteins, stored in a bit array using 5 bits per amino acid.
 pub enum ProteinText {
-    /// In-memory representation using a BitArray.
+    /// In-memory representation using a DynBitArray.
     InMemory {
-        bit_array: BitArray,
+        bit_array: DynBitArray,
         char_to_5bit: HashMap<u8, u8>,
         bit5_to_char: Vec<u8>
     },
@@ -58,7 +58,7 @@ impl ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
 
-        let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
+        let mut bit_array = DynBitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 =
                 *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));
@@ -73,7 +73,7 @@ impl ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
 
-        let mut bit_array = BitArray::with_capacity(input_vec.len(), 5);
+        let mut bit_array = DynBitArray::with_capacity(input_vec.len(), 5);
         for (i, e) in input_vec.iter().enumerate() {
             let char_5bit: u8 =
                 *char_to_5bit.get(e).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", e));
@@ -84,7 +84,7 @@ impl ProteinText {
     }
 
     /// Creates the compressed text from a bit array.
-    pub fn new(bit_array: BitArray) -> ProteinText {
+    pub fn new(bit_array: DynBitArray) -> ProteinText {
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
         let bit5_to_char = ProteinText::create_bit5_to_char();
         ProteinText::InMemory { bit_array, char_to_5bit, bit5_to_char }
@@ -92,7 +92,7 @@ impl ProteinText {
 
     /// Creates an instance of `ProteinText` with a given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self::new(BitArray::with_capacity(capacity, 5))
+        Self::new(DynBitArray::with_capacity(capacity, 5))
     }
 
     /// Creates a memory-mapped ProteinText backed by an existing mmap.
@@ -161,7 +161,7 @@ impl ProteinText {
         self.len() == 0
     }
 
-    /// Clears the `BitArray`, setting all bits to 0. Only valid for InMemory variant.
+    /// Clears the `DynBitArray`, setting all bits to 0. Only valid for InMemory variant.
     pub fn clear(&mut self) {
         match self {
             ProteinText::InMemory { bit_array, .. } => bit_array.clear(),
@@ -187,7 +187,7 @@ impl WriteBinary for ProteinText {
     ///
     /// Format:
     /// - 8 bytes: text_length (u64 le)
-    /// - N bytes: BitArray data where N = ceil(text_length * 5 / 64) * 8
+    /// - N bytes: DynBitArray data where N = ceil(text_length * 5 / 64) * 8
     fn write_binary<W: Write>(self, writer: &mut W) -> Result<(), Box<dyn Error>> {
         match self {
             ProteinText::InMemory { bit_array, .. } => {
@@ -215,12 +215,12 @@ impl ReadBinary for ProteinText {
 
         let n_bytes = bit_array_byte_size(text_length);
         let mut data_buf = vec![0u8; n_bytes];
-        reader.read_exact(&mut data_buf).map_err(|_| "Could not read BitArray data from binary file")?;
+        reader.read_exact(&mut data_buf).map_err(|_| "Could not read DynBitArray data from binary file")?;
 
-        let mut bit_array = BitArray::with_capacity(text_length, 5);
+        let mut bit_array = DynBitArray::with_capacity(text_length, 5);
         bit_array
             .read_binary(data_buf.as_slice())
-            .map_err(|_| "Could not parse BitArray data from binary file")?;
+            .map_err(|_| "Could not parse DynBitArray data from binary file")?;
 
         Ok(ProteinText::new(bit_array))
     }
@@ -242,9 +242,9 @@ impl ReadBinaryMmap for ProteinText {
         let text_length =
             u64::from_le_bytes(mmap[0..8].try_into().map_err(|_| "Failed to parse ProteinText header")?) as usize;
 
-        // Ensure the file is large enough to contain the BitArray data for the declared text length.
+        // Ensure the file is large enough to contain the DynBitArray data for the declared text length.
         if mmap.len() < 8 + bit_array_byte_size(text_length) {
-            return Err("File is too small to contain ProteinText BitArray data for declared length".into());
+            return Err("File is too small to contain ProteinText DynBitArray data for declared length".into());
         }
 
         Ok(ProteinText::from_mmap(mmap, 8, text_length))
@@ -388,7 +388,7 @@ pub fn load_compressed_text(reader: &mut impl BufRead) -> Result<ProteinText, Bo
     let size = u64::from_le_bytes(size_buffer) as usize;
 
     // Read the compressed text from the binary file
-    let mut compressed_text = BitArray::with_capacity(size, bits_per_value);
+    let mut compressed_text = DynBitArray::with_capacity(size, bits_per_value);
     compressed_text
         .read_binary(reader)
         .map_err(|_| "Could not read the compressed text from the binary file")?;
@@ -481,7 +481,7 @@ mod tests {
         let input_string = "ACACA-CAC$";
         let char_to_5bit = ProteinText::create_char_to_5bit_hashmap();
 
-        let mut bit_array = BitArray::with_capacity(input_string.len(), 5);
+        let mut bit_array = DynBitArray::with_capacity(input_string.len(), 5);
         for (i, c) in input_string.chars().enumerate() {
             let char_5bit: u8 =
                 *char_to_5bit.get(&(c as u8)).unwrap_or_else(|| panic!("Input character '{}' not in alphabet", c));

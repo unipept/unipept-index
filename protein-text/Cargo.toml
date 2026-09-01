@@ -1,9 +1,15 @@
 [package]
-name = "bitarray"
+name = "protein-text"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+binary-traits = { path = "../binary-traits" }
+bitarray = { path = "../bitarray" }
 memory-hints = { path = "../memory-hints" }
+memmap2 = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
