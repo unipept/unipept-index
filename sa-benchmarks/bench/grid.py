@@ -50,21 +50,40 @@ class GridError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def contexts(block: dict, suite_axes: dict[str, list], suite_files: list[str]) -> list[dict[str, Any]]:
+def contexts(
+    block: dict,
+    suite_axes: dict[str, list],
+    suite_files: list[str],
+    suite_defaults: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     """The (process coordinate, cell coordinate) points this block measures at.
 
-    A key the block does not name falls back to the suite's `[axes]`, then to a single sensible
-    value. Inheriting rather than requiring each block to restate every context is what keeps a
-    block readable as the one thing it varies.
+    A key the block does not name falls back to the suite's `[axes]` for the two process
+    coordinates, to `[defaults]` for the cell coordinates, and to a single sensible value for
+    whatever neither names. Inheriting rather than requiring each block to restate every context is
+    what keeps a block readable as the one thing it varies.
+
+    The two fallbacks differ because the tables do. `threads` and `ceiling_gb` are the only legal
+    axes of a matrix suite (`config.PROCESS_AXES`), so `kmer`, `equate_il` and `tryptic` can never
+    appear in `[axes]` and are inherited from `[defaults]` instead — where a suite states one value
+    per setting, which is why a scalar there is wrapped rather than rejected.
     """
+    suite_defaults = suite_defaults or {}
+
+    def default(key: str, fallback: list) -> list:
+        if key not in suite_defaults:
+            return fallback
+        value = suite_defaults[key]
+        return value if isinstance(value, list) else [value]
+
     values = {
         "arms": block.get("arms"),
         "threads": block.get("threads", suite_axes.get("threads")) or ["default"],
         "ceiling_gb": block.get("ceiling_gb", suite_axes.get("ceiling_gb")) or [0],
         "files": block.get("files", suite_files) or [],
-        "kmer": block.get("kmer", [5]),
-        "equate_il": block.get("equate_il", [True]),
-        "tryptic": block.get("tryptic", [False]),
+        "kmer": block.get("kmer", default("kmer", [5])),
+        "equate_il": block.get("equate_il", default("equate_il", [True])),
+        "tryptic": block.get("tryptic", default("tryptic", [False])),
         # `amounts` is the AXIS; the scalar `amount` setting is the value when nothing sweeps it.
         # Query count is a coordinate, not a precision dial: two cells that ran different stream
         # lengths are not comparable, so a suite that varies it is measuring it.
@@ -115,7 +134,7 @@ def expand(
         runs = block.get("runs", suite_defaults.get("runs"))
         amount = block.get("amount", suite_defaults.get("amount"))
 
-        for context in contexts(block, suite_axes, suite_files):
+        for context in contexts(block, suite_axes, suite_files, suite_defaults):
             process = (context["arms"], context["threads"], context["ceiling_gb"])
             cells = processes.setdefault(process, [])
             known = seen.setdefault(process, set())
