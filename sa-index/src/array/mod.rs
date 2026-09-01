@@ -79,12 +79,11 @@ pub(super) fn write_sa_header(
 /// it and to derive byte offsets from it. Outside `1..=64` that is a shift overflow — a panic in
 /// debug, a wrapped value in release — and zero is separately useless: it makes the declared body
 /// zero-length, so the file passes every size check and every lookup then reads off the end.
-/// Neither reader used to check, and both duly panicked at the first `get` on a crafted header
-/// instead of erroring at load, which is what [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap)
-/// forbids.
+/// Unchecked, a crafted header therefore panics at the first `get` rather than erroring at load,
+/// which is what [`ReadBinaryMmap`](binary_traits::ReadBinaryMmap) forbids.
 ///
-/// Both call this, so the two agree on what a loadable file is; a width one accepted and the other
-/// did not would be worse than either.
+/// Both readers call this, so the two agree on what a loadable file is; a width one accepts and
+/// the other rejects would be worse than either.
 pub(super) fn check_bits_per_value(bits_per_value: usize) -> Result<(), Box<dyn Error>> {
     if !(1..=64).contains(&bits_per_value) {
         return Err(format!(
@@ -102,10 +101,10 @@ pub(super) fn check_bits_per_value(bits_per_value: usize) -> Result<(), Box<dyn 
 /// empty peptide, and — more to the point — an index built with `--sparseness-factor 0` answers
 /// *nothing*, because every search is measured against a stride of zero.
 ///
-/// `sa-builder` no longer emits it (the flag is range-checked at parse time), but an index built
-/// before that, or one hand-edited, still loads — and did so silently, reporting a plausible entry
-/// count and then matching no peptide at all, with no diagnostic at either end. Checked here so
-/// both readers agree, for the same reason as the width above.
+/// `sa-builder` cannot emit one — the flag is range-checked at parse time — but an older or
+/// hand-edited index still reaches these readers, and unchecked it loads silently, reports a
+/// plausible entry count and then matches no peptide at all, with no diagnostic at either end.
+/// Checked here so both readers agree, for the same reason as the width above.
 pub(super) fn check_sample_rate(sample_rate: u8) -> Result<(), Box<dyn Error>> {
     if sample_rate == 0 {
         return Err("The SA header declares a sample rate of 0; no peptide can match such an index".into());

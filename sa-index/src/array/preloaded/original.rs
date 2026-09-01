@@ -53,11 +53,11 @@ impl SuffixArrayBackend for OriginalSA {
         // here rather than left to the slice, which would panic for a reversed range starting past
         // the end.
         //
-        // Anything else indexes, and so panics when the range leaves the array. It used to be
-        // `get(start..end).unwrap_or(&[])`, which made this the one backend that answered an
-        // out-of-range range with an empty iterator instead: a bad range from the bound search read
-        // as "no matches" here and crashed on every other storage choice, so which one a
-        // deployment got depended on its backend. See the note on `iter_range` in the trait.
+        // Anything else indexes, and so panics when the range leaves the array — the same answer
+        // the packed and mapped backends give. Swallowing it with `get(start..end).unwrap_or(&[])`
+        // would make this the one backend where a bad range from the bound search reads as "no
+        // matches" instead of crashing, and storage is a runtime choice, so the difference would
+        // not be the caller's to make. See the note on `iter_range` in the trait.
         if end <= start {
             return OriginalRangeIter(self.0[..0].iter());
         }

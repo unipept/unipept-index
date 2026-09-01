@@ -116,8 +116,8 @@ pub(super) fn load_compressed(
     // `read_binary` refills the backing store with however many words the reader yielded, which
     // says nothing about the count the header declared. Without this, a truncated `sa.bin` loads
     // cleanly, `len()` reports the declared count, and the first binary-search probe past the real
-    // data panics inside a request handler. `load_original` and `read_binary_mmap` both check the
-    // equivalent; this was the one sibling that did not.
+    // data panics inside a request handler. `load_original` and `read_binary_mmap` check the
+    // equivalent, so all three agree on what a complete file is.
     if compressed_suffix_array.word_len() < compressed_suffix_array.required_words() {
         return Err(format!(
             "The SA header declares {} entries at {} bits ({} words) but the file holds {} words",
@@ -197,8 +197,8 @@ mod tests {
         dump_compressed_suffix_array(vec![1], 1, 8, &mut FailingWriter { valid_write_count: 10 }).unwrap();
     }
 
-    // The header-truncation cases these tests used to cover — a file cut short before the sample
-    // rate, before the count field, or mid-body — moved with the loader. `InMemorySA::read_binary`
-    // is the live loader and carries them as `read_binary_rejects_malformed_input`, over a
-    // `Cursor` rather than a `FailingReader`, and it checks the width byte on top.
+    // The header-truncation cases — a file cut short before the sample rate, before the count
+    // field, or mid-body — live with the loader that owns them. `InMemorySA::read_binary` carries
+    // them as `read_binary_rejects_malformed_input`, over a `Cursor` rather than a
+    // `FailingReader`, and it checks the width byte on top.
 }

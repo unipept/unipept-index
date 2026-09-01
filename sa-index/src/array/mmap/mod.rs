@@ -106,11 +106,11 @@ impl ReadBinaryMmap for MmapBackedSA {
     /// The length required is measured in whole 64-bit **words**, not in packed bits, because that
     /// is what `get` reads: it loads the word holding an entry, and a second word when the entry
     /// straddles the boundary. `ceil(items * bits / 8)` — the size of the packed payload — is up to
-    /// seven bytes short of that for the final entry, so a file trimmed to exactly the payload
-    /// size used to load cleanly and then panic on the last entry, while `iter_range` silently
-    /// returned `0` for it instead. Rounding to whole words makes the accepted set exactly the
-    /// set `get` can read, and costs nothing in practice: `bitarray::binary::write_words` only
-    /// ever emits whole words, so every file the builder produces already satisfies it.
+    /// seven bytes short of that for the final entry, so requiring only the payload size accepts a
+    /// file that then panics on the last entry, where `iter_range` instead yields a silent `0`.
+    /// Rounding to whole words makes the accepted set exactly the set `get` can read, and costs
+    /// nothing in practice: `bitarray::binary::write_words` only ever emits whole words, so every
+    /// file the builder produces already satisfies it.
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
         // SAFETY: see the note in `protein_text::mmap` — an index file is written once by
@@ -361,10 +361,10 @@ mod tests {
 
         // What the reader requires is what `get` reads: whole `u64` words, not the packed byte
         // count. The writer emits exactly that, so the requirement is the entire file and there is
-        // no trailing slack a truncation could legitimately remove. This used to read
-        // `div_ceil(8)`, which left the last five bytes looking like slack — so the sweep stopped
-        // short of `cut == required`, the one length that loaded successfully and then panicked
-        // on the final entry.
+        // no trailing slack a truncation could legitimately remove. Computing it with `div_ceil(8)`
+        // instead would leave the last five bytes looking like slack, stopping the sweep short of
+        // `cut == required` — the one length that loads successfully and then panics on the final
+        // entry.
         let required = 10 + (sa.len() * 29).div_ceil(64) * 8;
         assert_eq!(required, buf.len(), "the writer should emit exactly what the reader requires");
 
@@ -377,9 +377,9 @@ mod tests {
         }
 
         // Anything that loads must be readable through its whole declared length — the invariant
-        // the sweep exists to protect, and the half that was never asserted. The last entry is the
-        // one that straddles into the final word, so it is exactly where `get` and `iter_range`
-        // used to disagree: a panic from one, a silent `0` from the other.
+        // the sweep exists to protect. The last entry is the one that straddles into the final
+        // word, so it is exactly where a too-lax length requirement lets `get` and `iter_range`
+        // disagree: a panic from one, a silent `0` from the other.
         let tmp = write_to_tempfile(&buf[..required]);
         let mapped = MmapBackedSA::read_binary_mmap(tmp.path()).expect("the full file must load");
         assert_eq!(mapped.len(), sa.len());

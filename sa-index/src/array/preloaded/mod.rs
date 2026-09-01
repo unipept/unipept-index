@@ -262,9 +262,9 @@ mod tests {
 
     /// A width outside `1..=64` must be refused by *both* readers, identically.
     ///
-    /// Neither used to check. A `0` header made the declared body zero-length, so the file passed
-    /// every size check and the first `get` read off the end of it; a `200` header overflowed the
-    /// shift. Both cases panicked at lookup rather than erroring at load, on both backends.
+    /// Unchecked, a `0` header makes the declared body zero-length, so the file passes every size
+    /// check and the first `get` reads off the end of it; a `200` header overflows the shift. Both
+    /// would panic at lookup rather than erroring at load, on both backends.
     #[test]
     fn both_readers_reject_an_impossible_width() {
         use binary_traits::ReadBinaryMmap;
@@ -326,10 +326,10 @@ mod tests {
 
     /// A sample rate of zero must be refused by *both* readers.
     ///
-    /// It is the producer half of a pair: `sa-builder --sparseness-factor 0` used to be accepted,
-    /// wrote `0` here, and produced an index that loaded cleanly and then matched no peptide at
-    /// all, because the sample rate is the minimum searchable peptide length. The flag is
-    /// range-checked now, but an index built before that still loads, so the readers reject it too.
+    /// It is the reader half of a pair: `sa-builder` range-checks `--sparseness-factor` at parse
+    /// time, so it cannot write a `0` here, but an older or hand-edited index still reaches these
+    /// readers. Such an index loads cleanly and then matches no peptide at all, because the sample
+    /// rate is the minimum searchable peptide length — so the readers reject it too.
     #[test]
     fn both_readers_reject_a_sample_rate_of_zero() {
         use binary_traits::ReadBinaryMmap;
