@@ -58,6 +58,17 @@ class Table:
             self.aligns = (self.aligns + [fill] * len(self.headers))[: len(self.headers)]
 
     def row(self, *cells: Any) -> None:
+        # Checked here rather than in `render`, because the two renderers disagree about a ragged
+        # row and neither disagrees loudly. `render` indexes `widths` by cell, so a long row raises
+        # `IndexError` from a place that cannot say which table produced it; `html._table` pads its
+        # alignments instead, so the same row renders fine on the page. A short row is worse: both
+        # accept it, and the cells silently shift under the wrong headers. Failing at the call site
+        # names the row while the builder is still on the stack.
+        if len(cells) != len(self.headers):
+            raise ValueError(
+                f"row has {len(cells)} cells but the table has {len(self.headers)} headers "
+                f"({', '.join(self.headers)}): {[str(cell) for cell in cells]}"
+            )
         self.rows.append(["" if cell is None else str(cell) for cell in cells])
 
     def render(self) -> list[str]:
