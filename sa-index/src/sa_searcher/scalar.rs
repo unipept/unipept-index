@@ -186,13 +186,12 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             self.sa.sample_rate()
         );
 
-        // There is no k-mer prefetch pass here, and there is no longer one in the batched path
-        // either. The call used to sit immediately before the `search_bounds_scalar` below that repeats
-        // the identical k-mer table lookup — no intervening work, so no latency to hide — and
-        // once the mmap `madvise` behind it was removed, the hint it issued became a no-op and
-        // only the discarded probe remained. Removing it from this path measured +0.3% median
-        // over 6 (bucket, backend) combos (run3, inside the 3.9% noise floor); removing it from
-        // the batched path measured neutral on both backends. See `super::batched`.
+        // No k-mer prefetch pass here, and none in the batched path either. Such a call would sit
+        // immediately before the `search_bounds_scalar` below that repeats the identical k-mer
+        // table lookup — no intervening work, so no latency to hide — and with no mmap `madvise`
+        // behind it the hint is a no-op, leaving only the discarded probe. Measured on both paths:
+        // a small median gain from its absence on this one, inside the noise floor, and neutral on
+        // the batched one. See `super::batched`.
 
         let mut matching_suffixes: Vec<i64> = Vec::with_capacity(max_matches.min(MAX_RESULT_PREALLOC));
         let mut il_locations = vec![];
@@ -633,10 +632,9 @@ mod tests {
     // a full-range search, not reported as `NoMatches`.
     //
     // `test_extended_protein_start_with_kmer_table` below covers the one instance the tryptic
-    // search creates for itself (`'-' + peptide`), and used to be the only thing holding this
-    // property up — via a separate table-free bounds function the extension path called by name.
-    // Now that the table reports the abstention itself, every unrepresentable query gets it, so
-    // this reaches the property directly: `-AC` occurs at position 10 of EXAMPLE_TEXT, and `Y$`
+    // search creates for itself (`'-' + peptide`). Because the table reports the abstention itself
+    // rather than the extension path calling a separate table-free bounds function, every
+    // unrepresentable query gets it, so this test reaches the property directly: `-AC` occurs at position 10 of EXAMPLE_TEXT, and `Y$`
     // runs into the terminator. Both were silently lost with a table attached and found without
     // one, and neither goes anywhere near the tryptic path.
     #[test]

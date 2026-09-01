@@ -157,11 +157,11 @@ fn main() {
 /// Writes land in a sibling `.tmp` file, which [`Output::seal`] flushes and hands to
 /// [`commit_all`] to rename into place. Two separate problems that fixes:
 ///
-/// * The builder used to `truncate(true)` the real path when it *opened* it, before writing a
-///   byte. A build that then failed — a malformed input row, a full disk, a kill — had already
-///   destroyed the previous index.
+/// * Opening the real path with `truncate(true)` destroys the previous index before a byte is
+///   written, so a build that then fails — a malformed input row, a full disk, a kill — leaves
+///   nothing usable behind.
 /// * The `proteins.bin` size guard fires after `sa.bin` and the mapping are written, so a database
-///   too large for the offset format left the directory holding a mix of two builds.
+///   too large for the offset format would leave the directory holding a mix of two builds.
 ///
 /// A rename within a directory is atomic, so a reader sees either the whole old file or the whole
 /// new one. A failed build leaves `.tmp` files behind on purpose: that is the cost of not touching

@@ -112,11 +112,11 @@ impl<'a> From<ProteinRef<'a>> for ProteinInfo<'a> {
 ///   boundary, and a trailing `$` is what drives a match to `text.len()`.
 /// * `J` — absent from the index alphabet (`BIT5_TO_CHAR`), so it can never match.
 /// * everything else — digits, punctuation, and every non-ASCII byte. `to_uppercase` is
-///   Unicode-aware, so a character like `é` used to survive normalisation as multi-byte UTF-8
-///   whose every byte is >= 128.
+///   Unicode-aware, so a character like `é` survives an uppercase-only normalisation as multi-byte
+///   UTF-8 whose every byte is >= 128.
 ///
-/// This replaces the `to_uppercase()` both entry points used to call: it walks the same bytes and
-/// makes the same single allocation, without the Unicode table lookups.
+/// Used by both entry points in place of `to_uppercase()`: it walks the same bytes and makes the
+/// same single allocation, without the Unicode table lookups.
 ///
 /// Note this does *not* make the checks in `KmerTable::lookup` or `check_tryptic_c_term`
 /// redundant. `search_matching_suffixes_scalar` and `search_all_matching_suffixes_batched` are
@@ -354,9 +354,9 @@ pub fn json_chunk(result: &SearchResult<'_>) -> Vec<u8> {
 /// # Panics
 ///
 /// Every chunk must be [`json_chunk`] output — non-empty and comma-prefixed. Both functions are
-/// `pub`, and the precondition used to be neither stated nor checked, which made a violation
-/// silent rather than loud: a chunk of `b"x"` came back as `"[]"`, the caller's byte overwritten
-/// and the result quietly wrong. An empty first chunk panicked with an index-out-of-bounds and no
+/// `pub`, so the precondition is stated and checked rather than assumed: unchecked, a violation is
+/// silent rather than loud — a chunk of `b"x"` comes back as `"[]"`, the caller's byte overwritten
+/// and the result quietly wrong, and an empty first chunk panics with an index-out-of-bounds and no
 /// explanation. Checking turns both into one clear message; this is a programming error on the
 /// caller's side, not untrusted input, so it is an assertion rather than a `Result`.
 pub fn frame_chunks(chunks: &mut Vec<Vec<u8>>) {
@@ -437,9 +437,9 @@ mod tests {
     }
 
     /// Every byte the index cannot hold is rejected before it reaches the searcher — including the
-    /// two that used to reach an unchecked index: a non-ASCII character, whose UTF-8 bytes are all
-    /// at least 128 (the `KmerTable::lookup` case), and a trailing `$`, which drives a match to
-    /// `text.len()` (the `check_tryptic_c_term` case).
+    /// two that would otherwise reach an index guarded nowhere else: a non-ASCII character, whose
+    /// UTF-8 bytes are all at least 128 (the `KmerTable::lookup` case), and a trailing `$`, which
+    /// drives a match to `text.len()` (the `check_tryptic_c_term` case).
     #[test]
     fn test_normalise_peptide_rejects_everything_outside_the_alphabet() {
         // Accepted, and uppercased in the same pass.

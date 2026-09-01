@@ -221,7 +221,7 @@ mod tests {
 
     use super::*;
 
-    /// The shape `Json<Vec<SearchResult>>` used to serialise, kept here as the reference the new
+    /// The shape `Json<Vec<SearchResult>>` serialises to, kept here as the reference the streamed
     /// response is compared against. It only has to serialise the same way, not be the same type.
     #[derive(Serialize)]
     struct ReferenceResult {

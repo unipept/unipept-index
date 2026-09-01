@@ -216,9 +216,8 @@
 //! Two further ideas were measured and rejected. **`MADV_WILLNEED` over the SA range about to be
 //! scanned does not pay**: the advice lands (major faults -23-25% under a ceiling) but the
 //! throughput decays from +12.0% at the core count to ~0% at 96 threads, since oversubscription
-//! already overlaps those faults, and it costs -3.7% resident. It was swept once more at
-//! 660befd7ee and removed from the searcher afterwards; the comment where it used to live in
-//! `array::mmap` carries the full numbers. And **sorting queries by k-mer prefix to create page
+//! already overlaps those faults, and it costs -3.7% resident. The comment in `array::mmap`
+//! carries the reasoning in full. And **sorting queries by k-mer prefix to create page
 //! locality does not work either**: it changed the fault count by -0.1% and cost 4.4% throughput.
 //! With 10,000 queries per rep drawn against 20^6 possible
 //! 6-mers, the expected number of queries sharing a prefix is under one, so there is no page reuse

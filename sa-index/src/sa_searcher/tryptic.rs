@@ -175,17 +175,18 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
             TrypticQuery::Off => true,
             TrypticQuery::On { first_not_proline, last_is_kr } => {
                 // N-terminus. The `match_start == 0` guard has to come first: without it the
-                // `match_start - 1` read underflows. (The original formulation was only safe
-                // because `check_start_of_protein` short-circuits the `||` on that same test.)
+                // `match_start - 1` read underflows. The four-read form is safe only because
+                // `check_start_of_protein` short-circuits the `||` on that same test, so the bound
+                // has to be restated here rather than inherited.
                 let n_term_ok = match_start == 0 || {
                     let before = text.get(match_start - 1);
                     before == SEPARATION_CHARACTER || ((before == b'K' || before == b'R') && first_not_proline)
                 };
 
-                // C-terminus. Delegated rather than repeated: this used to be an inline copy of
-                // `check_tryptic_c_term`'s body *without* its `match_end >= text.len()` guard, so
-                // the two halves of the same predicate disagreed about the end of the text and
-                // this one panicked there. `#[inline]` keeps it a single read either way.
+                // C-terminus. Delegated rather than repeated: an inline copy of
+                // `check_tryptic_c_term`'s body would drop its `match_end >= text.len()` guard, and
+                // the two halves of one predicate would then disagree about the end of the text.
+                // `#[inline]` keeps it a single read either way.
                 n_term_ok && self.check_tryptic_c_term(text, match_end, last_is_kr)
             }
             // Zero-length query: `match_end == match_start`, so the peptide has no character to
@@ -215,16 +216,16 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// query's own last character would be `$`, which no protein sequence contains.
     ///
     /// A caller *can* construct such a query, since `$` is in the alphabet, so the bound is
-    /// checked rather than assumed. It used to be neither, and the two backends then failed
-    /// differently on the same input: the preloaded one panics whenever index `len` lands in a
-    /// word the bit array never allocated (`5 * len % 64 >= 60`, i.e. `len % 64` in
-    /// {12, 25, 38, 51}, plus `len % 64 == 0`), while the mmap one reads whatever sits inside the
-    /// page-rounded mapping and can return *either* verdict — the first two clauses test `after`
-    /// directly, so a stray separator or terminator byte makes the predicate accept.
+    /// checked rather than assumed. Unchecked, the two backends fail differently on the same input:
+    /// the preloaded one panics whenever index `len` lands in a word the bit array never allocated
+    /// (`5 * len % 64 >= 60`, i.e. `len % 64` in {12, 25, 38, 51}, plus `len % 64 == 0`), while the
+    /// mmap one reads whatever sits inside the page-rounded mapping and can return *either* verdict
+    /// — the first two clauses test `after` directly, so a stray separator or terminator byte makes
+    /// the predicate accept.
     ///
-    /// The guard has to live *here* rather than at each call site, because it is exactly what the
-    /// inline copy in [`Self::check_tryptic_boundaries`] was missing: the extended path was fixed
-    /// and the normal path was not, and nothing tested the pair together.
+    /// The guard lives *here* rather than at each call site so that both entry points inherit it.
+    /// A call site holding its own copy of this read is how the two halves of the predicate come to
+    /// disagree about the end of the text.
     ///
     /// One past the last residue is the end of the final protein, so it is reported as a valid
     /// C-terminal cut, symmetric with [`Searcher::check_start_of_protein`] treating index 0 as a
@@ -275,11 +276,10 @@ mod tests {
 
     /// The other half of the same bound, on the other entry point.
     ///
-    /// `check_tryptic_c_term` guards `match_end >= text.len()`; `check_tryptic_boundaries` carried
-    /// an inline copy of that read that did not, so the normal search path panicked at the end of
-    /// the text on exactly the lengths the sibling test pins — the extended path had been fixed
-    /// and this one had not. Asserting the two agree, rather than just that neither panics, is
-    /// what stops them drifting apart again.
+    /// `check_tryptic_c_term` guards `match_end >= text.len()`, and `check_tryptic_boundaries`
+    /// reaches the same read through it rather than through a copy. Asserting the two *agree*,
+    /// rather than only that neither panics, is what stops a future copy drifting apart from it on
+    /// exactly the lengths the sibling test pins.
     #[test]
     fn test_boundary_check_is_bounded_at_end_of_text() {
         for len in [12usize, 25, 38, 51, 64] {
@@ -350,10 +350,10 @@ mod tests {
         assert!(!searcher.check_tryptic_cut(0));
     }
 
-    // The original four-text-read formulation, kept verbatim as the oracle for the equivalence
-    // test below. The `||` order no longer carries the zero bound — `check_tryptic_cut` owns it —
-    // but it is kept as written because this is the oracle, and an oracle that has been tidied is
-    // no longer evidence about the code it was derived from.
+    // The four-text-read formulation, kept verbatim as the oracle for the equivalence test below.
+    // Its `||` order does not carry the zero bound — `check_tryptic_cut` owns that — but it is kept
+    // exactly as written regardless: an oracle that has been tidied is no longer independent
+    // evidence about the code it is checking.
     fn old_tryptic_predicate(searcher: &PreloadedSearcher, match_start: usize, match_end: usize) -> bool {
         (searcher.check_start_of_protein(match_start) || searcher.check_tryptic_cut(match_start))
             && (searcher.check_end_of_protein(match_end) || searcher.check_tryptic_cut(match_end))
@@ -429,11 +429,11 @@ mod tests {
 
     // The zero-length fallback keeps reading the text, so it must also match the oracle.
     //
-    // `cut == 0` is included. It used to be skipped, because both formulations underflowed there:
-    // with `match_start == match_end == 0`, `check_end_of_protein(0)` is false for a text that
-    // does not start with a separator, and the `check_tryptic_cut(0)` that followed it read
-    // `text[-1]`. Only the N-terminal `||` had a `match_start == 0` guard; the C-terminal one did
-    // not. `check_tryptic_cut` now owns that bound, so 0 is an ordinary case on both sides.
+    // `cut == 0` is included, and is only an ordinary case because `check_tryptic_cut` owns the
+    // zero bound. Without it both formulations underflow there: with `match_start == match_end ==
+    // 0`, `check_end_of_protein(0)` is false for a text that does not start with a separator, and
+    // the `check_tryptic_cut(0)` after it reads `text[-1]`. Only the N-terminal `||` carries a
+    // `match_start == 0` guard of its own; the C-terminal one does not.
     #[test]
     fn test_tryptic_boundaries_zero_length_matches_original() {
         let searcher = searcher_over_text(BOUNDARY_TEXT, 1);

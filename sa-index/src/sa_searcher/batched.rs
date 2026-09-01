@@ -12,9 +12,8 @@
 //! go through it, so the decomposition is chosen in one place and measured as it ships — the kernel
 //! is `pub(crate)` precisely so nothing outside can choose a different one.
 //!
-//! There is no scalar/batched choice to make any more. That used to be a runtime knob, and this
-//! module was two: `orchestrate` held the branch and `batched` the kernel. `MLP_BATCH` is a
-//! constant now, so batching is unconditional and the branch is gone. The scalar primitive is not
+//! There is no scalar/batched choice to make: `MLP_BATCH` is a constant, so batching is
+//! unconditional and there is no branch to select between them. The scalar primitive is not
 //! dead — `peptide_search::search_proteins_for_peptide` is the single-query path and calls
 //! `search_matching_suffixes_scalar` directly — it simply is not something this path selects between.
 //!
@@ -125,9 +124,9 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     ///
     /// Stage 1 goes through [`Searcher::opening_window`], the same helper `search_bounds_scalar`
     /// uses, so the two paths cannot disagree about which queries the k-mer table may answer for.
-    /// This used to take a `use_kmer_table` flag threaded down from a separate full-range entry
-    /// point, which existed solely so the separator-extended tryptic search could bypass the table;
-    /// the helper handles that abstention itself now.
+    /// No `use_kmer_table` flag is threaded down for the separator-extended tryptic search to
+    /// bypass the table with: the helper reports that abstention itself, so both paths take the
+    /// same route to it.
     fn search_bounds_batched(&self, strings: &[&[u8]]) -> Vec<BoundSearchResult> {
         let n = strings.len();
         let mut out: Vec<BoundSearchResult> = (0..n).map(|_| BoundSearchResult::NoMatches).collect();
@@ -651,11 +650,11 @@ mod tests {
 
     /// What the entry point has to reproduce: the scalar primitive, applied one peptide at a time.
     ///
-    /// This is the reference every test below compares against. It used to be
-    /// `search_all_matching_suffixes_batched` at `mlp_batch = 1` — the same function under a different
-    /// setting, which could only ever catch a batching bug that the batch size happened to expose.
-    /// Comparing against the primitive the batched path is built from is the stronger check, and it
-    /// is the only one still possible now that the batch size is a constant.
+    /// This is the reference every test below compares against. Comparing against the scalar
+    /// primitive rather than against `search_all_matching_suffixes_batched` at a batch size of one
+    /// is the stronger check — the latter is the same function under a different setting, and could
+    /// only catch a batching bug that the batch size happened to expose. It is also the only one
+    /// available, since the batch size is a constant.
     fn scalar_reference(
         searcher: &PreloadedSearcher,
         peptides: &[&[u8]],
@@ -710,11 +709,11 @@ mod tests {
     /// An empty *peptide* — as opposed to an empty peptide *list* above — must return `NoMatches`
     /// for itself and leave every other peptide in its chunk untouched.
     ///
-    /// That second half is the point. The kernel resolves an `MLP_BATCH`-sized chunk together, and
-    /// the empty peptide used to produce inverted bounds whose `max_bound - min_bound` panicked —
-    /// taking the results of the other fifteen peptides in the chunk with it, not just its own.
-    /// So the empty entry is placed *inside* a chunk here, with known-good peptides on both sides,
-    /// and the whole batch is compared against the scalar path.
+    /// That second half is the point. The kernel resolves an `MLP_BATCH`-sized chunk together, so
+    /// an empty peptide that produced inverted bounds would panic on `max_bound - min_bound` and
+    /// take the results of every other peptide in its chunk with it, not just its own. The empty
+    /// entry is therefore placed *inside* a chunk here, with known-good peptides on both sides, and
+    /// the whole batch is compared against the scalar path.
     #[test]
     fn test_search_all_tolerates_an_empty_peptide_mid_chunk() {
         for (label, sa, sparseness) in [("dense", None, 1u8), ("sparse", Some(&EXAMPLE_SA_SPARSE3[..]), 3u8)] {

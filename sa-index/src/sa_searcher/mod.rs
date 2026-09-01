@@ -86,10 +86,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
 
     /// Builds a searcher, rejecting three structures that did not come from the same index build.
     ///
-    /// The three files are loaded independently, each well-formed on its own, and nothing used to
-    /// relate them: point `--mapping-file` at an older build and every load succeeds, the server
-    /// reports itself ready, and the answers are silently wrong — protein indices resolved against
-    /// the wrong text.
+    /// The three files are loaded independently and each is well-formed on its own, so nothing
+    /// else relates them: point `--mapping-file` at an older build and every load succeeds, the
+    /// server reports itself ready, and the answers are silently wrong — protein indices resolved
+    /// against the wrong text.
     ///
     /// There is no build identifier in the format to compare, and adding one would invalidate every
     /// existing index. Two relationships already hold implicitly, though, and both are exact:
@@ -206,10 +206,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
     /// `'-' + peptide` for every tryptic query (see [`TrypticQuery`] and `tryptic_extension_chars`),
     /// so it lands here once per peptide. Reading that as "no matches" would silently drop every
     /// protein-start match — roughly 3 % of all tryptic hits, and every protein's N-terminal
-    /// peptide. Both search paths used to carry a second, table-free bounds function called from a
-    /// `prefix_char == SEPARATION_CHARACTER` branch at the call site; those four pieces are what
-    /// this replaces. Bounded by `scalar::tests::test_extended_protein_start_with_kmer_table` and
-    /// its batched twin.
+    /// peptide. Handling the abstention here is what lets both search paths share one bounds
+    /// function, rather than each carrying a table-free variant behind a
+    /// `prefix_char == SEPARATION_CHARACTER` branch at the call site. Bounded by
+    /// `scalar::tests::test_extended_protein_start_with_kmer_table` and its batched twin.
     ///
     /// # Cost of the fallback
     ///

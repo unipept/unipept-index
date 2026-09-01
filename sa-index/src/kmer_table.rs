@@ -264,14 +264,13 @@ impl KmerTable {
 ///   outside `ALPHABET`, so the table has nothing to say and the caller must fall back to a
 ///   full-range binary search.
 ///
-/// These used to share a single `None`. That made the abstention indistinguishable from a result,
+/// Collapsing the two into a single `None` makes the abstention indistinguishable from a result,
 /// and the abstention is not hypothetical: the left-extended tryptic search looks up
 /// `'-' + peptide` (see `sa_searcher::tryptic`), whose first character is the protein separator,
-/// which `ALPHABET` does not hold. Reading that `None` as "no matches" silently dropped every
-/// protein-start tryptic match — roughly 3 % of all tryptic hits, and every protein's N-terminal
-/// peptide. Both search paths worked around it by calling a second, table-free bounds function for
-/// exactly that one character; distinguishing the cases here retires both of those workarounds and
-/// puts the knowledge where it belongs.
+/// which `ALPHABET` does not hold. Reading that as "no matches" silently drops every protein-start
+/// tryptic match — roughly 3 % of all tryptic hits, and every protein's N-terminal peptide.
+/// Keeping them apart here is what lets both search paths share one bounds function instead of
+/// each carrying a table-free variant for that one character.
 ///
 /// The terminator `$` is in the same position and was the latent half of the same bug: a query
 /// carrying it in its first `k` characters answered `NoMatches` with a table attached and found
@@ -371,8 +370,8 @@ mod tests {
 
     /// Three structures from different builds must be refused, not silently mixed.
     ///
-    /// Each file is well-formed on its own, so every loader used to succeed and the server started
-    /// and reported itself ready — with protein indices resolved against the wrong text. No build
+    /// Each file is well-formed on its own, so every loader succeeds and the server would start and
+    /// report itself ready — with protein indices resolved against the wrong text. No build
     /// identifier exists in the format to compare, so the check uses two relationships that hold
     /// implicitly and exactly.
     #[test]
@@ -427,7 +426,7 @@ mod tests {
     /// A table built from one suffix array must be refused by a searcher holding a different one.
     ///
     /// Nothing in the file format identifies the build, so a rebuilt `sa.bin` with a stale
-    /// `kmer_table.bin` used to start cleanly and then fail mid-query — a panic on the preloaded
+    /// `kmer_table.bin` would otherwise start cleanly and fail mid-query — a panic on the preloaded
     /// backend, a fabricated suffix position on the mmap one.
     #[test]
     fn a_table_from_a_different_index_is_rejected() {
@@ -485,8 +484,8 @@ mod tests {
     /// A query byte is a raw `u8`, and nothing on the request path filters the alphabet:
     /// `peptide_search` only uppercases, and `to_uppercase` is Unicode-aware, so a non-ASCII
     /// character arrives here as multi-byte UTF-8 whose every byte is >= 128. The alphabet table
-    /// must therefore be indexable by all 256 values — it used to be `[u8; 128]`, which made this
-    /// an out-of-bounds index one line *before* the `char_idx == 0` test that rejects such bytes.
+    /// must therefore be indexable by all 256 values: sized to 128 it would be an out-of-bounds
+    /// index one line *before* the `char_idx == 0` test that rejects such bytes.
     ///
     /// These are abstentions, not results: the table has no bucket for them, so it reports
     /// `NotRepresentable` and the caller searches the full range rather than concluding no matches.
@@ -507,9 +506,9 @@ mod tests {
         assert_eq!(table.lookup(&[b'A', 0xFF]), KmerLookup::NotRepresentable);
     }
 
-    // `Absent` and `NotRepresentable` are the two answers that used to share a `None`, and the
-    // whole point of the enum is that they are not interchangeable: "ZZ" is a real k-mer the table
-    // covers and does not hold, "A-" is one the table cannot speak about at all.
+    // `Absent` and `NotRepresentable` are the whole point of the enum, and are not
+    // interchangeable: "ZZ" is a real k-mer the table covers and does not hold, "A-" is one the
+    // table cannot speak about at all.
     #[test]
     fn test_lookup_absent() {
         let table = build_test_table("ACAC$", vec![4, 2, 0, 3, 1], 2);
