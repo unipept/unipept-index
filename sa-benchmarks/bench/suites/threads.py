@@ -132,10 +132,33 @@ def _fault_flatness(report: Report, cells: dict, ceiling: str, arms: list[str], 
             for threads in thread_counts
             if (ceiling, threads, arm) in cells and cells[(ceiling, threads, arm)].usable
         ]
-        values = [value for value in values if value]
         if len(values) < 2:
             continue
-        spread = (max(values) - min(values)) / min(values) * 100
+
+        low, high = min(values), max(values)
+        if high == 0:
+            continue
+
+        # Zeros are kept. Dropping them — which is what filtering for truthiness did — threw away
+        # the loudest form of the thing this check exists to catch: a cell that took no major
+        # faults beside one that took thousands is not flat, it is the clearest evidence that
+        # something other than the thread count changed. It also silently reduced a two-point
+        # comparison to one point, which then returned without checking anything.
+        #
+        # The spread is measured against the midpoint rather than the minimum, which bounds it at
+        # 200% and stops a near-zero denominator dominating it. It does not make the statistic
+        # scale-aware — a move from one fault to three still reads the same as 5,000 to 15,000 —
+        # so a handful of faults on an otherwise resident arm can still warn. That is the
+        # conservative direction for a check whose whole job is to say "something else moved".
+        if low == 0:
+            report.warn(
+                f"{arm}: major faults go from 0 to {high:,.0f} across thread counts at this "
+                f"ceiling. Threads change how many faults are in flight, not how many there are — "
+                f"something other than the thread count differed between these cells."
+            )
+            continue
+
+        spread = (high - low) / ((high + low) / 2) * 100
         if spread > 5.0:
             report.warn(
                 f"{arm}: major faults vary {spread:.1f}% across thread counts at this ceiling. "
