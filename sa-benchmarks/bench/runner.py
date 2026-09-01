@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -29,8 +30,17 @@ from .config import Cell, Suite
 from .profile import Profile
 from .rig import RigError, check_peptide_supply, drop_caches, is_root
 
-#: Exit status of a process killed by SIGKILL, which under a cgroup ceiling means the OOM killer.
+#: How a SIGKILL — under a cgroup ceiling, the OOM killer — reaches this driver.
+#:
+#: Two spellings, because two things report it. `subprocess` returns the negated signal number for
+#: a child killed by one, so that is what the runner compares against; `137` is the shell's
+#: `128 + signal` convention, which is what the bash scripts this package replaces wrote into their
+#: markers and therefore what a marker from one of those sessions still holds. Both are accepted
+#: wherever a status is judged, so a marker written before this package is read the way it was
+#: meant. `OOM_EXIT` is the value written into new markers, in the shell spelling, so a marker
+#: stays readable by anything that predates this driver.
 OOM_EXIT = 137
+OOM_STATUSES = (OOM_EXIT, -signal.SIGKILL)
 
 #: Warmup peptide count used when a suite asks for the page-touch sweep ("all") but the arm has
 #: nothing mapped to touch. See `_warmup_for`.
@@ -228,7 +238,7 @@ class Runner:
         if completed.returncode == 0:
             return CellResult(cell, "ok", elapsed)
 
-        if completed.returncode == OOM_EXIT:
+        if completed.returncode in OOM_STATUSES:
             # ONLY an OOM writes a marker, and the distinction is load-bearing twice over. A marker
             # is a RESULT — `records.unfit_cells` turns it into "this arm cannot run at this
             # ceiling" in the `ram` and `threads` tables — and it is also what `completed()` reads,
@@ -462,7 +472,7 @@ def _is_oom_marker(marker: Path) -> bool:
     if not marker.exists():
         return False
     recorded = _marker_exit(marker)
-    return recorded is None or recorded == OOM_EXIT
+    return recorded is None or recorded in OOM_STATUSES
 
 
 def _warmup_for(cell: Cell, warmup: Any) -> str | None:

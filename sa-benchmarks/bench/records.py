@@ -26,6 +26,7 @@ read.
 from __future__ import annotations
 
 import json
+import signal
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,9 +100,14 @@ def load_dir(path: Path) -> list[Record]:
     return records
 
 
-#: Exit status of a process killed by SIGKILL, which under a cgroup ceiling means the OOM killer.
-#: Mirrors `runner.OOM_EXIT`; kept here too so a marker can be judged without importing the runner.
+#: How a SIGKILL — under a cgroup ceiling, the OOM killer — is recorded in a marker.
+#:
+#: Mirrors `runner.OOM_STATUSES`; kept here too so a marker can be judged without importing the
+#: runner. Two spellings because two things write one: `subprocess` reports a killed child as the
+#: negated signal number, while the bash scripts this package replaces wrote the shell's
+#: `128 + signal`. A marker from either is a result, not a crash.
 OOM_EXIT = 137
+OOM_STATUSES = (OOM_EXIT, -signal.SIGKILL)
 
 
 def unfit_cells(path: Path) -> list[dict[str, str]]:
@@ -126,7 +132,7 @@ def unfit_cells(path: Path) -> list[dict[str, str]]:
             # A truncated write. Better a cell with no dims than a silently dropped one.
             unfit.append({"label": marker.stem})
             continue
-        if recorded.get("exit", OOM_EXIT) != OOM_EXIT:
+        if recorded.get("exit", OOM_EXIT) not in OOM_STATUSES:
             continue
         unfit.append(recorded.get("dims") or {"label": marker.stem})
     return unfit
