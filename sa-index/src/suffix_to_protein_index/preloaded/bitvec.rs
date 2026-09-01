@@ -59,8 +59,14 @@ impl BitVecSuffixToProtein {
     /// Constant time, from three reads and a popcount: the superblock cell holding `position`
     /// gives the count before its 512-bit block (`level1`) and before its word within that block
     /// (the 9-bit `level2` sub-count, zero for word 0, which is not stored); the data word itself
-    /// supplies the rest. `block << (63 - bit_offset)` discards every bit at or above `position`,
-    /// so bits past `bit_len` in the final word cannot affect an in-range answer.
+    /// supplies the rest.
+    ///
+    /// `block << (63 - bit_offset)` keeps bits `0..=bit_offset` — the bit *at* `position`
+    /// included, so this counts one more than "strictly before" whenever that bit is set. It is
+    /// never set here: [`suffix_to_protein`](SuffixToProteinMappingBackend::suffix_to_protein) has
+    /// already returned `u32::NULL` for a marked position, so `rank1` is only ever reached with it
+    /// clear and the two agree. Bits past `bit_len` in the final word are discarded by the same
+    /// shift and cannot affect an in-range answer.
     ///
     /// Deliberately the same arithmetic as `mmap::bitvec`'s `rank1`, which runs it against a
     /// mapping, so the two backends agree by construction rather than by test.
@@ -309,12 +315,30 @@ mod tests {
 
     use super::{BitVecSuffixToProtein, read_bitvec_mapping};
     use crate::suffix_to_protein_index::test_utils::{
-        assert_agree, assert_prefetch_is_harmless, assert_sample_lookups, many_proteins_text, sample_text, to_binary
+        assert_agree, assert_matches_definition, assert_prefetch_is_harmless, assert_sample_lookups,
+        many_proteins_text, sample_text, to_binary
     };
 
     #[test]
     fn test_search_bitvec() {
         assert_sample_lookups(&BitVecSuffixToProtein::new(&sample_text()));
+    }
+
+    /// `rank1` against the definition of the answer, across several superblock boundaries.
+    ///
+    /// The popcount keeps the bit at the position rather than only those before it, which is
+    /// correct solely because `suffix_to_protein` returns `NULL` for a marked position before
+    /// `rank1` runs. This pins that pair: removing the guard fails here at the first separator.
+    ///
+    /// It does not distinguish the shift from a strictly-before one — with the bit clear the two
+    /// count the same bits, which is precisely why the current shift is safe — so this is a check
+    /// on the answer, not on the arithmetic that reaches it.
+    #[test]
+    fn bitvec_matches_the_definition() {
+        for text in [sample_text(), many_proteins_text(40, 10), many_proteins_text(80, 7)] {
+            let bytes: Vec<u8> = (0..text.len()).map(|i| text.get(i)).collect();
+            assert_matches_definition(&BitVecSuffixToProtein::new(&text), &bytes);
+        }
     }
 
     #[test]

@@ -58,6 +58,34 @@ pub fn assert_prefetch_is_harmless(mapping: &impl SuffixToProteinMappingBackend)
     assert_sample_lookups(mapping);
 }
 
+/// Asserts a mapping matches the *definition* of the answer, computed independently from the text.
+///
+/// A marked byte — separator or terminator — belongs to no protein; any other position belongs to
+/// the protein numbered by how many marked bytes precede it, strictly. That is the specification;
+/// the bitvec backends reach it through a two-level rank structure whose popcount deliberately
+/// keeps the bit *at* the position, relying on the marked case having already returned `NULL`.
+///
+/// Pinned against the definition rather than against a sibling backend, because the two bitvec
+/// implementations run the same arithmetic on purpose: an error in that arithmetic would agree with
+/// itself across both, and `assert_agree` would pass.
+pub fn assert_matches_definition(mapping: &impl SuffixToProteinMappingBackend, text: &[u8]) {
+    let mut marked_before = 0u32;
+    for (i, &c) in text.iter().enumerate() {
+        let marked = c == SEPARATION_CHARACTER || c == TERMINATION_CHARACTER;
+        let expected = if marked { u32::NULL } else { marked_before };
+        assert_eq!(
+            mapping.suffix_to_protein(i as i64),
+            expected,
+            "position {i} (byte {:?}) should map to {}",
+            c as char,
+            if marked { "NULL".to_string() } else { marked_before.to_string() }
+        );
+        if marked {
+            marked_before += 1;
+        }
+    }
+}
+
 /// Asserts two mappings answer identically for every position of a `text_len` byte text.
 pub fn assert_agree(
     expected: &impl SuffixToProteinMappingBackend,

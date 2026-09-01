@@ -42,8 +42,14 @@ impl MmapBitVecSuffixToProtein {
     /// Constant time, from three reads and a popcount: the superblock cell holding `position`
     /// gives the count before its 512-bit block (`level1`) and before its word within that block
     /// (the 9-bit `level2` sub-count, zero for word 0, which is not stored); the data word itself
-    /// supplies the rest. `block << (63 - bit_offset)` discards every bit at or above `position`,
-    /// so bits past `bit_len` in the final word cannot affect an in-range answer.
+    /// supplies the rest.
+    ///
+    /// `block << (63 - bit_offset)` keeps bits `0..=bit_offset` — the bit *at* `position`
+    /// included, so this counts one more than "strictly before" whenever that bit is set. It is
+    /// never set here: [`suffix_to_protein`](SuffixToProteinMappingBackend::suffix_to_protein) has
+    /// already returned `u32::NULL` for a marked position, so `rank1` is only ever reached with it
+    /// clear and the two agree. Bits past `bit_len` in the final word are discarded by the same
+    /// shift and cannot affect an in-range answer.
     ///
     /// Deliberately the same arithmetic as `preloaded::bitvec`'s `rank1`, which runs it against
     /// owned memory, so the two backends agree by construction rather than by test. Here both
