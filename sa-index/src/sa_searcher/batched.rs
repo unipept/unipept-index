@@ -491,8 +491,9 @@ mod tests {
     // not use the transform at all (sparseness 1 keeps the original skip loop) and is therefore
     // an exact oracle.
     //
-    // `test_batched_matches_scalar` above passes tryptic=false throughout, so without this the
-    // batched extended path would have no coverage at all.
+    // Not redundant with `test_batched_matches_scalar` above, which does cover tryptic: that one
+    // compares the two paths at the *same* sparseness, so a fault in the transform itself would
+    // show up in both and cancel. Comparing against sparseness 1 is what makes this independent.
     #[test]
     fn test_batched_extended_tryptic_matches_dense_scalar() {
         let dense = searcher_over_text(TRYPTIC_FIXTURE, 1);

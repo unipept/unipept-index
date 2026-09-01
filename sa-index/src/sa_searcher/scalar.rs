@@ -370,14 +370,12 @@ mod tests {
     /// An empty search string is not a query, and must be answered rather than fall through the
     /// binary search.
     ///
-    /// It used to fall through, and the consequences were not subtle. `compare` returns
-    /// `(false, 0)` for it, so `found |= lcp_center == search_string.len()` reported a match on
-    /// every probe while no bound condition ever held: the bounds came back inverted as
-    /// `(sa.len(), 1)`, and `max_bound - min_bound` on the fast path underflowed — a panic in
-    /// debug, and in release a `range_size` near `usize::MAX` that took the `> max_matches` branch
-    /// and iterated `max_matches` entries from `sa.len()` onwards. `OriginalSA::iter_range` clamps
-    /// and yields nothing, but the compressed and mmap iterators do not, so those two backends
-    /// fabricated `max_matches` zero-valued suffixes and handed them to `retrieve_proteins`.
+    /// Without the guard the consequences are not subtle. `compare` returns `(false, 0)` for the
+    /// empty string, so `found |= lcp_center == search_string.len()` reports a match on every probe
+    /// while no bound condition ever holds: the bounds come back inverted as `(sa.len(), 1)`, and
+    /// `max_bound - min_bound` on the fast path underflows — a panic in debug, and in release a
+    /// `range_size` near `usize::MAX` that takes the `> max_matches` branch and asks every backend
+    /// for `max_matches` entries starting at `sa.len()`, which is past the end of all of them.
     ///
     /// Sparseness 3 is covered as well as 1, because it fails a step earlier: the skip loop slices
     /// `""[1..]` before any bound search runs.
