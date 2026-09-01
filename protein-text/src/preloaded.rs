@@ -176,10 +176,10 @@ impl ReadBinary for InMemoryProteinText {
         // `memory_hints::hugepages`.
 
         // `read_binary` refills the backing store with however many words the reader supplied, which
-        // says nothing about the length the header declared. Without this, a truncated or
-        // over-declared `proteins.bin` loaded cleanly, `len()` reported the declared length, and the
-        // first `get` past the real data panicked inside `bitarray` — on a live query rather than at
-        // load. `read_binary_mmap` rejects both cases; this is the sibling that did not.
+        // says nothing about the length the header declared. Without this check a truncated or
+        // over-declared `proteins.bin` loads cleanly, `len()` reports the declared length, and the
+        // first `get` past the real data panics inside `bitarray` — on a live query rather than at
+        // load. `read_binary_mmap` rejects both cases.
         if bit_array.word_len() < bit_array.required_words() {
             return Err(format!(
                 "The protein text header declares {} residues ({} words) but the file holds {} words",

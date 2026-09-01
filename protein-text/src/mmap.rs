@@ -100,9 +100,9 @@ impl ProteinTextBackend for MmapBackedProteinText {
     /// The `index < self.len` test is the one that implements the trait's contract, and it is not
     /// the same as the bounds test below. Over a shared `proteins.bin` the mapping continues past
     /// the text into the metadata section, so an index past the end of the *text* is still inside
-    /// the *mapping*: without this it hinted at unrelated metadata bytes and could fault a page
-    /// nothing was going to read. [`crate::InMemoryProteinText::prefetch_at`] has always checked
-    /// its length; this is the backend that did not.
+    /// the *mapping*: without the length test the hint would land on unrelated metadata bytes and
+    /// could fault a page nothing is going to read.
+    /// [`crate::InMemoryProteinText::prefetch_at`] tests its length for the same reason.
     ///
     /// The `byte_off` test stays as well, since [`Self::from_mmap`] is public and does not verify
     /// that `len` fits the mapping it was handed.
@@ -120,8 +120,7 @@ impl ProteinTextBackend for MmapBackedProteinText {
 
 // No `WriteBinary` here, deliberately. Serialisation is the preloaded half's job for every
 // structure in the index — see `binary_traits` — and `sa-builder` names only preloaded types
-// because of it. This module used to carry one anyway, the only mmap type in the workspace that
-// did; nothing in the workspace called it, tests included.
+// because of it.
 
 impl ReadBinaryMmap for MmapBackedProteinText {
     fn read_binary_mmap(path: &Path) -> Result<Self, Box<dyn Error>> {

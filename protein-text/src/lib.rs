@@ -6,9 +6,8 @@
 //! one residue per character compared. It is the hottest data structure in the index.
 //!
 //! The alphabet is 25 amino-acid letters plus the two delimiters, so a residue needs 5 bits
-//! rather than 8. Over the ~300 M-residue reference database that is the difference between
-//! roughly 290 MB and 190 MB — ~43 GB packed at full UniProt scale — and the smaller footprint is
-//! worth more than the unpacking costs.
+//! rather than 8: packed, the text is five eighths the size it would be at one byte per residue.
+//! The saving scales with the database, and it is worth more than the unpacking costs.
 //!
 //! # Two backends
 //!
