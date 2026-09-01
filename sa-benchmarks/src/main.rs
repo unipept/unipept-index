@@ -87,7 +87,8 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 ///   the index does not fit in RAM.
 /// v8: records carry `suite` and a free-form `dims` map, both supplied by the caller. A sweep
 ///   dimension this binary knows nothing about — a cgroup ceiling, a `RAYON_NUM_THREADS` value,
-///   which storage arm was built — used to survive only in the file name (`c167_pprot_t96.jsonl`),
+///   which storage arm was built — survived only in the file name (a ceiling, arm and thread count
+///   encoded into the stem),
 ///   so every driver script needed its own file-name parser and every one of them could disagree
 ///   about what a run meant. Now the coordinates travel inside the record.
 /// v10: matrix grids can be supplied by the driver (`--grid-file`), so `config` gains `sweep` and
@@ -110,7 +111,7 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 /// v13: v12's `decode_duration_ns` and `serialise_duration_ns` are replaced by a single
 ///   `response_duration_ns`, because the pair they formed was not measurable against the rest of
 ///   the record. v12 timed both of them SERIALLY while it timed search and retrieval in parallel,
-///   so on a 12-core box the decode share was overstated by up to the core count, and the
+///   so the decode share was overstated by up to the core count, and the
 ///   "measured share" heatmap built on that comparison was correspondingly wrong. v12 also
 ///   serialised a bare `Vec<Vec<ProteinInfo>>` rather than the `Vec<SearchResult>` the server
 ///   returns, so `response_bytes` omitted every peptide's `sequence`, `cutoff_used` and object
@@ -293,8 +294,8 @@ struct Args {
     /// too noisy to read, up to `--runs`. The reps actually taken are recorded in `stats.runs`, so
     /// a cell that hit the cap is visible rather than merely noisy. Off by default: `defaults` is
     /// the regression gate and wants a fixed rep count, so that two sessions are comparable rather
-    /// than each stopping wherever its own noise let it. (The 3.9% floor was measured at 20 reps;
-    /// `defaults.toml` now runs 100 fixed, and says why.)
+    /// than each stopping wherever its own noise let it. The gate suite fixes its rep count for
+    /// that reason and records why in its own suite file.
     #[arg(long)]
     runs_target_band: Option<f64>,
 
@@ -506,9 +507,9 @@ struct RunStats {
     /// 0.3-2.8% faster. Whichever was right, a table that answers "where does this configuration
     /// spend itself" has to rest on the same reps as the table that says how fast it is.
     ///
-    /// The candidate counters stay on `result` and are deliberately not aggregated: they count work
-    /// the search did, which is a property of the configuration rather than of a rep, so every rep
-    /// reports the same value and a median of them says nothing new.
+    /// Only the three phase timings are aggregated here. A counter that reports the same value in
+    /// every rep — anything that counts work the configuration implies rather than work a rep did —
+    /// belongs on `result`, where it is recorded once, not in a median that says nothing new.
     search_p50_ns: u64,
     retrieval_p50_ns: u64,
     /// 0 unless the cell set `response`, matching [`BenchmarkResult::response_duration_ns`].
@@ -991,7 +992,8 @@ fn cells_for(grid: &Grid, file_bucket: &str) -> Vec<GridCell> {
 ///
 /// Derived from the cells that will actually run, not from every line of the grid file: a grid
 /// shared between peptide files may name a k that none of *this* invocation's files reaches, and
-/// building a 6-mer table nothing queries costs 3 GB and several minutes.
+/// building a 6-mer table nothing queries costs `24^6 * 16` bytes of resident memory and a
+/// full parallel pass over the suffix array.
 fn kmer_sizes(args: &Args, grid: &Grid) -> Vec<usize> {
     let mut sizes: Vec<usize> = args
         .matrix_files
@@ -1374,9 +1376,10 @@ fn run_matrix(
     let grid = load_grid_file(require_grid_file(args)?, args)?;
     let kmers = kmer_sizes(args, &grid);
 
-    // Load or build exactly the tables the grid names, and no others. On the full database the
-    // 6-mer costs 3.06 GB resident against the 5-mer's 127 MB, so a grid that does not ask for it
-    // must not pay for it — see the `kmer` suite for what that buys.
+    // Load or build exactly the tables the grid names, and no others. The cost is `24^k * 16`
+    // bytes and depends only on k, never on the database, so each extra letter multiplies it by the
+    // alphabet — a 6-mer table is roughly 24x a 5-mer. A grid that does not ask for one must not
+    // pay for it; see the `kmer` suite for what it buys.
     let mut tables: HashMap<usize, KmerTable> = HashMap::new();
     for &k in kmers.iter().filter(|&&k| k > 0) {
         match kmer_table_path(args, k) {
@@ -1398,15 +1401,12 @@ fn run_matrix(
     let sweeps = warmup_touch_pages(&searcher);
     record_sweep(&mut startup, sweeps);
 
-    // Then the pipeline half, if the suite asked for one. Matrix mode used to ignore `--warmup`
-    // entirely and page-sweep only, which is not the same warmup the single-mode suites get — and
-    // the difference falls on one arm. A page sweep touches mapped pages; a build that PRELOADS a
-    // structure has it in anonymous memory, where no sweep reaches it, so the only thing that warms
-    // it is running real queries. `ram` and `threads` do that (`warmup = "all:1000000"`) and put
-    // `pprot` +14-16% over `mmap` on the mixed file; the matrix suites did not and put the same
-    // comparison on the same file at +0.3-9.6%. Whether that is the whole explanation is what the
-    // re-run this was added for will say, but the two modes could not be compared until they warmed
-    // the same way.
+    // Then the pipeline half, if the suite asked for one. Both modes have to warm the same way or
+    // their numbers are not comparable, and the difference falls on one arm in particular: a page
+    // sweep touches mapped pages, but a build that PRELOADS a structure holds it in anonymous
+    // memory where no sweep reaches it, so the only thing that warms it is running real queries. A
+    // suite that warms with queries and one that only sweeps therefore disagree about how far a
+    // preloaded arm is ahead — by enough to change which arm a reader would pick.
     //
     // The pipeline warms at the top-level `--equate-il` / `--tryptic` / `--max-matches`, not at each
     // cell's: a grid has many cells and one warmup, so there is no per-cell value to use. That is
