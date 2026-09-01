@@ -175,7 +175,9 @@ def _crossing_of(series: list[tuple[str, float, float, str]]) -> str | None:
         (
             series[index][0]
             for index in range(1, len(series))
-            if (series[index - 1][1] > 0) != (series[index][1] > 0) and abs(series[index][1]) > series[index][2]
+            if (series[index - 1][1] > 0) != (series[index][1] > 0)
+            and abs(series[index][1]) > series[index][2]
+            and abs(series[index - 1][1]) > series[index - 1][2]
         ),
         None,
     )
