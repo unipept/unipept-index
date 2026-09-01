@@ -58,32 +58,34 @@ pub use dynamic::{DynBitArray, DynBitArrayRangeIter};
 /// into one array first. At index-build scale `data` is already several gigabytes, so the
 /// difference is between one transient buffer and a second full copy of the index.
 ///
-/// # Panics in the caller's future, if `max_capacity` is chosen badly
+/// # The chunk size is rounded, not trusted
 ///
 /// Each chunk is written as a whole number of `u64` words, so for the chunks to concatenate into
 /// one continuous bit stream every chunk must occupy a whole number of words — that is,
-/// `max_capacity * bits_per_value` must be a multiple of 64. The one caller in the workspace —
-/// `sa_index::array::preloaded::compressed::dump_compressed_suffix_array` — passes `8 * 1024`,
-/// which satisfies this for every width. See the note on the chunk size below.
+/// `capacity * bits_per_value` must be a multiple of 64. `max_capacity` is therefore a *maximum*
+/// rather than the size used: it is rounded down to the nearest multiple of `64 / gcd`, which is
+/// the smallest number of values that fills whole words at this width. Any `max_capacity` is
+/// consequently safe, and the caller does not have to know the rule.
 pub fn data_to_writer(
     data: Vec<i64>,
     bits_per_value: usize,
     max_capacity: usize,
     writer: &mut impl Write
 ) -> Result<()> {
-    // Round the requested chunk size down to a multiple of gcd(bits_per_value, 64).
+    // Round the requested chunk size down to a multiple of `64 / gcd(bits_per_value, 64)`.
     //
-    // CAUTION: this is *not* the invariant the chunking actually needs. A chunk only lands on a
-    // word boundary when `capacity * bits_per_value % 64 == 0`, i.e. when `capacity` is a
-    // multiple of `64 / gcd`, not of `gcd`. For `bits_per_value = 5` the gcd is 1 and this line
-    // rounds to nothing at all; the code is correct today only because the single caller passes
-    // `8 * 1024`, which is a multiple of 64 and therefore satisfies the real invariant for every
-    // width. A `max_capacity` of, say, 100 would silently emit a partly-filled trailing word per
-    // chunk and corrupt the stream — and the `debug_assert` below only catches it in debug builds.
-    // Tracked as a known issue; not changed here because doing so would alter the bytes this
-    // function emits.
-    let gcd = gcd(bits_per_value, 64);
-    let capacity = max(gcd, max_capacity / gcd * gcd);
+    // That step is the smallest number of values whose packed width is a whole number of `u64`
+    // words: `capacity * bits_per_value % 64 == 0` holds exactly when `capacity` is a multiple of
+    // it. Rounding to `gcd` itself — which is what this did — is a different quantity and does not
+    // imply the invariant: at `bits_per_value = 5` the gcd is 1, so it rounded to nothing at all,
+    // and a `max_capacity` of 100 emitted a partly-filled trailing word per chunk, corrupting the
+    // stream in release builds where the `debug_assert` below is compiled out.
+    //
+    // Both step sizes are powers of two no greater than 64, so for the `8 * 1024` both callers
+    // pass this rounds to the same chunk size at every width from 1 to 64 and the bytes this
+    // function emits are unchanged.
+    let step = 64 / gcd(bits_per_value, 64);
+    let capacity = max(step, max_capacity / step * step);
     debug_assert!(
         (capacity * bits_per_value).is_multiple_of(64),
         "chunk of {capacity} values at {bits_per_value} bits does not fill whole u64 words"
@@ -139,6 +141,34 @@ mod tests {
         assert_eq!(gcd(64, 40), 8);
         assert_eq!(gcd(64, 64), 64);
         assert_eq!(gcd(32, 64), 32);
+    }
+
+    /// A chunked write must produce the same bytes as packing everything in one array, at every
+    /// width and for a `max_capacity` that is not a multiple of 64.
+    ///
+    /// `max_capacity = 100` is the case the old `gcd` rounding got wrong: it rounded to a multiple
+    /// of `gcd(bits, 64)` rather than of `64 / gcd`, so at most widths the chunk did not fill whole
+    /// words and every chunk boundary shifted the rest of the stream by a few bits. The
+    /// `debug_assert` in `data_to_writer` catches it in a debug build; this catches it in any
+    /// build, and pins the output to the unchunked packing rather than merely to itself.
+    #[test]
+    fn chunked_and_unchunked_writes_agree_at_every_width() {
+        for bits in 1..=64 {
+            let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+            let values: Vec<i64> = (0..250u64).map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15) & mask) as i64).collect();
+
+            let mut chunked = Vec::new();
+            data_to_writer(values.clone(), bits, 100, &mut chunked).unwrap();
+
+            let mut whole = DynBitArray::with_capacity(values.len(), bits);
+            for (i, &v) in values.iter().enumerate() {
+                whole.set(i, v as u64);
+            }
+            let mut unchunked = Vec::new();
+            whole.write_binary(&mut unchunked).unwrap();
+
+            assert_eq!(chunked, unchunked, "chunked write differs from unchunked at {bits} bits");
+        }
     }
 
     #[test]
