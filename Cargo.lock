@@ -1072,10 +1072,12 @@ dependencies = [
 name = "sa-index"
 version = "0.1.0"
 dependencies = [
+ "binary-traits",
  "bitarray",
  "clap",
  "fa-compression",
  "memmap2",
+ "memory-hints",
  "rayon",
  "sa-mappings",
  "serde",
