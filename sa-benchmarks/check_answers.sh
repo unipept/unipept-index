@@ -51,7 +51,11 @@ PORT="${PORT:-3999}"
 # ============================================================================
 
 [ -n "$IDX" ] || { echo "ERROR: no index dir — set IDX= or create sa-benchmarks/profiles/$PROFILE.toml"; exit 1; }
+# `-s`, not just `-n`: the profile loader checks the file exists, but PEP= bypasses it, and an
+# empty or missing file leaves `$PEPTIDES` as `[]`. Every configuration then answers the empty
+# query identically and the gate reports PASS having compared nothing.
 [ -n "$PEP" ] || { echo "ERROR: no peptide file — set PEP= or add [peptides].mixed to the profile"; exit 1; }
+[ -s "$PEP" ] || { echo "ERROR: peptide file is missing or empty: $PEP"; exit 1; }
 
 mkdir -p "$OUT"
 # Cleared, not merely written into. A configuration whose build fails is skipped below, and its

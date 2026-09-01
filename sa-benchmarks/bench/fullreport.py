@@ -359,8 +359,13 @@ def _settings_line(name: str, args, repo: Path) -> str:
     if args.amount is not None:
         defaults["amount"] = args.amount
 
+    # `:,` cannot format the '?' fallback — `format('?', ',')` raises ValueError — so the missing
+    # case is handled before the f-string rather than inside it. This line is built outside every
+    # `try` in `_run_one`, and `run_all` catches only ConfigError, so raising here loses the whole
+    # report: every suite already measured, for a suite file that omitted one key.
+    amount = f"{defaults['amount']:,}" if isinstance(defaults.get("amount"), int) else "?"
     parts = [
-        f"{defaults.get('runs', '?')} reps x {defaults.get('amount', '?'):,} peptides",
+        f"{defaults.get('runs', '?')} reps x {amount} peptides",
         f"arms {'/'.join(arm.name for arm in suite.arms)}",
     ]
     for key, label in (("peptides", "queries"), ("kmer", "kmer"), ("warmup", "warmup")):
