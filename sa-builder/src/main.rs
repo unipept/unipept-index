@@ -165,7 +165,22 @@ fn main() {
 ///
 /// A rename within a directory is atomic, so a reader sees either the whole old file or the whole
 /// new one. A failed build leaves `.tmp` files behind on purpose: that is the cost of not touching
-/// the index that still works.
+/// the index that still works. A later build truncates them, so a retry needs no cleanup.
+///
+/// # One builder per output directory
+///
+/// The temporary name is derived from the destination, so two `sa-builder` processes writing the
+/// same paths share it: both open it with `truncate`, interleave their writes, and each renames
+/// whatever is there when it finishes. The result is a corrupt index rather than an error from
+/// either process. Nothing here detects that, and running one builder per set of output paths is
+/// assumed.
+///
+/// Opening with `create_new` would catch it, but at a cost that is not worth paying: the `.tmp`
+/// files a *failed* build deliberately leaves behind would then block the retry, so the common
+/// case would need a manual cleanup to protect against a rare one. A unique name per process is
+/// worse still — both builds would run to completion and the renames would interleave per section,
+/// which is precisely the mixed index [`commit_all`] exists to prevent, and it would be silent.
+/// An advisory lock on the directory is the fix if this ever needs one.
 struct Output {
     writer: BufWriter<File>,
     temporary: PathBuf,
