@@ -95,8 +95,22 @@ impl ProteinTextBackend for MmapBackedProteinText {
         memory_hints::warmup::touch_all_pages(&self.mmap, self.data_offset..end)
     }
 
+    /// Prefetches the mapped byte holding `index`.
+    ///
+    /// The `index < self.len` test is the one that implements the trait's contract, and it is not
+    /// the same as the bounds test below. Over a shared `proteins.bin` the mapping continues past
+    /// the text into the metadata section, so an index past the end of the *text* is still inside
+    /// the *mapping*: without this it hinted at unrelated metadata bytes and could fault a page
+    /// nothing was going to read. [`crate::InMemoryProteinText::prefetch_at`] has always checked
+    /// its length; this is the backend that did not.
+    ///
+    /// The `byte_off` test stays as well, since [`Self::from_mmap`] is public and does not verify
+    /// that `len` fits the mapping it was handed.
     #[inline]
     fn prefetch_at(&self, index: usize) {
+        if index >= self.len {
+            return;
+        }
         let byte_off = self.data_offset + (index * 5) / 8;
         if byte_off < self.mmap.len() {
             memory_hints::prefetch::prefetch_read(&self.mmap[byte_off] as *const u8);
