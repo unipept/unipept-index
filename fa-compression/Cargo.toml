@@ -6,13 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dev-dependencies]
-criterion = "0.5.1"
-rand = "0.8.5"
+criterion = "0.8.2"
+rand = "0.10.2"
 
+# Profile settings belong in the workspace root manifest; Cargo ignores them here. The benches run
+# on the default `bench` profile, which inherits `release`.
 [[bench]]
-opt-level = 0
 name = "bench_main"
 harness = false
-
-[profile.bench]
-opt-level=3
