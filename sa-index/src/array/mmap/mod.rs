@@ -87,15 +87,21 @@ impl super::SuffixArrayBackend for MmapBackedSA {
     }
 
     // Do not add a `MADV_WILLNEED` over the SA range before scanning it. Tried twice, removed
-    // twice. Resident it is pure cost — -16.8% qps with a 5-mer table, -3.7% with a 6-mer —
-    // because every rayon thread contends on the same VMA's `mmap_lock` and the penalty scales
-    // with range size (~54 KB per 5-mer range vs ~2.7 KB per 6-mer). Under a memory ceiling the
-    // advice does land: major faults fall 23-25% at both a 167 GB and a 112 GB cap. But the
-    // throughput that buys decays as threads rise (+12.0% at the core count, ~0% at 48-96),
-    // because oversubscription and readahead are substitutes — with ~55 faults already in flight
-    // across 96 threads, removing a quarter of them changes little — and it does not let the
-    // thread count come down. If it is ever retried, fix the syscall count first with
-    // `process_madvise` (Linux 5.10+).
+    // twice.
+    //
+    // When the index is resident it is pure cost — a single-digit to low double-digit percentage of
+    // throughput: every rayon thread contends on the same VMA's `mmap_lock`, and the penalty scales
+    // with the range size, so a shorter k-mer table — which gives longer candidate ranges — loses
+    // more.
+    //
+    // Under a memory ceiling the advice does land, cutting major faults by roughly a quarter at
+    // every cap measured. But the throughput that buys decays to nothing as thread count rises,
+    // because oversubscription and readahead are substitutes: with tens of faults already in
+    // flight across a saturated pool, removing a quarter of them changes little. It also does not
+    // let the thread count come down, which is the only reason it would have been worth the
+    // contention.
+    //
+    // If it is ever retried, fix the syscall count first with `process_madvise` (Linux 5.10+).
 }
 
 impl ReadBinaryMmap for MmapBackedSA {

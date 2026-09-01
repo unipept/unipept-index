@@ -4,8 +4,8 @@
 //! rather than from the build it happens to be.
 //!
 //! **Packing.** [`OriginalSA`] stores one `i64` per entry; [`CompressedSA`] packs entries at the
-//! minimum width the text length requires (29 bits for a 300 M-residue text), roughly halving the
-//! file.
+//! minimum width the text length requires — `ceil(log2(text_len))` bits against 64 — which for any
+//! realistic text is roughly half the file.
 //!
 //! **Storage.** [`InMemorySA`] holds owned memory and dispatches over the packing at runtime;
 //! [`MmapBackedSA`] decodes straight out of a memory mapping and handles either packing itself.
