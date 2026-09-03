@@ -1,13 +1,16 @@
+# Builds the public index artefact from the latest unipept-database release and publishes it as a
+# GitHub release. The only workflow here that writes anything the outside world consumes.
 name: Build index binaries
 
 on:
   schedule:
     # Run on the first day of every month at midnight UTC
     - cron: '0 0 1 * *'
-  push:
-    branches:
-      - feature/build_index_action
   workflow_dispatch:
+
+# Least privilege by default; the release step below raises it where it is actually needed.
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -17,16 +20,25 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
 
+    # The job creates a release, which the read-only default token cannot do.
+    permissions:
+      contents: write
+
+    # A full-database build takes hours, so the ceiling has to be generous — but not the 6-hour
+    # default, which is what a hung build would otherwise cost.
+    timeout-minutes: 300
+
     steps:
-      # Check out the most recent version of the repository with submodules
+      # Check out the most recent version of the repository
       - name: Check out repository
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
+        uses: actions/checkout@v7
 
       # Set up Rust toolchain
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
 
       # Compile Rust code
       - name: Compile Rust code
@@ -36,50 +48,155 @@ jobs:
       - name: Create build directory
         run: mkdir -p build/input
 
-      # Download the file "suffix_array.zip" from the most recent release of "unipept-database"
+      # Download the newest suffix_array.zip published by unipept-database.
+      #
+      # `gh release download` rather than curl piped through grep. Parsing the API response by
+      # hand means a miss yields an empty URL, writes a junk file over suffix_array.zip and carries
+      # on to fail three steps later with an unrelated message; `gh` fails here, with the reason.
       - name: Download suffix_array.zip
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          latest_release_url=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep "browser_download_url.*suffix_array.zip" | cut -d '"' -f 4)
-          release_date=$(curl -s https://api.github.com/repos/unipept/unipept-database/releases/latest | grep '"published_at":' | cut -d '"' -f 4 | cut -d'T' -f1)
-          release_date_formatted=$(date -d $release_date "+%Y-%m-%d")
-          SP_VERSION="SP_$release_date_formatted"
-          echo "SP_VERSION=$SP_VERSION" >> $GITHUB_ENV
-          curl -L -o build/suffix_array.zip $latest_release_url
+          set -euo pipefail
+          release_date=$(gh release view --repo unipept/unipept-database \
+            --json publishedAt --jq '.publishedAt[:10]')
+          echo "SP_VERSION=SP_$release_date" >> "$GITHUB_ENV"
+          gh release download --repo unipept/unipept-database \
+            --pattern 'suffix_array.zip' --output build/suffix_array.zip --clobber
 
       # Extract the contents of the output folder from the zip into a folder "build/input"
       - name: Extract zip contents
+        shell: bash
         run: |
+          set -euo pipefail
           unzip build/suffix_array.zip '*' -d build/input
 
       # Make a directory with the SP_VERSION and process files
       - name: Process files
+        shell: bash
         run: |
-          mkdir -p build/$SP_VERSION
-          lz4 -d build/input/uniprot_entries.tsv.lz4 | cut -f2,4,7,8 > build/$SP_VERSION/proteins.tsv
-          lz4 -d build/input/taxons.tsv.lz4 > build/$SP_VERSION/taxons.tsv
+          set -euo pipefail
+          mkdir -p "build/$SP_VERSION"
+          lz4 -d build/input/uniprot_entries.tsv.lz4 | cut -f2,4,7,8 > "build/$SP_VERSION/proteins.tsv"
+          lz4 -d build/input/taxons.tsv.lz4 > "build/$SP_VERSION/taxons.tsv"
+
+      # End-to-end check on a slice of the real data, before the hours-long build starts.
+      #
+      # It cannot be done on the finished artefact: sa-server defaults to the preloaded backend,
+      # which needs the whole index resident — hundreds of gigabytes for the full database, against
+      # a hosted runner's 16. A few thousand proteins exercise the same path in about a minute:
+      # sa-builder reads today's actual column layout, sa-server loads what it wrote, and a peptide
+      # taken from one of those sequences comes back matched. What that catches is the failure this
+      # job is most exposed to — the upstream TSV changing shape, or a CLI flag here going stale —
+      # while it is still cheap to catch.
+      - name: Verify build and search on a sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/smoke
+          head -n 20000 "build/$SP_VERSION/proteins.tsv" > build/smoke/proteins.tsv
+
+          # A peptide that is definitely present: a 9-mer lifted out of the first sequence long
+          # enough to spare one. Field 3 is the sequence; see sa-builder's --database-file.
+          peptide=$(awk -F'\t' 'length($3) >= 30 { print substr($3, 5, 9); exit }' build/smoke/proteins.tsv)
+          test -n "$peptide" || { echo "no sequence long enough to sample a peptide from"; exit 1; }
+          echo "sample peptide: $peptide"
+
+          ./target/release/sa-builder \
+            --database-file build/smoke/proteins.tsv \
+            --output-sa build/smoke/sa.bin \
+            --output-proteins build/smoke/proteins.bin \
+            --output-mapping build/smoke/mapping.bin \
+            --output-kmer-table build/smoke/kmer_table.bin \
+            --kmer-size 5 \
+            --sparseness-factor 3 \
+            --construction-algorithm lib-div-suf-sort \
+            --compress-sa
+
+          ./target/release/sa-server \
+            --database-file build/smoke/proteins.bin \
+            --index-file build/smoke/sa.bin \
+            --mapping-file build/smoke/mapping.bin \
+            --kmer-table-file build/smoke/kmer_table.bin \
+            --address 127.0.0.1:3000 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:3000/search \
+                 -H 'content-type: application/json' -d '{"peptides":[]}'; then
+              break
+            fi
+            kill -0 "$server_pid" 2>/dev/null || { echo "sa-server exited before it was ready"; exit 1; }
+            sleep 1
+          done
+
+          response=$(curl -sf http://127.0.0.1:3000/search \
+            -H 'content-type: application/json' \
+            -d "{\"peptides\":[\"$peptide\"]}")
+          echo "$response"
+
+          # A peptide with no matches is dropped from the response entirely, so "the sequence came
+          # back with at least one protein" is the whole assertion.
+          echo "$response" | jq -e \
+            --arg peptide "$peptide" \
+            'map(select(.sequence == $peptide and (.proteins | length) > 0)) | length == 1' > /dev/null
 
       # Step 8: Run the sa-builder command
+      #
+      # sa-builder takes three separate mandatory outputs (--output-sa / --output-proteins /
+      # --output-mapping), all of which sa-server needs to boot (--index-file / --database-file /
+      # --mapping-file).
+      #
+      # --output-kmer-table is optional and feeds sa-server's --kmer-table-file, which speeds
+      # up the binary search considerably. Note the table is a dense bucket array: at
+      # --kmer-size 5 it is ~127 MB on disk regardless of database size (it compresses well
+      # inside the zip). Drop these two flags if the release artifact should stay small.
       - name: Run sa-builder
+        shell: bash
         run: |
+          set -euo pipefail
           prefix="build/$SP_VERSION"
-          ./target/release/sa-builder -d "$prefix/proteins.tsv" -o "$prefix/sa_sparse3_compressed.bin" -s 3 -a lib-div-suf-sort -c
-          
-      # Zip the contents of the build/$SP_VERSION directory
+          ./target/release/sa-builder \
+            --database-file "$prefix/proteins.tsv" \
+            --output-sa "$prefix/sa_sparse3_compressed.bin" \
+            --output-proteins "$prefix/proteins.bin" \
+            --output-mapping "$prefix/mapping.bin" \
+            --output-kmer-table "$prefix/kmer_table.bin" \
+            --kmer-size 5 \
+            --sparseness-factor 3 \
+            --construction-algorithm lib-div-suf-sort \
+            --compress-sa
+
+      # Zip the contents of the build/$SP_VERSION directory.
+      # proteins.bin and mapping.bin are mandatory for sa-server: without them the published
+      # artifact cannot start a server.
       - name: Zip build contents
+        shell: bash
         run: |
-          cd "build/$SP_VERSION" && zip "index_$SP_VERSION.zip" "proteins.tsv" "taxons.tsv" "sa_sparse3_compressed.bin"
+          set -euo pipefail
+          cd "build/$SP_VERSION"
+          for file in proteins.tsv taxons.tsv sa_sparse3_compressed.bin proteins.bin mapping.bin kmer_table.bin; do
+            test -s "$file" || { echo "$file is missing or empty; refusing to publish"; exit 1; }
+          done
+          zip "index_$SP_VERSION.zip" \
+            "proteins.tsv" \
+            "taxons.tsv" \
+            "sa_sparse3_compressed.bin" \
+            "proteins.bin" \
+            "mapping.bin" \
+            "kmer_table.bin"
 
       # Create a GitHub release and upload the zip file
       - name: Upload or Update Release
         id: upload_or_update_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: build/${{ env.SP_VERSION }}/index_${{ env.SP_VERSION }}.zip
           tag_name: index-${{ env.SP_VERSION }}
           name: Index ${{ env.SP_VERSION }}
-          commitish: ${{ github.sha }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
         env:

@@ -22,6 +22,11 @@ permissions:
 
 jobs:
   test:
+    # One cell, because the libraries have no storage feature to vary. Both backends of every
+    # structure are always compiled, and the searcher's fixtures load each combination by naming
+    # its types, so a single `cargo test` exercises all of them — see
+    # `sa-index/src/sa_searcher/test_utils.rs`. What the features still choose is which combination
+    # the *binaries* are built for; that is covered by the `server-backends` job below.
     name: Check + test
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -46,6 +51,11 @@ jobs:
       - name: Run cargo test
         run: cargo test --locked
 
+      # `--locked` above resolves to `default-members`, which excludes `sa-benchmarks`, so its own
+      # unit tests are compiled by the checks below and never actually run. Named explicitly here.
+      - name: Run cargo test (sa-benchmarks)
+        run: cargo test --locked -p sa-benchmarks
+
   release-build:
     # `cargo check` proves the workspace typechecks; it does not prove it links, and it never
     # exercises the release profile.
@@ -67,6 +77,72 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked
+
+  server-backends:
+    # `sa-server` is where the storage features now live, and all they do is pick which concrete
+    # type each `Active*` alias names (see `sa-server/src/backends.rs`). Nine resolutions; every one
+    # has to typecheck, and each has to report the backends it actually selected — which is what
+    # `backends::tests` checks, per configuration, so it is run rather than only compiled.
+    # Checking `sa-benchmarks` covers `sa-server` too, since its features forward there and nowhere
+    # else.
+    #
+    # Sequential rather than a matrix on purpose: the nine combinations share one warm target
+    # directory and finish in well under a minute, where nine runners would each pay checkout,
+    # toolchain and cache restore first.
+    name: sa-server backend aliases
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check every backend combination
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in "" "mmap" "mmap,preloaded-text" "mmap,preloaded-proteins" \
+                          "mmap,preloaded-mapping" "mmap,preloaded-text,preloaded-proteins" \
+                          "mmap,preloaded-text,preloaded-mapping" \
+                          "mmap,preloaded-proteins,preloaded-mapping" \
+                          "mmap,preloaded-text,preloaded-proteins,preloaded-mapping"; do
+            echo "== ${features:-(none)} =="
+            if [ -z "$features" ]; then
+              cargo check --all-targets -p sa-benchmarks
+              cargo test -p sa-server
+            else
+              cargo check --all-targets -p sa-benchmarks --features "$features"
+              cargo test -p sa-server --features "$features"
+            fi
+          done
+
+  bench-selftest:
+    # The Python half of `sa-benchmarks` is the only part of the workspace with no compiler behind
+    # it, and it is what turns records into the conclusions a report states — the crossover, the
+    # noise floor, the regression verdict. `selftest.py` drives every analysis it has a fixture for
+    # against fabricated records with known shapes, so a statistic that stops meaning what it says
+    # fails here rather than in a report nobody can check.
+    #
+    # No index, no cargo, no network: it builds its own records in a temporary directory, which is
+    # why it can run on every push while a real suite cannot.
+    name: sa-benchmarks self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile the package
+        run: python3 -m compileall -q sa-benchmarks/bench
+
+      - name: Run the self-test
+        run: PYTHONPATH=sa-benchmarks python3 -m bench.selftest
 
   clippy:
     name: Run Clippy
@@ -90,8 +166,16 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
+      # No `--workspace` here on purpose: it overrides the root `default-members`, which
+      # exists to keep `sa-benchmarks` out of the default build. That package is linted
+      # explicitly in the next step instead, so it cannot rot.
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # `--all-targets` for the same reason as the line above: without it clippy sees only the
+      # binaries, so nothing in `#[cfg(test)]` is linted and the crate's own tests can rot.
+      - name: Run Clippy (sa-benchmarks)
+        run: cargo clippy -p sa-benchmarks --all-targets --all-features -- -D warnings
 
   docs:
     # `-D warnings` turns a broken intra-doc link — which nothing else in CI notices — into a
