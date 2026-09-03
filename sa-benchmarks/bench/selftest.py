@@ -522,8 +522,12 @@ def _check_html(name: str, report: Report) -> list[str]:
     # A facet grid carries exactly one legend, above the panels. One per panel is the same row of
     # words repeated down the grid, which is what faceting was supposed to stop.
     for grid in re.findall(r'<div class="figgrid[^"]*">(.*?)(?=<div class="figgrid|</div></div>)', page, re.S):
-        if grid.count('class="legend') > 1:
-            failures.append(f"{name}: a facet grid draws {grid.count('class=\"legend')} legends")
+        # Counted into a local rather than inlined into the f-string below: before Python 3.12
+        # an f-string expression may contain neither a backslash nor the quote character that
+        # delimits it, and this needle needs a double quote inside a double-quoted f-string.
+        legends = grid.count('class="legend')
+        if legends > 1:
+            failures.append(f"{name}: a facet grid draws {legends} legends")
             break
     print(f"  {'FAIL' if any('facet grid draws' in f for f in failures) else 'ok  '} "
           f"{name:<8} a facet grid carries one legend")
