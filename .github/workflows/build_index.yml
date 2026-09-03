@@ -50,10 +50,9 @@ jobs:
 
       # Download the newest suffix_array.zip published by unipept-database.
       #
-      # `gh release download` rather than curl piped through grep: the old version parsed the API
-      # response by hand with no `set -e`, so a miss left `latest_release_url` empty, wrote a junk
-      # file over suffix_array.zip and carried on to fail three steps later with an unrelated
-      # message. This fails here, with the reason.
+      # `gh release download` rather than curl piped through grep. Parsing the API response by
+      # hand means a miss yields an empty URL, writes a junk file over suffix_array.zip and carries
+      # on to fail three steps later with an unrelated message; `gh` fails here, with the reason.
       - name: Download suffix_array.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -146,9 +145,9 @@ jobs:
 
       # Step 8: Run the sa-builder command
       #
-      # sa-builder no longer has a single `-o` output flag; it now requires three separate
-      # mandatory outputs (--output-sa / --output-proteins / --output-mapping), all of which
-      # sa-server needs to boot (--index-file / --database-file / --mapping-file).
+      # sa-builder takes three separate mandatory outputs (--output-sa / --output-proteins /
+      # --output-mapping), all of which sa-server needs to boot (--index-file / --database-file /
+      # --mapping-file).
       #
       # --output-kmer-table is optional and feeds sa-server's --kmer-table-file, which speeds
       # up the binary search considerably. Note the table is a dense bucket array: at
