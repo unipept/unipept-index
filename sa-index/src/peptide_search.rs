@@ -354,12 +354,12 @@ where
     // and the only place the batch size is chosen.
     let suffix_results = searcher.search_all_matching_suffixes_batched(&byte_peptides, cutoff, equate_il, tryptic);
 
-    // Retrieve for each hit and build the result, dropping peptides with no matches (preserves the
+    // Hand each peptide's suffixes to `f`, dropping the ones that matched nothing (preserves the
     // previous filter_map semantics and result ordering).
     //
-    // Retrieval is per peptide by design: a cross-query batched variant was built and measured,
-    // and moved throughput by a median well inside the noise floor. See the module comment on
-    // `sa_searcher::batched` for the full result.
+    // Whatever `f` retrieves, it retrieves per peptide by design: a cross-query batched variant was
+    // built and measured, and moved throughput by a median well inside the noise floor. See the
+    // module comment on `sa_searcher::batched` for the full result.
     prepared
         .par_iter()
         .zip(suffix_results.par_iter())
