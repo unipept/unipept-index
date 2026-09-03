@@ -545,7 +545,10 @@ nav a {
 nav a:hover { background: var(--panel); }
 nav a.active { background: var(--panel); color: var(--accent); font-weight: 600; }
 .nav-l1 { font-weight: 700; margin-top: 6px; }
-.nav-l3 { padding-left: 26px !important; color: var(--muted) !important; font-size: 12.5px; }
+.nav-l3 { padding-left: 26px !important; color: var(--muted); font-size: 12.5px; }
+/* `nav a.active` sets the accent colour; without this the muted rule above wins on specificity
+   alone and an active subsection reads the same as an inactive one. */
+nav a.nav-l3.active { color: var(--accent); }
 nav .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
 .nav-skipped .dot { background: var(--warnline); }
 .nav-failed .dot { background: var(--bad); }
@@ -1057,24 +1060,29 @@ document.querySelectorAll('table.grid th').forEach(th => {
 
 // Sidebar follows the scroll position: highlight the topmost heading currently on screen.
 //
-// Only the elements the sidebar actually links to. `main [id]` also matched each table, whose id
-// is a filter target with no nav entry, so a table scrolling into view could win `find` and blank
-// the highlight — `links.get('t0')` is undefined and the `?.` swallows it.
+// The headings themselves, not the sections that contain them. A `<details>` spans everything
+// under it, so it intersects the observer band for as long as any part of its section is on
+// screen — and being first in document order it would win `find` for the whole section, so no
+// subsection link could ever light up. Observing the `<summary>` (and the deeper `<h4>`) tracks
+// the heading a reader has actually reached.
 //
-// The section elements are still included, and have to be: a `<details>` carries the id its nav
-// link points at. That an open one encloses its subsections is why `find` reads in document order
-// and takes the outermost — the suite highlights until its first part is reached.
-const headings = [...document.querySelectorAll('main details[id], main h4[id]')];
+// The id lives on the `<details>`, because that is what a nav link points at, so a summary is
+// mapped back to its parent. Tables are excluded by the same stroke: their id is a filter target
+// with no nav entry, and `links.get('t0')` would be undefined.
+const headings = [...document.querySelectorAll('main summary, main h4[id]')];
+const idOf = (el) => el.id || (el.parentElement ? el.parentElement.id : '');
 const links = new Map([...document.querySelectorAll('nav a')].map(a => [a.hash.slice(1), a]));
 const onScreen = new Set();
 const spy = new IntersectionObserver(entries => {
   for (const entry of entries) {
-    if (entry.isIntersecting) onScreen.add(entry.target.id);
-    else onScreen.delete(entry.target.id);
+    const id = idOf(entry.target);
+    if (!id) continue;
+    if (entry.isIntersecting) onScreen.add(id);
+    else onScreen.delete(id);
   }
-  const current = headings.find(h => onScreen.has(h.id));
+  const current = headings.map(idOf).find(id => id && onScreen.has(id));
   links.forEach(a => a.classList.remove('active'));
-  if (current) links.get(current.id)?.classList.add('active');
+  if (current) links.get(current)?.classList.add('active');
 }, { rootMargin: '-60px 0px -70% 0px' });
 headings.forEach(h => spy.observe(h));
 """
