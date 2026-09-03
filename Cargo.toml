@@ -32,21 +32,7 @@ default-members = [ "binary-traits",
     "sa-server"
 ]
 
-# Keys every member shares. Each one picks these up with `<key>.workspace = true` rather than
-# repeating them, so the manifests cannot drift apart from each other.
 [workspace.package]
-# One edition for the whole workspace, stated once and inherited, so a member cannot be left
-# behind on an older one — which would be a silent difference in how its source is parsed
-# rather than a visible one.
-#
-# 2024 needs rustc 1.85; the let chains it enables need 1.88, which is the floor below. The
-# migration cost three nested `if let`s collapsing into let chains and nothing else: this
-# workspace has no `unsafe fn`, so edition 2024's `unsafe_op_in_unsafe_fn` has no surface
-# here, and .rustfmt.toml was already on `style_edition = "2024"`.
-#
-# Note this does NOT set the resolver. That inference only happens for a package manifest;
-# a virtual workspace root like this one falls back to `resolver = "1"` with a warning
-# unless it says otherwise, which is why the key is spelled out above.
 edition = "2024"
 
 # 1.88 is the oldest compiler this workspace builds on, measured rather than assumed: 1.87 fails
