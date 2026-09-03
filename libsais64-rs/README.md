@@ -33,9 +33,14 @@ selects one of three entry points by how wide the packed symbol has to be:
 
 | sparseness | packed width | libsais entry point |
 |---|---|---|
-| 1 | 8 bits — the raw text, no packing needed | `libsais64` |
+| 1 | 8 bits | `libsais64` |
 | 2-3 | 16 bits | `libsais16x64` |
 | 4-6 | 32 bits | `libsais32x64` |
+
+Sparseness 1 puts a single residue in each symbol, so it is not a size reduction, but the text
+still goes through the packer: that maps it onto the ranks `0..=27` rather than the scattered ASCII
+bytes libsais would otherwise bucket over, and it rejects a byte outside the alphabet instead of
+handing it to the algorithm.
 
 Six is the widest this crate can pack, since `6 * 5 = 30` bits still fits a `u32`, and `sais64`
 refuses anything outside `1..=6` rather than picking a branch with no packer behind it. `sa-builder`

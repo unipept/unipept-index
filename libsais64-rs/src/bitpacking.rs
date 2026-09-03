@@ -48,6 +48,43 @@ fn rank_at(text: &[u8], index: usize) -> Result<u8, UnsupportedCharacter> {
 // Amount of bits necessary to represent one character in the protein text.
 pub const BITS_PER_CHAR: usize = 5;
 
+// Bitpack text in a vector of u8 elements. BITS_PER_CHAR * sparseness_factor <= 8.
+//
+// At BITS_PER_CHAR bits per residue only a sparseness of 1 fits, so this packs no residues
+// together and the output is the same length as the input. It is still worth running: it maps the
+// text onto the ranks 0..=27 rather than the scattered ASCII bytes libsais would otherwise see,
+// and it rejects a byte outside the alphabet instead of handing it to the algorithm.
+pub fn bitpack_text_8(text: Vec<u8>, sparseness_factor: usize) -> Result<Vec<u8>, UnsupportedCharacter> {
+    assert!(BITS_PER_CHAR * sparseness_factor <= 8);
+
+    let num_ints = text.len().div_ceil(sparseness_factor);
+    let mut text_packed = vec![0; num_ints];
+
+    if text.is_empty() {
+        return Ok(text_packed);
+    }
+
+    for (i, element) in text_packed.iter_mut().enumerate().take(num_ints - 1) {
+        let ti = i * sparseness_factor;
+        *element = 0u8;
+        for j in 0..sparseness_factor {
+            let rank_c = rank_at(&text, ti + j)?;
+            *element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - j));
+        }
+    }
+
+    // Handle the last element
+    let mut last_element = 0u8;
+    let last_el_start = sparseness_factor * (num_ints - 1);
+    for i in 0..((text.len() - 1) % sparseness_factor + 1) {
+        let rank_c = rank_at(&text, last_el_start + i)?;
+        last_element |= rank_c << (BITS_PER_CHAR * (sparseness_factor - 1 - i));
+    }
+    text_packed[num_ints - 1] = last_element;
+
+    Ok(text_packed)
+}
+
 // Bitpack text in a vector of u16 elements. BITS_PER_CHAR * sparseness_factor <= 16.
 pub fn bitpack_text_16(text: Vec<u8>, sparseness_factor: usize) -> Result<Vec<u16>, UnsupportedCharacter> {
     assert!(BITS_PER_CHAR * sparseness_factor <= 16);
@@ -140,10 +177,21 @@ mod tests {
         }
     }
 
+    /// At sparseness 1 nothing is packed together, but the text is still remapped onto the ranks
+    /// rather than passed through as ASCII.
+    #[test]
+    fn sparseness_one_remaps_the_alphabet() {
+        assert_eq!(bitpack_text_8(b"$-AZ".to_vec(), 1), Ok(vec![0, 1, 2, 27]));
+    }
+
     /// The packers report the offending byte and its position rather than corrupting the output.
     #[test]
     fn packing_reports_an_unsupported_byte() {
         assert!(bitpack_text_16(b"ACGT-ACGT$".to_vec(), 3).is_ok());
+
+        let err = bitpack_text_8(b"ACG*T$".to_vec(), 1).expect_err("'*' is not in the alphabet");
+        assert_eq!(err.byte, b'*');
+        assert_eq!(err.index, 3);
 
         let err = bitpack_text_16(b"ACG*T$".to_vec(), 3).expect_err("'*' is not in the alphabet");
         assert_eq!(err.byte, b'*');
@@ -158,6 +206,7 @@ mod tests {
     /// Empty input is not an error, and neither packer indexes anything.
     #[test]
     fn empty_text_packs_to_nothing() {
+        assert_eq!(bitpack_text_8(Vec::new(), 1), Ok(Vec::new()));
         assert_eq!(bitpack_text_16(Vec::new(), 3), Ok(Vec::new()));
         assert_eq!(bitpack_text_32(Vec::new(), 6), Ok(Vec::new()));
     }
