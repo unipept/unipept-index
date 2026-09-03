@@ -32,6 +32,14 @@ default-members = [ "binary-traits",
     "sa-server"
 ]
 
+# Keys every member shares. Each one picks these up with `<key>.workspace = true` rather than
+# repeating them, so the manifests cannot drift apart from each other.
+[workspace.package]
+# One edition for the whole workspace. Nothing here is mid-migration, and a member left on an
+# older edition would be a silent difference in how its source is parsed rather than a visible
+# one — so the year is stated once and inherited.
+edition = "2021"
+
 # 1.88 is the oldest compiler this workspace builds on, measured rather than assumed: 1.87 fails
 # on `slice::as_chunks`, stabilised in 1.88.0 and used by `bitarray` and elsewhere. The highest
 # floor any dependency declares is 1.86 (criterion), so it is this repository's own source that
@@ -52,5 +60,4 @@ default-members = [ "binary-traits",
 # oldest compiler a consumer can build the workspace with. #57 raised the floor to 1.88 through a
 # clippy autofix that had nothing to object to, because nothing here declared a floor for it to
 # violate — this closes that gap.
-[workspace.package]
 rust-version = "1.88"
