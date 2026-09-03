@@ -1,0 +1,85 @@
+description = "What each storage configuration costs before it can answer the first query"
+
+mode = "single"
+ordering = "sequential"
+# Both on, and not optional. The arms share a page cache and run in a fixed order, so without a drop
+# between them the first arm's own RSS evicts the cache it filled, the second faults the index in
+# from the device, and the third sweeps what the second left resident — which is how a 296 s warmup
+# and a 36 s warmup came out of two arms doing the same 160 GB of work. Dropping per cell is what
+# makes the column compare arms instead of positions in the sweep.
+needs_root = true
+drop_caches = true
+
+notes = """
+Load time is a property of one invocation, not of a rep, so every configuration is loaded once with
+a trivial query workload and the numbers come from the harness's own `startup` section. There is
+nothing to gain from running this at 100 reps.
+
+Preloading a structure does not make its cost go away — it moves it from page faults spread across
+the steady state into one bulk copy at startup. Compare the `total` column, never the `load` column
+alone, and read this suite together with the throughput the same configuration reaches in `ram`.
+
+PAGE CACHE: the cache is dropped before every configuration, so these are cold-boot numbers — "how
+long does the first start after a deploy take". A restart on a warm box is much faster and is NOT
+what this measures. That costs the suite most of its wall clock and it is not optional: the arms are
+otherwise ordered in time, and an arm that runs after another has already faulted the index in
+measures the page cache rather than itself.
+
+Read `GB/s`, not `warmup` alone. Two arms sweeping the same structure do the same work; if one of
+them is an order of magnitude faster per byte, it was reading from the page cache and the comparison
+is void. `majflt` says the same thing from the other side — a cold sweep takes one major fault per
+page, a warm one takes none.
+
+The preloaded arm has nothing mapped to touch, so its page-touch warmup degrades to a small pipeline
+warmup automatically; its `warmup` column is therefore not comparable with the mapped arms'. Its
+`GB swept` is 0, which is the honest form of that caveat.
+"""
+
+[defaults]
+runs = 1
+amount = 100
+peptides = "mixed"
+kmer = 5
+warmup = "all"
+
+# The same storage ladder every other suite measures: both extremes and the three rungs between
+# them. A feature that is declared but not forwarded through every crate produces a
+# byte-identical binary, which the build step rejects — that check is why each of these rows means
+# something. `check_answers.sh` still exercises all nine, because correctness is not a per-suite
+# question and a configuration nobody benchmarks can still ship.
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+# `pprot` plus the protein text. This is the arm that closed the gap: at 402fbcb546 it tied fully
+# preloaded in 16 of 16 cells while `pprot` closed only 18%, because the text is read once per
+# residue compared and is the whole of the search cost, where the metadata is the whole of the
+# retrieval cost. Carried by every suite so that no knob is tuned only against configurations that
+# are no longer the fastest ones.
+
+[[arms]]
+# Everything mapped except the protein store. The nine-way per-structure sweep that used to live
+# here answered which structures are worth preloading; it settled on this one, and re-running the
+# other six configurations on every session was re-deriving a decision rather than checking it.
+# Add an arm back if a structure's storage becomes a live question again.
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

@@ -1,0 +1,106 @@
+description = "Whether thread oversubscription pays, by how much, and what it costs when RAM is ample"
+
+mode = "single"
+# Arms adjacent within each (ceiling, threads) point, with no replication: the arm gap is the
+# smaller and more delicate effect, so it is measured over the smallest possible time window. The
+# evidence that it is real is agreement across the thread counts, each an independent estimate of
+# the same gap — not an ABBA pair.
+ordering = "sequential"
+needs_root = true
+drop_caches = true
+
+notes = """
+A major fault blocks its thread, and a CPU prefetch hint cannot fault, so once pages stop being
+resident the index's memory-level-parallelism machinery is inert and every miss idles a core.
+Oversubscription overlaps those stalls instead of removing them.
+
+Established by the sweeps this suite replaces: oversubscription costs about 10% unconstrained and
+gains +65.3% at a 167G ceiling and +94.4% at 112G — a deployment knob, not a default, whose value
+scales with the fault rate. At 167G the curve is monotonic downward from 96 (96 > 128 > 192), so the
+peak is at or below 96. Major faults stayed flat across thread counts (0.24% spread).
+
+The arm list grew twice on 2026-08-18: `defaults` at b530143049 put the fully preloaded build
+21-82% ahead of both mapped arms, and at 402fbcb546 `ptext` — mapped suffix array, preloaded text and
+metadata — tied with it. A thread-count recommendation derived from the two mapped arms alone is a
+recommendation for configurations that are no longer the fastest ones unconstrained.
+
+`ptext` is the one to watch here for a reason particular to this suite. Oversubscription pays by
+overlapping MAJOR FAULTS, and a fault is what a mapped structure takes when its page has been
+evicted. `ptext` maps the suffix array, so under a ceiling it faults like a mapped arm; the fully
+preloaded arm cannot fault on its own data at all and stalls in reclaim instead. There is no reason
+to assume oversubscription hides the second the way it hides the first, and no run so far has
+looked.
+
+WHICH REGIME THIS MEASURES, and it is only one. Every cell here runs `tryptic=false` on the mixed
+file, because a ceiling sweep cannot afford a workload axis as well. That is the regime in which
+preloading the protein metadata pays: without tryptic the search accepts 9-13% of the candidates it
+examines, so retrieval is a third of the measured work and the structure `pprot` preloads is hot.
+Under tryptic acceptance falls to ~0.5%, retrieval drops to 1-7% of the work, and `defaults` at
+b530143049 measured `pprot` vs `mmap` at a median of -3.6% across the eight tryptic cells against
++9.3% across the eight non-tryptic ones — the sign flips in 15 of 16.
+
+So a `pprot vs mmap` figure from this suite is the best case for `pprot`, not a property of the
+arms. It is stable across the axes swept here; it is not stable across workloads, and `defaults` is
+the suite that says so.
+
+Read it this way:
+
+  * `majflt` should stay FLAT across thread counts at a given ceiling. Threads change how many
+    faults are in flight, not how many there are. If it moves, something else changed too.
+  * `unconstrained` is the go/no-go for making a thread count the default: with no faults to hide,
+    oversubscription is pure context-switch overhead. If it costs there, it stays a deployment knob.
+  * If the optimum at the tighter ceiling is higher than at the looser one, the rule is "scale
+    threads with the fault rate", not a fixed number.
+  * `pprot vs mmap` should hold the same sign across every thread count at a ceiling. Oversubscription
+    hides faults; it does not remove them, so if the arms' fault COUNTS still differ while their
+    throughput gap closes, the win is being overlapped rather than eliminated — and it will reopen on
+    slower storage.
+
+The grid is deliberately modest, since the peak is already bracketed at <= 96. Widen `threads` to
+bracket it more finely, or add ceilings, at the cost of roughly an hour per cell on the full database.
+"""
+
+[defaults]
+runs = 100
+amount = 10000
+peptides = "mixed"
+kmer = 5
+warmup = "all:1000000"
+no_theoretical_memory = true
+
+[axes]
+ceiling_gb = [0, 167, 112]
+# "default" leaves RAYON_NUM_THREADS unset, i.e. one thread per core.
+threads = ["default", 48, 96]
+
+# The fully preloaded arm is here because oversubscription's whole mechanism is overlapping major
+# faults, and this arm takes none of the same kind: its pages are anonymous, so under a ceiling it
+# is the kernel's swap and reclaim path that stalls it rather than a file-backed refault. Whether
+# the +65-94% oversubscription wins the mapped arms show reproduce there at all is not something
+# the other two can answer.
+[[arms]]
+name = "preloaded"
+features = []
+
+[[arms]]
+name = "mmap"
+features = ["mmap"]
+
+[[arms]]
+name = "pprot"
+features = ["mmap", "preloaded-proteins"]
+
+[[arms]]
+name = "ptext"
+features = ["mmap", "preloaded-text", "preloaded-proteins"]
+
+# Everything preloaded EXCEPT the suffix array — the last step before the fully preloaded build,
+# and the one that isolates what the SA costs when mapped. `defaults` at 402fbcb546 found `ptext`
+# already tied with fully preloaded, so whatever the SA and the mapping are worth is inside the
+# floor there; this arm splits that remainder, since it differs from `ptext` in the mapping alone.
+# The mapping is read once per matched suffix in retrieval pass 1, where `ptext` and `pprot` both
+# sit 1.10x behind fully preloaded — the 18% of the retrieval gap neither of them closes.
+
+[[arms]]
+name = "pmap"
+features = ["mmap", "preloaded-text", "preloaded-proteins", "preloaded-mapping"]

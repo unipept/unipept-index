@@ -1,0 +1,46 @@
+# Machine profile template. Copy to `local.toml` (gitignored) and edit for this machine.
+#
+#   cp sa-benchmarks/profiles/example.toml sa-benchmarks/profiles/local.toml
+#
+# Suites refer to peptide files and k-mer tables by NAME, never by path, so the same suite runs
+# anywhere a profile exists. Every path below is checked at startup: a sweep that discovers a
+# missing peptide bucket four hours in has wasted four hours.
+
+# The index directory: sa.bin, proteins.bin, mapping.bin and warmup.txt. The dated release name
+# differs per machine — check what this box actually has rather than copying it from a script.
+index_dir = "uniprot-2026-01/suffix-array"
+
+# Where binaries and results go. Never inside the repo: results are machine-specific and large.
+# Relative paths resolve against the repo root; a benchmark server usually wants a real data volume.
+scratch = "target/bench-results"
+
+# Query files, one peptide per line. Relative paths resolve against index_dir.
+#
+#   mixed              the general-purpose file, and the query mix a server actually sees
+#   small/medium/large the length-bucketed files the `defaults` grid sweeps, so it can tell the
+#                      retrieval-bound regime (short peptides) from the search-bound one (long).
+#                      Produce each with `generate-peptides --min-len/--max-len`; see the README.
+#
+# Each file needs at least `runs * amount` lines for the suite that reads it — the harness consumes
+# them sequentially, so a short file shortens the later reps instead of failing. `run.sh` checks.
+[peptides]
+mixed = "../peptides/peptides_5_50.txt"
+small = "../peptides/small.txt"
+medium = "../peptides/medium.txt"
+large = "../peptides/large.txt"
+
+# Pre-built k-mer bound tables (sa-builder --output-kmer-table). Optional, and optional in a
+# specific way: a suite naming a table this profile does not have does NOT fail — the harness builds
+# the same table in-process instead and says so, because dropping it would quietly measure a
+# different index while building it only costs startup time. That is minutes per process at
+# full-database scale, and the preflight names which k it will have to build. (A missing PEPTIDE
+# file is the one that fails, with the list of what this profile has — a query file cannot be
+# reconstructed.)
+#
+# k5 is the shipped default, mirroring `sa-builder --kmer-size` (0.12 GB). k6 is 2.85 GB and is a
+# documented tuning step for memory-constrained deployments, where the table's value is working-set
+# size rather than probe count — see the `kmer` and `ram` suites' notes. The `kmer` suite sweeps both
+# against no table, so both have to be here for a full run.
+[kmer_tables]
+k5 = "kmer-tables/5mer_table.bin"
+k6 = "kmer-tables/6mer_table.bin"
