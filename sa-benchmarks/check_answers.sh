@@ -70,6 +70,10 @@ done
 
 # A fixed query: five real peptides from the index's own peptide file.
 PEPTIDES=$(head -5 "$PEP" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+# Checked on the QUERY, not just on the file. `-s` above rejects a missing or zero-byte file, but a
+# file holding only blank lines is non-empty and still yields no peptides — and an empty query is
+# answered identically by all nine configurations, so the gate would compare nothing and pass.
+[ "$PEPTIDES" != "[]" ] || { echo "ERROR: no usable peptides in the first five lines of $PEP"; exit 1; }
 BODY="{\"peptides\": $PEPTIDES, \"equate_il\": true, \"cutoff\": 1000}"
 
 # All nine configurations: everything preloaded, everything mapped, and the seven mixtures.
