@@ -249,8 +249,12 @@ class Runner:
             # The marker carries the cell's dims, not just its exit code: a cell that produced no
             # records still has to appear in the report, and recovering that from the file name
             # would reintroduce the parsing the dims envelope exists to remove.
+            # `OOM_EXIT`, not `completed.returncode`: the two spellings mean the same thing, and
+            # writing the shell's is what keeps a marker readable by anything that predates this
+            # driver. The status is normalised on the way in, not on the way out, so a marker never
+            # carries the platform detail that a SIGKILL reaches Python as a negative number.
             marker.write_text(
-                json.dumps({"exit": completed.returncode, "dims": cell.dims, "label": cell.label}) + "\n"
+                json.dumps({"exit": OOM_EXIT, "dims": cell.dims, "label": cell.label}) + "\n"
             )
             self.echo(f"  -> killed under its ceiling; recorded as did-not-fit (see {log.name})")
             return CellResult(cell, "did-not-fit", elapsed, "OOM-killed under its ceiling")
