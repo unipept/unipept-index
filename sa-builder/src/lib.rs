@@ -202,7 +202,7 @@ pub fn split_sparseness(sparseness_factor: u8) -> SparsenessSplit {
 
 /// Builds the suffix array with `libsais`, splitting the sparseness factor between the sampling
 /// `libsais` performs itself and a second pass over the result.
-fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, &'static str> {
+fn libsais64(text: Vec<u8>, sparseness_factor: u8) -> Result<Vec<i64>, String> {
     let SparsenessSplit { libsais_sparseness, sample_rate } = split_sparseness(sparseness_factor);
 
     let mut sa = libsais64_rs::sais64(text, libsais_sparseness)?;

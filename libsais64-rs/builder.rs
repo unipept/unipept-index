@@ -47,29 +47,111 @@ fn exit_status_to_result(name: &str, exit_status: ExitStatus) -> Result<(), Comp
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    // remove the old libsais folder
-    Command::new("rm").args(["-rf", "libsais-packed"]).status().unwrap_or_default(); // if removing fails, it is since the folder did not exist, we just can ignore it
+/// Where the C library comes from, and exactly which commit of it.
+///
+/// Pinned to a hash rather than tracking the default branch, so that a given Rust commit always
+/// builds the same binary and no change in the C repository can reach a build — or break CI —
+/// without a commit here recording it.
+///
+/// Bumping is deliberate: change the hash below and commit it, so the bump is reviewable and
+/// bisectable like any other dependency change.
+const LIBSAIS_REPOSITORY: &str = "https://github.com/unipept/libsais-packed.git";
+const LIBSAIS_COMMIT: &str = "a2b99260a4c41ad101d3388fcca1d4c78fc4a0c3";
+const LIBSAIS_DIRECTORY: &str = "libsais-packed";
 
-    // clone the c library
+/// Whether the working copy is already the pinned commit.
+///
+/// Any failure — no directory, not a repository, a git that will not run — is answered with
+/// `false`, which just means the checkout below happens.
+fn is_at_pinned_commit() -> bool {
     Command::new("git")
-        .args(["clone", "https://github.com/unipept/libsais-packed.git", "libsais-packed", "--depth=1"])
-        .status()
-        .expect("Failed to clone the libsais-packed repository");
+        .args(["-C", LIBSAIS_DIRECTORY, "rev-parse", "HEAD"])
+        .output()
+        .map(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == LIBSAIS_COMMIT)
+        .unwrap_or(false)
+}
+
+/// Whether the checkout has uncommitted changes to tracked files.
+///
+/// Untracked files are ignored: cmake and make leave their output in this directory, so it is never
+/// clean by that measure.
+fn has_local_changes() -> bool {
+    Command::new("git")
+        .args(["-C", LIBSAIS_DIRECTORY, "status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .map(|out| out.status.success() && !out.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// Puts [`LIBSAIS_COMMIT`] of the C library in `libsais-packed/`.
+///
+/// A shallow fetch of the single commit by hash, which costs what a `--depth=1` clone costs; GitHub
+/// serves any commit reachable from a branch this way. A directory already at that commit is left
+/// alone, so an incremental build skips the fetch entirely — `main` still reconfigures with cmake
+/// and runs make, but both then find their work already done.
+///
+/// # Errors
+///
+/// Any of the git invocations failing.
+fn fetch_libsais() -> Result<(), Box<dyn Error>> {
+    if is_at_pinned_commit() {
+        // Edits to the C source are the one reason to be here by hand, and the re-checkout below
+        // starts with `rm -rf`, so they are reported rather than deleted. The build is no longer
+        // the pinned one, and saying so is the most this can do without eating someone's work.
+        if has_local_changes() {
+            println!(
+                "cargo:warning=libsais64-rs: {}/ is at the pinned commit but has uncommitted changes; \
+                 building those instead of the pinned source. Delete the directory for a clean checkout.",
+                LIBSAIS_DIRECTORY
+            );
+        }
+        return Ok(());
+    }
+
+    // Whatever is there is not what is wanted; if removing fails, it is because the folder did not
+    // exist, and we can ignore that.
+    Command::new("rm").args(["-rf", LIBSAIS_DIRECTORY]).status().unwrap_or_default();
+
+    exit_status_to_result("git init", Command::new("git").args(["init", "-q", LIBSAIS_DIRECTORY]).status()?)?;
+    exit_status_to_result(
+        "git remote add",
+        Command::new("git")
+            .args(["-C", LIBSAIS_DIRECTORY, "remote", "add", "origin", LIBSAIS_REPOSITORY])
+            .status()?
+    )?;
+    exit_status_to_result(
+        "git fetch",
+        Command::new("git")
+            .args(["-C", LIBSAIS_DIRECTORY, "fetch", "-q", "--depth=1", "origin", LIBSAIS_COMMIT])
+            .status()?
+    )?;
+    exit_status_to_result(
+        "git checkout",
+        Command::new("git").args(["-C", LIBSAIS_DIRECTORY, "checkout", "-q", "FETCH_HEAD"]).status()?
+    )?;
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // fetch the pinned revision of the c library
+    fetch_libsais()?;
 
     // compile the c library
-    Command::new("rm").args(["-f", "libsais-packed/CMakeCache.txt"]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    let cmake_cache = format!("{}/CMakeCache.txt", LIBSAIS_DIRECTORY);
+    Command::new("rm").args(["-f", &cmake_cache]).status().unwrap_or_default(); // if removing fails, it is since the cmake cache did not exist, we just can ignore it
+    let cmake_build_dir = format!("-B{}", LIBSAIS_DIRECTORY);
     exit_status_to_result(
         "cmake",
         Command::new("cmake")
-            .args(["-DCMAKE_BUILD_TYPE=\"Release\"", "libsais-packed", "-Blibsais-packed"])
+            .args(["-DCMAKE_BUILD_TYPE=\"Release\"", LIBSAIS_DIRECTORY, cmake_build_dir.as_str()])
             .status()?
     )?;
-    exit_status_to_result("make", Command::new("make").args(["-C", "libsais-packed"]).status()?)?;
+    exit_status_to_result("make", Command::new("make").args(["-C", LIBSAIS_DIRECTORY]).status()?)?;
 
-    // link the c libsais-packed library to rust
+    // link the c library to rust
     let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join("libsais-packed").display());
+    println!("cargo:rustc-link-search=native={}", Path::new(&dir).join(LIBSAIS_DIRECTORY).display());
     println!("cargo:rustc-link-lib=static=libsais");
 
     // The bindgen::Builder is the main entry point
