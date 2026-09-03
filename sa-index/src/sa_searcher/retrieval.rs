@@ -57,10 +57,10 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         // Pass 2: prefetch proteins (D ahead), build ProteinRefs
         let mut res = Vec::with_capacity(suffixes.len());
         for (i, &protein_index) in protein_indices.iter().enumerate() {
-            if let Some(&fpi) = protein_indices.get(i + distance) {
-                if !fpi.is_null() {
-                    self.proteins.prefetch(fpi as usize);
-                }
+            if let Some(&fpi) = protein_indices.get(i + distance)
+                && !fpi.is_null()
+            {
+                self.proteins.prefetch(fpi as usize);
             }
             if !protein_index.is_null() {
                 res.push(self.proteins.get(protein_index as usize));

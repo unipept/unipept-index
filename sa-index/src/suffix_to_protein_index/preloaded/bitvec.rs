@@ -299,10 +299,10 @@ pub(super) fn read_bitvec_mapping<R: Read>(reader: &mut R) -> Result<BitVecSuffi
     // on a well-formed file.
     blocks.truncate(needed);
     let tail = bit_len % 64;
-    if tail != 0 {
-        if let Some(last) = blocks.last_mut() {
-            *last &= (1u64 << tail) - 1;
-        }
+    if tail != 0
+        && let Some(last) = blocks.last_mut()
+    {
+        *last &= (1u64 << tail) - 1;
     }
     counts.truncate(blocks.len() / 8 + 1);
 

@@ -1,7 +1,7 @@
 [package]
 name = "sa-benchmarks"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 # Not `rust-version.workspace = true`: sa-benchmarks is a dev-only measurement harness, is not a
 # default member, and ships to nobody, but its `sysinfo` 0.39.6 dependency requires rustc 1.95, well
 # above the workspace's 1.88 floor. Declaring its own floor means `cargo -p sa-benchmarks` on an

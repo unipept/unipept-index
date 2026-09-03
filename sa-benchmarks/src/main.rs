@@ -1074,10 +1074,11 @@ fn run_cell(
             spec.theoretical_max,
             spec.baseline_memory
         ));
-        if let Some(target) = args.runs_target_band {
-            if results.len() as u32 >= args.min_runs && band_of(&results) <= target {
-                break;
-            }
+        if let Some(target) = args.runs_target_band
+            && results.len() as u32 >= args.min_runs
+            && band_of(&results) <= target
+        {
+            break;
         }
     }
 
