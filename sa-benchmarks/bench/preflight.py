@@ -27,7 +27,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, rig
+from . import config, grid, rig
 from .config import Cell, Suite
 from .profile import INDEX_FILES, Profile
 from .runner import Runner
@@ -313,7 +313,7 @@ def _plan_suite(name: str, args, repo: Path, profile: Profile, session: Path, op
     try:
         suite = config.load(name, repo)
         apply_overrides(suite, args)
-    except (config.ConfigError, rig.RigError) as error:
+    except (config.ConfigError, grid.GridError, rig.RigError) as error:
         # `warn`, not `FAIL`: a suite file that will not load, or a `--baseline` session that holds
         # nothing for this suite, costs this suite and no other. Under `all` that is exactly what
         # happened before there was a preflight — the suite is reported as failed and the session
@@ -324,7 +324,13 @@ def _plan_suite(name: str, args, repo: Path, profile: Profile, session: Path, op
     runner = Runner(suite, profile, {}, out_dir, echo=lambda _: None)
     try:
         cells = select(suite, runner, args.only)
-    except config.ConfigError as error:  # --only matched nothing here; it may still match elsewhere
+    except (config.ConfigError, grid.GridError) as error:
+        # ConfigError: `--only` matched nothing here; it may still match elsewhere. GridError: a
+        # malformed `[[sweep]]` block, which `config.load` does not see — the grid is expanded
+        # lazily, so an unknown context key or a missing `arms` surfaces here, on the first call
+        # that touches `Runner.grid`. It is not a subclass of `ConfigError`, so without naming it
+        # this function propagates instead of reporting, and one bad block ends the whole session
+        # with a traceback — the outcome the docstring above says cannot happen.
         return SuitePlan(name, WARN, reason=str(error))
 
     plan = SuitePlan(name, "run", needs_root=suite.needs_root, needs_cgroup=needs_cgroup(suite))
