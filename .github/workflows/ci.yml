@@ -78,6 +78,34 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --locked
 
+  msrv:
+    # This is the job that makes the root Cargo.toml's `rust-version` a gate rather than a claim:
+    # cargo enforces that key only against a crate's dependencies, never against its own source, so
+    # nothing else here would notice a source change that needs a newer compiler.
+    #
+    # No `--workspace`, for the same reason the clippy job gives: it would override
+    # `default-members` and pull in `sa-benchmarks`, which declares 1.95 and cannot build on this
+    # toolchain. When the floor moves, the pin below and the `rust-version` in the root Cargo.toml
+    # move together.
+    name: MSRV (1.88)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check on the declared MSRV
+        run: cargo check --all-targets --all-features --locked
+
   server-backends:
     # `sa-server` is where the storage features now live, and all they do is pick which concrete
     # type each `Active*` alias names (see `sa-server/src/backends.rs`). Nine resolutions; every one
