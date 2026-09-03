@@ -1,17 +1,18 @@
 /// Maps a text byte to its 5-bit rank, or `None` if the byte is not one the text can hold.
 ///
 /// The alphabet is `$`, `-`, and `A`–`Z`, giving ranks 0..=27, which is what fits in
-/// [`BITS_PER_CHAR`]. Everything else is rejected rather than computed:
+/// [`BITS_PER_CHAR`]. Every other byte returns `None`, because computing a rank for it would go
+/// wrong in one of two ways:
 ///
-/// * a byte below `b'A'` (every digit, space and most punctuation) underflows `c - b'A'` — a panic
-///   in debug, a wrapped rank in release;
-/// * a byte at or above 95, which includes every non-ASCII UTF-8 byte, produces a rank above 31.
-///   The packing loops OR that in, so the excess bits land in the *neighbouring* residue's field
-///   and silently corrupt a character the caller never supplied.
+/// * a byte below `b'A'` (every digit, space and most punctuation) would underflow `c - b'A'` — a
+///   panic in debug, a wrapped rank in release;
+/// * a byte at or above 95, which includes every non-ASCII UTF-8 byte, would produce a rank above
+///   31. The packing loops OR the rank in, so the excess bits would land in the *neighbouring*
+///   residue's field and silently corrupt a character the caller never supplied.
 ///
-/// In practice `sa-builder` cannot reach either case — it packs the text *after* it has been
-/// through the 5-bit protein encoding, so every byte is already in the alphabet. This is a `pub`
-/// module though, and a caller packing raw FASTA would hit both.
+/// In practice `sa-builder` supplies neither — it packs the text *after* it has been through the
+/// 5-bit protein encoding, so every byte is already in the alphabet. This is a `pub` module
+/// though, and a caller packing raw FASTA would hand over both.
 fn get_rank(c: u8) -> Option<u8> {
     match c {
         b'$' => Some(0),
