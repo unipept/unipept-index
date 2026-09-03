@@ -68,6 +68,48 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         }
         res
     }
+
+    /// Returns the taxon id of every protein that corresponds with the provided suffixes.
+    ///
+    /// Same two-pass pipeline as [`Self::retrieve_proteins`] and for the same reason — see the
+    /// module docs; only the second pass differs, reading one field per protein instead of
+    /// building a `ProteinRef`.
+    ///
+    /// The prefetch pays off more completely here than it does there. `proteins.prefetch` hints
+    /// the metadata entry, which is the whole of what this reads; `retrieve_proteins` goes on to
+    /// follow that entry's offsets into the UID and annotation blobs, which the same hint does not
+    /// cover.
+    ///
+    /// Duplicates are kept. Suffixes commonly land in the same protein, and far more often in the
+    /// same taxon, but deduplicating is the caller's business — `retrieve_proteins` does no
+    /// post-processing either, and `peptide_search` is where a result is shaped.
+    #[inline]
+    pub fn retrieve_taxa(&self, suffixes: &[i64]) -> Vec<u32> {
+        let distance = RETRIEVAL_PREFETCH_DISTANCE;
+
+        // Pass 1: prefetch suffix_to_protein mapping, collect protein_indices
+        let mut protein_indices = Vec::with_capacity(suffixes.len());
+        for (i, &suffix) in suffixes.iter().enumerate() {
+            if let Some(&fs) = suffixes.get(i + distance) {
+                self.suffix_index_to_protein.prefetch_for_suffix(fs);
+            }
+            protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
+        }
+
+        // Pass 2: prefetch protein entries (D ahead), read taxon ids
+        let mut res = Vec::with_capacity(suffixes.len());
+        for (i, &protein_index) in protein_indices.iter().enumerate() {
+            if let Some(&fpi) = protein_indices.get(i + distance)
+                && !fpi.is_null()
+            {
+                self.proteins.prefetch(fpi as usize);
+            }
+            if !protein_index.is_null() {
+                res.push(self.proteins.taxon_id(protein_index as usize));
+            }
+        }
+        res
+    }
 }
 
 #[cfg(test)]
@@ -95,6 +137,52 @@ mod tests {
         let mut taxa: Vec<u32> = found.iter().map(|p| p.taxon_id).collect();
         taxa.sort();
         assert_eq!(taxa, vec![10, 20, 20, 20, 30]);
+    }
+
+    /// The taxa path must be a pure projection of the protein path, per suffix and in order —
+    /// anything else means the two disagree about which protein a suffix belongs to.
+    #[test]
+    fn retrieve_taxa_matches_the_taxa_retrieve_proteins_reports() {
+        // Proteins (distinct taxa): AI=10, CLACVAA=20, AC=30, KCRLY=40.
+        let searcher = example_searcher();
+
+        for peptide in [b"A".as_slice(), b"AC", b"CLACVAA", b"KCRLY", b"WWW"] {
+            let suffixes = match searcher.search_matching_suffixes_scalar(peptide, usize::MAX, false, false) {
+                SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
+                SearchAllSuffixesResult::NoMatches => vec![]
+            };
+
+            let expected: Vec<u32> = searcher.retrieve_proteins(&suffixes).iter().map(|p| p.taxon_id).collect();
+            assert_eq!(
+                searcher.retrieve_taxa(&suffixes),
+                expected,
+                "taxa differ from the protein path for {}",
+                std::str::from_utf8(peptide).unwrap()
+            );
+        }
+    }
+
+    /// Same projection, but past `RETRIEVAL_PREFETCH_DISTANCE` so the prefetch-ahead branch runs.
+    /// `example_searcher` is far too small to reach it, so a bug in that branch would otherwise
+    /// only show up on a real index.
+    #[test]
+    fn retrieve_taxa_matches_the_protein_path_past_the_prefetch_distance() {
+        let n = 70usize;
+        let searcher = repeated_residue_searcher('A', n);
+
+        let suffixes = match searcher.search_matching_suffixes_scalar(b"A", usize::MAX, false, false) {
+            SearchAllSuffixesResult::SearchResult(s) | SearchAllSuffixesResult::MaxMatches(s) => s,
+            SearchAllSuffixesResult::NoMatches => vec![]
+        };
+        assert_eq!(suffixes.len(), n, "fixture must exceed the prefetch look-ahead");
+
+        let expected: Vec<u32> = searcher.retrieve_proteins(&suffixes).iter().map(|p| p.taxon_id).collect();
+        assert_eq!(searcher.retrieve_taxa(&suffixes), expected);
+    }
+
+    #[test]
+    fn retrieve_taxa_of_nothing_is_empty() {
+        assert!(example_searcher().retrieve_taxa(&[]).is_empty());
     }
 
     #[test]
@@ -129,5 +217,16 @@ mod tests {
         let found = searcher.retrieve_proteins(&[0, 2]);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].taxon_id, 10);
+    }
+
+    /// The taxa path must drop separator positions too. Searched suffixes never land on one, so
+    /// nothing above this reaches the branch — it is exercised with hand-picked positions, exactly
+    /// as `test_retrieve_proteins_skips_separators` does for the protein path.
+    #[test]
+    fn retrieve_taxa_skips_separators() {
+        let searcher = example_searcher();
+
+        // position 0 = protein 0 ('A', taxon 10); position 2 = separator ('-', null).
+        assert_eq!(searcher.retrieve_taxa(&[0, 2]), vec![10]);
     }
 }

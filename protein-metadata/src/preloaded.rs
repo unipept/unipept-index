@@ -164,6 +164,13 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T
         }
     }
 
+    /// Reads the field straight off the owned `Protein`, so the borrows that `get` sets up are
+    /// never taken. Panics on an out-of-range index, as `get` does here.
+    #[inline]
+    fn taxon_id(&self, index: usize) -> u32 {
+        self.proteins[index].taxon_id
+    }
+
     /// Warms the text, which may still be mapped even though the metadata is owned — that is
     /// exactly `InMemoryProteins<MmapBackedProteinText>`. The `Vec<Protein>` itself is anonymous
     /// memory and has nothing to fault, so it contributes nothing; without this delegation the

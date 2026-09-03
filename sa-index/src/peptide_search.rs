@@ -7,6 +7,14 @@
 //! search actually reaches production. `sa-server` is a testing and direct-serving tool, not the
 //! path a deployed request takes.
 //!
+//! # The taxa-only path
+//!
+//! [`search_all_peptides_taxa`] and [`search_peptide_taxa`] answer the same query with taxon ids
+//! alone. A caller that wants nothing else would otherwise pay for an accession and an encoded
+//! annotation blob per hit — plus the decode below — and discard all of it. Both paths run the
+//! same search over the same suffixes and drop the same peptides; they differ only in what is
+//! retrieved once the suffixes are known.
+//!
 //! # Resource limits are the caller's, and there are none here
 //!
 //! Nothing in this module bounds the work a request can ask for. A caller exposing these functions
@@ -63,6 +71,25 @@ pub struct SearchResult<'a> {
     pub proteins: Vec<ProteinInfo<'a>>,
     /// Whether the match cutoff was hit, meaning `proteins` is a truncated sample rather than the
     /// complete set.
+    pub cutoff_used: bool
+}
+
+/// Every taxon found for one peptide, sorted and deduplicated.
+///
+/// The lightweight answer, for a caller that wants taxon ids and nothing else: a [`SearchResult`]
+/// would carry an accession and an annotation blob per hit that such a caller discards. Sorting
+/// and deduplicating here rather than leaving it to the caller is what makes the difference worth
+/// having — a peptide matching thousands of suffixes usually spans far fewer taxa.
+///
+/// Borrows `sequence` for the same reason [`SearchResult`] does; see the module docs.
+#[derive(Debug, Serialize)]
+pub struct TaxaSearchResult<'a> {
+    /// The peptide as the caller wrote it, before normalisation.
+    pub sequence: &'a str,
+    /// Every distinct taxon id among the matching proteins, ascending.
+    pub taxa: Vec<u32>,
+    /// Whether the match cutoff was hit, meaning `taxa` is drawn from a truncated sample of the
+    /// matches rather than all of them.
     pub cutoff_used: bool
 }
 
@@ -168,6 +195,30 @@ pub fn search_proteins_for_peptide<
     equate_il: bool,
     tryptic: bool
 ) -> Option<(bool, Vec<ProteinRef<'a>>)> {
+    let (cutoff_used, suffixes) = search_suffixes_for_peptide(searcher, peptide, cutoff, equate_il, tryptic)?;
+
+    let proteins = searcher.retrieve_proteins(&suffixes);
+
+    Some((cutoff_used, proteins))
+}
+
+/// Normalises one peptide and runs the scalar suffix search, returning the matched suffixes and
+/// whether the cutoff truncated them.
+///
+/// The half of the single-peptide path that does not depend on what is retrieved afterwards, so
+/// the protein and taxa entry points share it and cannot disagree about which peptides are
+/// searchable. The batched path has its own equivalent inside [`search_all_suffixes_with`].
+///
+/// `None` means the peptide is unsearchable — rejected by [`normalise_peptide`], or shorter than
+/// the sparseness factor — or that it simply matched nothing. Callers cannot tell those apart, and
+/// none of them need to.
+fn search_suffixes_for_peptide<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
+    searcher: &Searcher<SA, P, STPM>,
+    peptide: &str,
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool
+) -> Option<(bool, Vec<i64>)> {
     // Rejects anything outside the index alphabet before it reaches the searcher.
     let peptide = normalise_peptide(peptide)?;
 
@@ -177,15 +228,11 @@ pub fn search_proteins_for_peptide<
     }
 
     let suffix_search = searcher.search_matching_suffixes_scalar(peptide.as_bytes(), cutoff, equate_il, tryptic);
-    let (suffixes, cutoff_used) = match suffix_search {
-        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((matched_suffixes, true)),
-        SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((matched_suffixes, false)),
+    match suffix_search {
+        SearchAllSuffixesResult::MaxMatches(matched_suffixes) => Some((true, matched_suffixes)),
+        SearchAllSuffixesResult::SearchResult(matched_suffixes) => Some((false, matched_suffixes)),
         SearchAllSuffixesResult::NoMatches => None
-    }?;
-
-    let proteins = searcher.retrieve_proteins(&suffixes);
-
-    Some((cutoff_used, proteins))
+    }
 }
 
 /// Searches one peptide and packages the result.
@@ -255,6 +302,40 @@ where
     T: Send,
     F: Fn(SearchResult<'a>) -> T + Sync + Send
 {
+    search_all_suffixes_with(searcher, peptides, cutoff, equate_il, tryptic, |sequence, suffixes, cutoff_used| {
+        let proteins = searcher.retrieve_proteins(suffixes);
+
+        f(SearchResult {
+            sequence,
+            proteins: proteins.into_iter().map(|protein| protein.into()).collect(),
+            cutoff_used
+        })
+    })
+}
+
+/// The batched search itself, with retrieval left to the caller: normalise the list, run one
+/// batched suffix search over all of it, and hand each matching peptide's suffixes to `f` on the
+/// rayon worker that produced them.
+///
+/// Sits under [`search_all_peptides_with`] and [`search_all_peptides_taxa`] so that batching is
+/// decided in exactly one place. What differs between the protein and taxa paths is only what `f`
+/// does with the suffixes; nothing above this function chooses a batch size, normalises a peptide,
+/// or decides which peptides are searchable.
+fn search_all_suffixes_with<'a, SA, P, STPM, T, F>(
+    searcher: &Searcher<SA, P, STPM>,
+    peptides: &'a [String],
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool,
+    f: F
+) -> Vec<T>
+where
+    SA: SuffixArrayBackend,
+    P: ProteinsBackend,
+    STPM: SuffixToProteinMappingBackend,
+    T: Send,
+    F: Fn(&'a str, &[i64], bool) -> T + Sync + Send
+{
     let sample_rate = searcher.sa.sample_rate() as usize;
 
     // Normalise once and keep only searchable peptides — anything shorter than the sample rate
@@ -273,12 +354,12 @@ where
     // and the only place the batch size is chosen.
     let suffix_results = searcher.search_all_matching_suffixes_batched(&byte_peptides, cutoff, equate_il, tryptic);
 
-    // Retrieve the proteins for each hit and build the result, dropping peptides with no matches
-    // (preserves the previous filter_map semantics and result ordering).
+    // Hand each peptide's suffixes to `f`, dropping the ones that matched nothing (preserves the
+    // previous filter_map semantics and result ordering).
     //
-    // Retrieval is per peptide by design: a cross-query batched variant was built and measured,
-    // and moved throughput by a median well inside the noise floor. See the module comment on
-    // `sa_searcher::batched` for the full result.
+    // Whatever `f` retrieves, it retrieves per peptide by design: a cross-query batched variant was
+    // built and measured, and moved throughput by a median well inside the noise floor. See the
+    // module comment on `sa_searcher::batched` for the full result.
     prepared
         .par_iter()
         .zip(suffix_results.par_iter())
@@ -289,15 +370,69 @@ where
                 SearchAllSuffixesResult::NoMatches => return None
             };
 
-            let proteins = searcher.retrieve_proteins(suffixes);
-
-            Some(f(SearchResult {
-                sequence: &peptides[*original_index],
-                proteins: proteins.into_iter().map(|protein| protein.into()).collect(),
-                cutoff_used
-            }))
+            Some(f(&peptides[*original_index], suffixes, cutoff_used))
         })
         .collect()
+}
+
+/// Searches one peptide and returns only its taxa.
+///
+/// The taxa counterpart of [`search_peptide`], and the single-peptide sibling of
+/// [`search_all_peptides_taxa`]. Nothing is retrieved that a taxon id does not need: no accession,
+/// no annotation blob, and so no decode at serialisation time either.
+///
+/// Returns `None` on the same terms as [`search_peptide`] — no matches, or a peptide that is
+/// unsearchable because it is too short or outside the index alphabet.
+pub fn search_peptide_taxa<'a, SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
+    searcher: &Searcher<SA, P, STPM>,
+    peptide: &'a str,
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool
+) -> Option<TaxaSearchResult<'a>> {
+    let (cutoff_used, suffixes) = search_suffixes_for_peptide(searcher, peptide, cutoff, equate_il, tryptic)?;
+
+    Some(TaxaSearchResult {
+        sequence: peptide,
+        taxa: sorted_taxa(searcher, &suffixes),
+        cutoff_used
+    })
+}
+
+/// Searches the list of `peptides` and returns only their taxa.
+///
+/// The taxa counterpart of [`search_all_peptides`], down the same batched path — both are built
+/// on the private `search_all_suffixes_with`. This is the entry point for a taxon-only consumer:
+/// a [`SearchResult`] would carry an accession and an encoded annotation blob per hit that such a
+/// caller immediately discards.
+///
+/// Returns one [`TaxaSearchResult`] per peptide that matched, in input order; peptides that match
+/// nothing are omitted, exactly as in [`search_all_peptides`].
+pub fn search_all_peptides_taxa<'a, SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
+    searcher: &Searcher<SA, P, STPM>,
+    peptides: &'a [String],
+    cutoff: usize,
+    equate_il: bool,
+    tryptic: bool
+) -> Vec<TaxaSearchResult<'a>> {
+    search_all_suffixes_with(searcher, peptides, cutoff, equate_il, tryptic, |sequence, suffixes, cutoff_used| {
+        TaxaSearchResult { sequence, taxa: sorted_taxa(searcher, suffixes), cutoff_used }
+    })
+}
+
+/// Retrieves the taxa for `suffixes` and reduces them to the ascending distinct set.
+///
+/// `sort_unstable` because the values are `u32` with no meaning attached to equal elements, and
+/// because the input is far longer than the output: a peptide matching thousands of suffixes
+/// typically spans orders of magnitude fewer taxa.
+fn sorted_taxa<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBackend>(
+    searcher: &Searcher<SA, P, STPM>,
+    suffixes: &[i64]
+) -> Vec<u32> {
+    let mut taxa = searcher.retrieve_taxa(suffixes);
+    taxa.sort_unstable();
+    taxa.dedup();
+    taxa
 }
 
 /// Searches the list of `peptides` and returns the response body already serialised, one chunk per
@@ -512,6 +647,84 @@ mod tests {
     /// list is exhaustive, so it was a user-visible wrong answer on a healthy index — and the
     /// smaller the client's `cutoff`, the more often it landed on the boundary.
     ///
+    /// The taxa a peptide reports must be exactly the distinct taxa of the proteins the protein
+    /// path reports for it — that is the whole contract of the lightweight path, and the only way
+    /// it can be wrong without any test noticing is if the two disagree.
+    ///
+    /// Checked for both entry points, since they reach the suffixes by different routes: the
+    /// batched pipeline and the scalar one.
+    #[test]
+    fn the_taxa_path_reports_exactly_the_taxa_of_the_protein_path() {
+        let searcher = test_searcher(true);
+        let peptides: Vec<String> =
+            ["A", "C", "AC", "CLACVAA", "KCRLY", "WWW", "ai"].iter().map(|p| p.to_string()).collect();
+
+        let by_protein = search_all_peptides(&searcher, &peptides, 1_000_000, false, false);
+        let by_taxa = search_all_peptides_taxa(&searcher, &peptides, 1_000_000, false, false);
+
+        assert!(!by_taxa.is_empty(), "fixture must produce matches");
+        assert_eq!(by_taxa.len(), by_protein.len(), "both paths must drop the same peptides");
+
+        for (proteins, taxa) in by_protein.iter().zip(by_taxa.iter()) {
+            assert_eq!(proteins.sequence, taxa.sequence, "results must stay in the same order");
+            assert_eq!(proteins.cutoff_used, taxa.cutoff_used, "{}: cutoff flag differs", taxa.sequence);
+
+            let mut expected: Vec<u32> = proteins.proteins.iter().map(|protein| protein.taxon).collect();
+            expected.sort_unstable();
+            expected.dedup();
+            assert_eq!(taxa.taxa, expected, "{}: taxa differ from the protein path", taxa.sequence);
+
+            // The single-peptide path must agree with the batched one it does not share.
+            let single = search_peptide_taxa(&searcher, taxa.sequence, 1_000_000, false, false)
+                .unwrap_or_else(|| panic!("{}: batched path matched, scalar path did not", taxa.sequence));
+            assert_eq!(single.taxa, taxa.taxa, "{}: scalar and batched taxa differ", taxa.sequence);
+            assert_eq!(single.cutoff_used, taxa.cutoff_used, "{}: scalar and batched cutoff differ", taxa.sequence);
+        }
+    }
+
+    /// Taxa are deduplicated, which is the point: `A` matches five suffixes across three proteins
+    /// carrying three distinct taxa, and the protein path reports all five.
+    #[test]
+    fn taxa_are_deduplicated_where_the_protein_path_repeats_them() {
+        let searcher = test_searcher(false);
+
+        let proteins = search_peptide(&searcher, "A", 1_000_000, false, false).unwrap();
+        let taxa = search_peptide_taxa(&searcher, "A", 1_000_000, false, false).unwrap();
+
+        assert!(proteins.proteins.len() > taxa.taxa.len(), "fixture must actually contain duplicate taxa");
+        assert_eq!(taxa.taxa, vec![10, 20, 30]);
+    }
+
+    /// An unsearchable peptide is rejected by the taxa path on the same terms as the protein path,
+    /// including the alphabet filter — a peptide carrying the structural `-` must not reach the
+    /// searcher, where it could match across a protein boundary.
+    #[test]
+    fn the_taxa_path_rejects_what_the_protein_path_rejects() {
+        let searcher = test_searcher(false);
+
+        for peptide in ["WWW", "A-C", "A$", "J", "AJ", "a c", "\u{e9}"] {
+            assert_eq!(
+                search_peptide_taxa(&searcher, peptide, 1_000_000, false, false).is_some(),
+                search_peptide(&searcher, peptide, 1_000_000, false, false).is_some(),
+                "{peptide}: the two paths disagree about whether this is searchable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_taxa_result_serialises_to_the_documented_shape() {
+        let result = TaxaSearchResult {
+            sequence: "MSKIAALLPSV",
+            taxa: vec![1, 9606],
+            cutoff_used: false
+        };
+
+        assert_json_eq(
+            &serde_json::to_string(&result).unwrap(),
+            "{\"sequence\":\"MSKIAALLPSV\",\"taxa\":[1,9606],\"cutoff_used\":false}"
+        );
+    }
+
     /// The counts are discovered rather than hard-coded, so the test states the property instead of
     /// restating the fixture.
     #[test]
