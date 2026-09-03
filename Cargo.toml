@@ -1,5 +1,9 @@
 [workspace]
-resolver = "2"
+# MSRV-aware: prefers dependency versions that each member's own `rust-version` can build.
+# A preference, not a guarantee — it still resolves if nothing compatible satisfies a
+# requirement. Must stay explicit: a virtual root infers no resolver from its members'
+# editions and silently falls back to 1 without this key.
+resolver = "3"
 
 members = [ "binary-traits",
     "bitarray",
