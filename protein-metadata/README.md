@@ -70,6 +70,8 @@ fn main() {
 `get` is unchecked in both backends and neither guarantees a panic on an out-of-range index —
 `InMemoryProteins` indexes a `Vec` and panics, `MmapBackedProteins` may decode an entry-sized window
 of whatever follows the table and return fabricated metadata. Callers bound the index themselves.
+`taxon_id`, which reads that one field without validating the accession or slicing either blob,
+carries the same contract.
 
 ## Where it sits
 

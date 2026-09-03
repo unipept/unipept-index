@@ -200,6 +200,23 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for MmapBackedProteins
             functional_annotations: &self.mmap[fa_start..fa_start + fa_len]
         }
     }
+
+    /// Decodes the one field, leaving the accession unvalidated and both blobs untouched.
+    ///
+    /// Bounds are handled exactly as in [`Self::get`] — a `debug_assert!` and then the panicking
+    /// slice — for the reasons given there; this addresses the same entry `get` does, so it can
+    /// reach nothing `get` could not.
+    #[inline]
+    fn taxon_id(&self, index: usize) -> u32 {
+        use entry_offsets as eo;
+        let entry_off = self.fixed_table_offset + index * eo::ENTRY_SIZE;
+        debug_assert!(
+            entry_off + eo::ENTRY_SIZE <= self.mmap.len(),
+            "protein entry for index {index} lies outside the mapping"
+        );
+        let entry = &self.mmap[entry_off..entry_off + eo::ENTRY_SIZE];
+        u32::from_le_bytes(entry[eo::TAXON_ID].try_into().unwrap())
+    }
 }
 
 /// Where each section of `proteins.bin` starts, once the header has been validated.
@@ -549,6 +566,9 @@ mod tests {
             let (a, b) = (expected.get(i), actual.get(i));
             assert_eq!(a.uniprot_id, b.uniprot_id, "{what}: uniprot_id differs at {i}");
             assert_eq!(a.taxon_id, b.taxon_id, "{what}: taxon_id differs at {i}");
+            // The taxon-only accessor decodes the entry independently of `get`, so it is pinned
+            // against `get` here rather than trusted to agree.
+            assert_eq!(actual.taxon_id(i), b.taxon_id, "{what}: taxon_id() disagrees with get() at {i}");
             assert_eq!(a.functional_annotations, b.functional_annotations, "{what}: annotations differ at {i}");
         }
 

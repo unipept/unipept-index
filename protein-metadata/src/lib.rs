@@ -81,6 +81,18 @@ pub trait ProteinsBackend: Send + Sync {
     /// themselves rather than relying on either behaviour.
     fn get(&self, index: usize) -> ProteinRef<'_>;
 
+    /// Returns just the NCBI taxon id of protein `index`, under the same index contract as
+    /// [`Self::get`].
+    ///
+    /// Exists for the taxa-only search path, which reports nothing else. [`Self::get`] validates
+    /// the accession as UTF-8 and slices both string blobs to build a [`ProteinRef`]; a caller
+    /// that wants one `u32` pays for all of it and discards the rest.
+    ///
+    /// Both backends keep the taxon id where [`Self::prefetch`] already hints, so a prefetched
+    /// entry covers this call outright — unlike [`Self::get`], which then follows offsets into the
+    /// UID and annotation blobs and so is only partly covered by the same hint.
+    fn taxon_id(&self, index: usize) -> u32;
+
     /// Reads every OS page in the backing store into the page cache, and returns the number of
     /// bytes swept so a caller can report a bandwidth.
     /// Default returns 0; implementations with pages to fault override this.
