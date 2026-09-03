@@ -7,15 +7,15 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
-# A force-push replaces its predecessor rather than racing it. Not on develop or main: runs there
-# are the record of what the branch did.
+# A force-push replaces its predecessor rather than racing it. Not on main: runs there are the
+# record of what the branch did.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
