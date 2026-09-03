@@ -167,20 +167,29 @@ def _unfit_arms(out_dir: Path) -> dict[float, set[str]]:
 def _crossing_of(series: list[tuple[str, float, float, str]]) -> str | None:
     """The ceiling at which one pair swaps places, or None.
 
-    A crossover is a SIGN CHANGE that also clears its floor on both sides. A sign change inside the
-    floor is two unresolved cells in a row, not a crossing, and reporting it as one would hand an
-    operator a memory budget the run never actually measured.
+    A crossing needs the run to have RESOLVED each sign somewhere: a delta clearing its floor one
+    way, and a later one clearing it the other. The ceiling reported is the first at which the new
+    sign is resolved — the first budget at which the swap is something the run actually measured.
+
+    Unresolved cells between the two are skipped rather than counted against it, and that is the
+    whole subtlety. A real crossing passes through zero, so the cells nearest it are the ones most
+    likely to sit inside their floor; requiring the cells on either side of the sign change to
+    clear theirs would make a *finer* sweep less likely to find a crossing than a coarse one, and
+    would miss the textbook shape of resolved, tie, resolved.
+
+    What is refused is a sign change with no resolved reading on one side of it — that is one
+    measurement and one shrug, not a swap, and reporting it would hand an operator a memory budget
+    the run never established.
     """
-    return next(
-        (
-            series[index][0]
-            for index in range(1, len(series))
-            if (series[index - 1][1] > 0) != (series[index][1] > 0)
-            and abs(series[index][1]) > series[index][2]
-            and abs(series[index - 1][1]) > series[index - 1][2]
-        ),
-        None,
-    )
+    last_sign: bool | None = None
+    for ceiling, delta, floor, _ in series:
+        if abs(delta) <= floor:
+            continue
+        sign = delta > 0
+        if last_sign is not None and sign != last_sign:
+            return ceiling
+        last_sign = sign
+    return None
 
 
 def _verdict_tiles(report: Report, crossover: dict[str, list[tuple]], arms: list[str]) -> None:
@@ -207,9 +216,9 @@ def _verdict_tiles(report: Report, crossover: dict[str, list[tuple]], arms: list
 
     if crossing:
         status, reading = "good", (
-            f"`{subject}` and `{arms[0]}` swap places at the **{crossing}** ceiling, and the swap "
-            f"clears its floor on both sides. That is the memory budget the deployment choice turns "
-            f"on: above it the arms are interchangeable, below it they are not."
+            f"`{subject}` and `{arms[0]}` swap places at the **{crossing}** ceiling: each leads by "
+            f"more than the floor on one side of it. That is the memory budget the deployment "
+            f"choice turns on — which arm to prefer is a different answer above it and below it."
         )
     else:
         status, reading = "flat", (
