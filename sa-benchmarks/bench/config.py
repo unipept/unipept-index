@@ -231,7 +231,8 @@ def load(name: str, repo: Path) -> Suite:
 
     axes = raw.get("axes", {})
     defaults = raw.get("defaults", {})
-    deprecations = _normalise_kmer(axes, path, axis=True) + _normalise_kmer(defaults, path)
+    deprecations = _normalise_kmer(axes, path) + _normalise_kmer(defaults, path)
+    _check_defaults(defaults, raw.get("mode", "single"), path)
 
     for axis, values in axes.items():
         if axis not in KNOWN_AXES:
@@ -286,11 +287,36 @@ def load(name: str, repo: Path) -> Suite:
     return suite
 
 
-def _normalise_kmer(table: dict, path: Path, axis: bool = False) -> list[str]:
-    """Rewrites a deprecated `kmer_table = "k6"` into `kmer = 6`, in place.
+#: Keys of `[defaults]` that name one value per setting and are read as scalars downstream.
+#: A list under any of these reaches `runner._kmer_args` (`int(...)`) or `preflight._table_notes`
+#: (which indexes it) and raises `TypeError` there. `files` is deliberately absent: it is a list
+#: by definition.
+_SCALAR_DEFAULTS = ("kmer", "equate_il", "tryptic", "runs", "amount")
 
-    `axis` says whether this table may hold several values. `[axes]` may; `[defaults]` names one
-    value per setting, and a list there reaches consumers that treat it as a scalar.
+
+def _check_defaults(defaults: dict, mode: str, path: Path) -> None:
+    """Rejects a swept value in `[defaults]`, which names one value per setting.
+
+    Checked on the resolved key rather than on the spelling that produced it, so `kmer = [5, 6]`
+    and the deprecated `kmer_table = ["k5", "k6"]` are refused alike — the second used to be the
+    only one caught, which left the form the deprecation message recommends crashing.
+
+    The failure without this is not local. `runner._kmer_args` calls `int()` on the value and
+    `preflight._table_notes` indexes it; the `TypeError` from either escapes `_plan_suite`, which
+    catches only `ConfigError`, so a single mis-typed default takes down the session that was meant
+    to report it and carry on with the other suites.
+    """
+    for key in _SCALAR_DEFAULTS:
+        if isinstance(defaults.get(key), list):
+            where = "a [[sweep]] block" if mode == "matrix" else "[axes]"
+            raise ConfigError(
+                f"{path}: [defaults] {key} = {defaults[key]!r} lists several values, but [defaults] "
+                f"names one value per setting. Sweep them in {where}, or pick one here."
+            )
+
+
+def _normalise_kmer(table: dict, path: Path) -> list[str]:
+    """Rewrites a deprecated `kmer_table = "k6"` into `kmer = 6`, in place.
 
     One vocabulary downstream. `[[sweep]]` blocks have always named the integer k, because a matrix
     process keeps a pool of tables keyed by k and swaps them per cell; `[axes]` and `[defaults]`
@@ -317,20 +343,9 @@ def _normalise_kmer(table: dict, path: Path, axis: bool = False) -> list[str]:
             )
         return int(name[1:])
 
-    if isinstance(value, list) and not axis:
-        # A list is a sweep, and only an axis can sweep. In `[defaults]` it would be accepted here
-        # and then fail far away: `runner._kmer_args` does `int(settings.get("kmer"))` and
-        # `preflight._table_notes` indexes it, and the `TypeError` from either escapes
-        # `_plan_suite`, which catches only `ConfigError` — so one mis-typed default takes down a
-        # session that was meant to report it and carry on.
-        raise ConfigError(
-            f"{path}: kmer_table = {value!r} lists several tables in [defaults], which names one "
-            f"value per setting. List them in [axes] to sweep them, or pick one here."
-        )
-
     table["kmer"] = [k_of(item) for item in value] if isinstance(value, list) else k_of(value)
     shown = table["kmer"]
-    # `kmer = [5, 6]` is only valid advice for an axis; in [defaults] it is the shape just rejected.
+    # `kmer = [5, 6]` is only valid advice for an axis; in [defaults] `_check_defaults` rejects it.
     return [
         f"`kmer_table` is deprecated: write `kmer = {shown}` instead (same meaning, and the same "
         f"spelling a [[sweep]] block uses)"
