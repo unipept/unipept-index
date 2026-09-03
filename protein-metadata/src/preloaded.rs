@@ -164,8 +164,8 @@ impl<T: ProteinTextBackend + Send + Sync> ProteinsBackend for InMemoryProteins<T
         }
     }
 
-    /// Reads the field straight off the owned `Protein`, so the borrows `get` sets up never
-    /// happen. Panics on an out-of-range index, as `get` does here.
+    /// Reads the field straight off the owned `Protein`, so the borrows that `get` sets up are
+    /// never taken. Panics on an out-of-range index, as `get` does here.
     #[inline]
     fn taxon_id(&self, index: usize) -> u32 {
         self.proteins[index].taxon_id

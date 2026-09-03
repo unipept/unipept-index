@@ -10,10 +10,10 @@
 //! # The taxa-only path
 //!
 //! [`search_all_peptides_taxa`] and [`search_peptide_taxa`] answer the same query with taxon ids
-//! alone. `pept2taxa` and `pept2lca` want nothing else, and the protein path makes them pay for an
-//! accession and an encoded annotation blob per hit — plus the decode below — before they throw
-//! all of it away. Both paths run the same search over the same suffixes and drop the same
-//! peptides; they differ only in what is retrieved once the suffixes are known.
+//! alone. A caller that wants nothing else would otherwise pay for an accession and an encoded
+//! annotation blob per hit — plus the decode below — and discard all of it. Both paths run the
+//! same search over the same suffixes and drop the same peptides; they differ only in what is
+//! retrieved once the suffixes are known.
 //!
 //! # Resource limits are the caller's, and there are none here
 //!
@@ -76,11 +76,10 @@ pub struct SearchResult<'a> {
 
 /// Every taxon found for one peptide, sorted and deduplicated.
 ///
-/// The lightweight answer: `pept2taxa` and `pept2lca` want taxon ids and nothing else, and
-/// producing a [`SearchResult`] for them means retrieving an accession and an annotation blob per
-/// hit that are then discarded. Sorting and deduplicating here rather than in the caller is what
-/// makes the difference worth having — a peptide matching thousands of suffixes usually spans far
-/// fewer taxa.
+/// The lightweight answer, for a caller that wants taxon ids and nothing else: a [`SearchResult`]
+/// would carry an accession and an annotation blob per hit that such a caller discards. Sorting
+/// and deduplicating here rather than leaving it to the caller is what makes the difference worth
+/// having — a peptide matching thousands of suffixes usually spans far fewer taxa.
 ///
 /// Borrows `sequence` for the same reason [`SearchResult`] does; see the module docs.
 #[derive(Debug, Serialize)]
@@ -403,9 +402,9 @@ pub fn search_peptide_taxa<'a, SA: SuffixArrayBackend, P: ProteinsBackend, STPM:
 /// Searches the list of `peptides` and returns only their taxa.
 ///
 /// The taxa counterpart of [`search_all_peptides`], down the same batched path — both are built
-/// on the private `search_all_suffixes_with`. For `pept2taxa` and `pept2lca` this is
-/// the entry point to reach for: a [`SearchResult`] would carry an accession and an encoded
-/// annotation blob per hit that those consumers immediately discard.
+/// on the private `search_all_suffixes_with`. This is the entry point for a taxon-only consumer:
+/// a [`SearchResult`] would carry an accession and an encoded annotation blob per hit that such a
+/// caller immediately discards.
 ///
 /// Returns one [`TaxaSearchResult`] per peptide that matched, in input order; peptides that match
 /// nothing are omitted, exactly as in [`search_all_peptides`].
