@@ -238,7 +238,16 @@ class Runner:
         if completed.returncode == 0:
             return CellResult(cell, "ok", elapsed)
 
-        if completed.returncode in OOM_STATUSES:
+        # A kill is only evidence about memory when there was a ceiling to exceed. `_wrapper` builds
+        # a `systemd-run --scope` only for `ceiling_gb > 0`, so an uncapped cell has no cgroup limit
+        # and nothing to be OOM-killed BY — a SIGKILL there came from somewhere else: an operator
+        # clearing a wedged run, the system-wide OOM killer, a scheduler reclaiming the job. Both
+        # capped suites sweep `ceiling_gb = [0, ...]`, so the uncapped cell is the baseline every
+        # other number in their tables is read against; recording it as "cannot run at this ceiling"
+        # would fabricate the one result the suite exists to establish, and never retry it.
+        ceiling = float(self.settings(cell).get("ceiling_gb", 0) or 0)
+
+        if ceiling > 0 and completed.returncode in OOM_STATUSES:
             # ONLY an OOM writes a marker, and the distinction is load-bearing twice over. A marker
             # is a RESULT — `records.unfit_cells` turns it into "this arm cannot run at this
             # ceiling" in the `ram` and `threads` tables — and it is also what `completed()` reads,
