@@ -51,6 +51,11 @@ jobs:
       - name: Run cargo test
         run: cargo test --locked
 
+      # `--locked` above resolves to `default-members`, which excludes `sa-benchmarks`, so its own
+      # unit tests are compiled by the checks below and never actually run. Named explicitly here.
+      - name: Run cargo test (sa-benchmarks)
+        run: cargo test --locked -p sa-benchmarks
+
   release-build:
     # `cargo check` proves the workspace typechecks; it does not prove it links, and it never
     # exercises the release profile.
@@ -114,6 +119,31 @@ jobs:
             fi
           done
 
+  bench-selftest:
+    # The Python half of `sa-benchmarks` is the only part of the workspace with no compiler behind
+    # it, and it is what turns records into the conclusions a report states — the crossover, the
+    # noise floor, the regression verdict. `selftest.py` drives every analysis it has a fixture for
+    # against fabricated records with known shapes, so a statistic that stops meaning what it says
+    # fails here rather than in a report nobody can check.
+    #
+    # No index, no cargo, no network: it builds its own records in a temporary directory, which is
+    # why it can run on every push while a real suite cannot.
+    name: sa-benchmarks self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile the package
+        run: python3 -m compileall -q sa-benchmarks/bench
+
+      - name: Run the self-test
+        run: PYTHONPATH=sa-benchmarks python3 -m bench.selftest
+
   clippy:
     name: Run Clippy
     runs-on: ubuntu-latest
@@ -142,8 +172,10 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # `--all-targets` for the same reason as the line above: without it clippy sees only the
+      # binaries, so nothing in `#[cfg(test)]` is linted and the crate's own tests can rot.
       - name: Run Clippy (sa-benchmarks)
-        run: cargo clippy -p sa-benchmarks --all-features -- -D warnings
+        run: cargo clippy -p sa-benchmarks --all-targets --all-features -- -D warnings
 
   docs:
     # `-D warnings` turns a broken intra-doc link — which nothing else in CI notices — into a

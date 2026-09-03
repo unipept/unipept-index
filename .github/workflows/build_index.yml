@@ -28,11 +28,6 @@ jobs:
     # default, which is what a hung build would otherwise cost.
     timeout-minutes: 300
 
-    # Overrides rust-toolchain.toml, which pins a nightly for rustfmt's sake. The index binaries
-    # released from this job are built by stable, as they were before that file existed.
-    env:
-      RUSTUP_TOOLCHAIN: stable
-
     steps:
       # Check out the most recent version of the repository
       - name: Check out repository
