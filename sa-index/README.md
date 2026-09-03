@@ -21,7 +21,7 @@ rather than proxying [`sa-server`](../sa-server/README.md).
 | `kmer_table` | precomputed suffix-array bounds per k-mer. An accelerator only; results are identical with and without it |
 | `sa_searcher` | binary search, candidate validation, tryptic filtering, retrieval |
 | `suffix_to_protein_index` | text position → protein index, in three representations |
-| `peptide_search` | the public entry point, including JSON serialisation |
+| `peptide_search` | the public entry point, including JSON serialisation and the taxa-only path |
 
 `suffix_to_protein_index` is chosen at build time (`sa-builder --mapping-style`) and recorded in the
 file: **BitVec** (a bit per position plus rank; near-dense speed at ~1.25 bits per position, and the

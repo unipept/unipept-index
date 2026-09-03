@@ -7,6 +7,14 @@
 //! search actually reaches production. `sa-server` is a testing and direct-serving tool, not the
 //! path a deployed request takes.
 //!
+//! # The taxa-only path
+//!
+//! [`search_all_peptides_taxa`] and [`search_peptide_taxa`] answer the same query with taxon ids
+//! alone. `pept2taxa` and `pept2lca` want nothing else, and the protein path makes them pay for an
+//! accession and an encoded annotation blob per hit — plus the decode below — before they throw
+//! all of it away. Both paths run the same search over the same suffixes and drop the same
+//! peptides; they differ only in what is retrieved once the suffixes are known.
+//!
 //! # Resource limits are the caller's, and there are none here
 //!
 //! Nothing in this module bounds the work a request can ask for. A caller exposing these functions
@@ -394,8 +402,8 @@ pub fn search_peptide_taxa<'a, SA: SuffixArrayBackend, P: ProteinsBackend, STPM:
 
 /// Searches the list of `peptides` and returns only their taxa.
 ///
-/// The taxa counterpart of [`search_all_peptides`], down the same batched path — see
-/// [`search_all_suffixes_with`], which both are built on. For `pept2taxa` and `pept2lca` this is
+/// The taxa counterpart of [`search_all_peptides`], down the same batched path — both are built
+/// on the private `search_all_suffixes_with`. For `pept2taxa` and `pept2lca` this is
 /// the entry point to reach for: a [`SearchResult`] would carry an accession and an encoded
 /// annotation blob per hit that those consumers immediately discard.
 ///
@@ -640,6 +648,84 @@ mod tests {
     /// list is exhaustive, so it was a user-visible wrong answer on a healthy index — and the
     /// smaller the client's `cutoff`, the more often it landed on the boundary.
     ///
+    /// The taxa a peptide reports must be exactly the distinct taxa of the proteins the protein
+    /// path reports for it — that is the whole contract of the lightweight path, and the only way
+    /// it can be wrong without any test noticing is if the two disagree.
+    ///
+    /// Checked for both entry points, since they reach the suffixes by different routes: the
+    /// batched pipeline and the scalar one.
+    #[test]
+    fn the_taxa_path_reports_exactly_the_taxa_of_the_protein_path() {
+        let searcher = test_searcher(true);
+        let peptides: Vec<String> =
+            ["A", "C", "AC", "CLACVAA", "KCRLY", "WWW", "ai"].iter().map(|p| p.to_string()).collect();
+
+        let by_protein = search_all_peptides(&searcher, &peptides, 1_000_000, false, false);
+        let by_taxa = search_all_peptides_taxa(&searcher, &peptides, 1_000_000, false, false);
+
+        assert!(!by_taxa.is_empty(), "fixture must produce matches");
+        assert_eq!(by_taxa.len(), by_protein.len(), "both paths must drop the same peptides");
+
+        for (proteins, taxa) in by_protein.iter().zip(by_taxa.iter()) {
+            assert_eq!(proteins.sequence, taxa.sequence, "results must stay in the same order");
+            assert_eq!(proteins.cutoff_used, taxa.cutoff_used, "{}: cutoff flag differs", taxa.sequence);
+
+            let mut expected: Vec<u32> = proteins.proteins.iter().map(|protein| protein.taxon).collect();
+            expected.sort_unstable();
+            expected.dedup();
+            assert_eq!(taxa.taxa, expected, "{}: taxa differ from the protein path", taxa.sequence);
+
+            // The single-peptide path must agree with the batched one it does not share.
+            let single = search_peptide_taxa(&searcher, taxa.sequence, 1_000_000, false, false)
+                .unwrap_or_else(|| panic!("{}: batched path matched, scalar path did not", taxa.sequence));
+            assert_eq!(single.taxa, taxa.taxa, "{}: scalar and batched taxa differ", taxa.sequence);
+            assert_eq!(single.cutoff_used, taxa.cutoff_used, "{}: scalar and batched cutoff differ", taxa.sequence);
+        }
+    }
+
+    /// Taxa are deduplicated, which is the point: `A` matches five suffixes across three proteins
+    /// carrying three distinct taxa, and the protein path reports all five.
+    #[test]
+    fn taxa_are_deduplicated_where_the_protein_path_repeats_them() {
+        let searcher = test_searcher(false);
+
+        let proteins = search_peptide(&searcher, "A", 1_000_000, false, false).unwrap();
+        let taxa = search_peptide_taxa(&searcher, "A", 1_000_000, false, false).unwrap();
+
+        assert!(proteins.proteins.len() > taxa.taxa.len(), "fixture must actually contain duplicate taxa");
+        assert_eq!(taxa.taxa, vec![10, 20, 30]);
+    }
+
+    /// An unsearchable peptide is rejected by the taxa path on the same terms as the protein path,
+    /// including the alphabet filter — a peptide carrying the structural `-` must not reach the
+    /// searcher, where it could match across a protein boundary.
+    #[test]
+    fn the_taxa_path_rejects_what_the_protein_path_rejects() {
+        let searcher = test_searcher(false);
+
+        for peptide in ["WWW", "A-C", "A$", "J", "AJ", "a c", "\u{e9}"] {
+            assert_eq!(
+                search_peptide_taxa(&searcher, peptide, 1_000_000, false, false).is_some(),
+                search_peptide(&searcher, peptide, 1_000_000, false, false).is_some(),
+                "{peptide}: the two paths disagree about whether this is searchable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_taxa_result_serialises_to_the_documented_shape() {
+        let result = TaxaSearchResult {
+            sequence: "MSKIAALLPSV",
+            taxa: vec![1, 9606],
+            cutoff_used: false
+        };
+
+        assert_json_eq(
+            &serde_json::to_string(&result).unwrap(),
+            "{\"sequence\":\"MSKIAALLPSV\",\"taxa\":[1,9606],\"cutoff_used\":false}"
+        );
+    }
+
     /// The counts are discovered rather than hard-coded, so the test states the property instead of
     /// restating the fixture.
     #[test]

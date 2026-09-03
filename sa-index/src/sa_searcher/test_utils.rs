@@ -285,13 +285,18 @@ pub(crate) fn searcher_over_text(text: &str, sparseness: u8) -> TestSearcher {
 }
 
 /// One row per (sparseness, mapping representation, peptide, equate_il, tryptic): the
-/// result-variant tag, the sorted matching suffixes, and the `(taxon_id, uniprot_id)` pairs they
-/// retrieve.
+/// result-variant tag, the sorted matching suffixes, the `(taxon_id, uniprot_id)` pairs they
+/// retrieve, and the taxa the taxon-only path retrieves for the same suffixes.
 ///
 /// Suffixes are sorted because the batched path may emit them in a different order than the scalar
 /// one; that ordering is not part of the contract, but the set is.
+///
+/// `retrieve_taxa` is in here rather than in a test of its own because it reads the protein
+/// metadata by a different route than `retrieve_proteins` — `taxon_id` decodes the entry itself
+/// instead of going through `get` — so it is a backend-dependent path and belongs in the check
+/// that varies the backends.
 pub(crate) type Fingerprint =
-    Vec<(&'static str, &'static str, &'static str, bool, bool, &'static str, Vec<i64>, Vec<(u32, String)>)>;
+    Vec<(&'static str, &'static str, &'static str, bool, bool, &'static str, Vec<i64>, Vec<(u32, String)>, Vec<u32>)>;
 
 /// Peptides over [`EXAMPLE_TEXT`] (`"AI-CLACVAA-AC-KCRLY$"`), chosen to hit every branch a backend
 /// could get wrong: a hit in several proteins, a single hit, one that only matches with I/L
@@ -345,6 +350,9 @@ where
                             .collect();
                         proteins.sort();
 
+                        let mut taxa = searcher.retrieve_taxa(&suffixes);
+                        taxa.sort_unstable();
+
                         rows.push((
                             sparseness_name,
                             mapping_name,
@@ -353,7 +361,8 @@ where
                             tryptic,
                             tag,
                             suffixes,
-                            proteins
+                            proteins,
+                            taxa
                         ));
                     }
                 }
