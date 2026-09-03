@@ -1,20 +1,8 @@
 [workspace]
-# Resolver 3 is the MSRV-aware one: it prefers dependency versions whose own `rust-version`
-# the declaring member can actually compile, so a `cargo update` cannot quietly pull in a
-# crate that needs a newer toolchain than `[workspace.package].rust-version` promises. That
-# is the same failure #57 hit from the other direction, where the raise came from our own
-# source instead of a dependency.
-#
-# It reads each member's own floor, not one number for the workspace, which is why
-# `sa-benchmarks` keeps `sysinfo` 0.39.6 (needs 1.95) while the shipping crates stay held to
-# 1.88. Resolving this workspace from scratch under resolver 3 produces a byte-identical
-# Cargo.lock to resolver 2 today; the change is entirely about which updates are allowed
-# from here on.
-#
-# It has to be said here explicitly, and stays that way after any edition bump. A package
-# manifest infers its resolver from its edition; this root is virtual, so it has no edition
-# to infer from and falls back to `resolver = "1"` with only a warning if the key is
-# removed — even with every member on an edition that implies 3.
+# MSRV-aware: prefers dependency versions that each member's own `rust-version` can build.
+# A preference, not a guarantee — it still resolves if nothing compatible satisfies a
+# requirement. Must stay explicit: a virtual root infers no resolver from its members'
+# editions and silently falls back to 1 without this key.
 resolver = "3"
 
 members = [ "binary-traits",
