@@ -68,6 +68,48 @@ impl<SA: SuffixArrayBackend, P: ProteinsBackend, STPM: SuffixToProteinMappingBac
         }
         res
     }
+
+    /// Returns the taxon id of every protein that corresponds with the provided suffixes.
+    ///
+    /// Same two-pass pipeline as [`Self::retrieve_proteins`] and for the same reason — see the
+    /// module docs; only the second pass differs, reading one field per protein instead of
+    /// building a `ProteinRef`.
+    ///
+    /// The prefetch pays off more completely here than it does there. `proteins.prefetch` hints
+    /// the metadata entry, which is the whole of what this reads; `retrieve_proteins` goes on to
+    /// follow that entry's offsets into the UID and annotation blobs, which the same hint does not
+    /// cover.
+    ///
+    /// Duplicates are kept. Suffixes commonly land in the same protein, and far more often in the
+    /// same taxon, but deduplicating is the caller's business — `retrieve_proteins` does no
+    /// post-processing either, and `peptide_search` is where a result is shaped.
+    #[inline]
+    pub fn retrieve_taxa(&self, suffixes: &[i64]) -> Vec<u32> {
+        let distance = RETRIEVAL_PREFETCH_DISTANCE;
+
+        // Pass 1: prefetch suffix_to_protein mapping, collect protein_indices
+        let mut protein_indices = Vec::with_capacity(suffixes.len());
+        for (i, &suffix) in suffixes.iter().enumerate() {
+            if let Some(&fs) = suffixes.get(i + distance) {
+                self.suffix_index_to_protein.prefetch_for_suffix(fs);
+            }
+            protein_indices.push(self.suffix_index_to_protein.suffix_to_protein(suffix));
+        }
+
+        // Pass 2: prefetch protein entries (D ahead), read taxon ids
+        let mut res = Vec::with_capacity(suffixes.len());
+        for (i, &protein_index) in protein_indices.iter().enumerate() {
+            if let Some(&fpi) = protein_indices.get(i + distance)
+                && !fpi.is_null()
+            {
+                self.proteins.prefetch(fpi as usize);
+            }
+            if !protein_index.is_null() {
+                res.push(self.proteins.taxon_id(protein_index as usize));
+            }
+        }
+        res
+    }
 }
 
 #[cfg(test)]
