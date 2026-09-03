@@ -32,15 +32,17 @@ full-UniProt scale, larger than the suffix array itself, so small databases only
 ## Storage: two backends per structure, and no opinion about which
 
 Every storage structure has two implementations, one owned and one borrowing a memory mapping.
-Both are always compiled, the searcher is generic over all three of them, and **nothing here names
-a concrete one**.
+Both are always compiled and **nothing here names a concrete one**. `Searcher` takes three type
+parameters — the suffix array, the protein metadata and the suffix→protein mapping — and reaches
+the protein text through the metadata backend's own `Text`, so the four structures below are chosen
+along four independent axes rather than three.
 
 | structure | owned | mapped |
 |---|---|---|
 | suffix array | `array::InMemorySA` | `array::MmapBackedSA` |
 | protein text | `protein_text::InMemoryProteinText` | `protein_text::MmapBackedProteinText` |
 | protein metadata | `protein_metadata::InMemoryProteins<T>` | `protein_metadata::MmapBackedProteins<T>` |
-| suffix→protein | `suffix_to_protein_index::InMemorySuffixToProteinMapping` | `…::MmapBackedSuffixToProteinMapping` |
+| suffix→protein | `suffix_to_protein_index::InMemorySuffixToProteinMapping` | `suffix_to_protein_index::MmapBackedSuffixToProteinMapping` |
 
 The choice is made once per build by the binary — `sa-server`'s `backends` module is the only place
 in the workspace a storage feature is read. Selection is by type, so there is no runtime branch and
@@ -74,9 +76,10 @@ restoring a runtime path.
 
 ## No instrumentation
 
-Nothing in the search path reads a clock or bumps a counter. It used to, behind a `measure` feature
-whose atomics perturbed the very numbers they produced (~2% at `mlp_batch=1`); the feature is gone
-and the findings it settled are recorded in the crate docs. Run-level measurement lives in
+Nothing in the search path reads a clock or bumps a counter, and there is no build configuration
+that makes it do so. Instrumentation here perturbs the very numbers it produces — atomics and clock
+reads cost a couple of percent at the smallest batch size — so the questions it existed to answer
+were settled and it was removed; the findings are recorded in the crate docs. Run-level measurement lives in
 [`sa-benchmarks`](../sa-benchmarks/README.md), which never ships.
 
 The crate docs are the long form of all of this: why the code is written the way it is, what LTO

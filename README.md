@@ -116,7 +116,7 @@ they are also the arms that collapse first when the ceiling keeps falling.
 **2. Raise the k-mer table to 6, from the default 5.** Under a ceiling the 6-mer is +18.4% and
 takes 27.9% fewer major faults than no table; a 5-mer is +3.2%, barely better than nothing. The
 difference is working-set size rather than probe count — a 6-mer narrows the search to about one
-suffix-array page per query where a 5-mer leaves seven. It costs 3.06 GB against 127 MB, which is
+suffix-array page per query where a 5-mer leaves seven. It costs 2.85 GB against 0.12 GB, which is
 why the resident-case measurement rejected it and why 5 is the default; this is the one regime
 where the 24x is worth paying.
 
@@ -190,9 +190,9 @@ a table is worth +14% to +29% on 35-50-residue queries and nothing that clears t
 over that range rather than the binary-search descent the table removes.
 
 Note it is a *dense* table: it has one entry per possible k-mer, so its size depends only on `k`
-and not on the database. That makes `k` the whole memory decision — roughly 127 MB at the default
-`--kmer-size 5` against 3.06 GB at `6`, and `7` is the maximum the builder accepts. The default is
-5 because the 6-mer's extra 2.9 GB does not pay for itself with the index resident: nothing
+and not on the database. That makes `k` the whole memory decision — roughly 0.12 GB at the default
+`--kmer-size 5` against 2.85 GB at `6`, and `7` is the maximum the builder accepts. The default is
+5 because the 6-mer's extra ~2.7 GB does not pay for itself with the index resident: nothing
 separates the two sizes above the noise floor in any resident cell. Pass `--kmer-size 6` only under
 a memory ceiling, where it does; see "Running an mmap build" above. The table can only be built
 during a full index build, since it is derived from the suffix array before that is written out.
@@ -209,12 +209,13 @@ hardening it protects nothing that runs in production; the caller that exposes t
 the network is the place for that. See the note on resource limits in `sa-index::peptide_search`.
 
 ```bash
+# --kmer-table-file and --address are both optional; the address shown is the default.
 ./target/release/sa-server \
   --database-file proteins.bin \
   --index-file    sa.bin \
   --mapping-file  mapping.bin \
-  --kmer-table-file kmer_table.bin \   # optional
-  --address 0.0.0.0:3000               # optional, this is the default
+  --kmer-table-file kmer_table.bin \
+  --address 0.0.0.0:3000
 ```
 
 Then POST to `/search`:
@@ -311,8 +312,8 @@ Every run writes a self-contained `report.html` — sidebar, row filter, sortabl
 its results, plus `report.md` and, for `all`, a `report.json` a later run can use as its baseline.
 
 Measurement code stays out of what ships. Nothing in the search path reads a clock or bumps a
-counter — the `measure` feature that used to gate that instrumentation is gone, and its findings
-are recorded in `sa-index`'s crate docs. Run-level measurement lives in `sa-benchmarks`, which
+counter, and no build configuration makes it do so — instrumentation there would perturb the very
+numbers it produces, so its findings are recorded in `sa-index`'s crate docs instead. Run-level measurement lives in `sa-benchmarks`, which
 never ships at all.
 
 ## Further reading
