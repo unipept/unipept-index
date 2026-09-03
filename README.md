@@ -130,9 +130,9 @@ instead of ~41%.
 ## Installation
 
 > [!NOTE]
-> Building needs Rust — get it from [rust-lang.org](https://www.rust-lang.org/) — plus `git`,
-> `cmake`, `make`, a C compiler and `libclang`. `libsais64-rs` builds the suffix-array construction
-> library from source: its build script clones
+> Building needs Rust 1.88 or newer — get it from [rust-lang.org](https://www.rust-lang.org/) —
+> plus `git`, `cmake`, `make`, a C compiler and `libclang`. `libsais64-rs` builds the suffix-array
+> construction library from source: its build script clones
 > [`unipept/libsais-packed`](https://github.com/unipept/libsais-packed), compiles it with CMake and
 > generates bindings with `bindgen`, so the first build needs network access.
 

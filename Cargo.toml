@@ -31,3 +31,26 @@ default-members = [ "binary-traits",
     "sa-index",
     "sa-server"
 ]
+
+# 1.88 is the oldest compiler this workspace builds on, measured rather than assumed: 1.87 fails
+# on `slice::as_chunks`, stabilised in 1.88.0 and used by `bitarray` and elsewhere. The highest
+# floor any dependency declares is 1.86 (criterion), so it is this repository's own source that
+# sets the number below.
+#
+# Declaring it here is not what enforces it. `cargo build`/`check` compare `rust-version` against
+# a crate's *dependencies*, never against its own source, so on its own this key would only be
+# documentation. The `msrv` job in ci.yml is what turns it into a gate: it builds the workspace on
+# exactly this toolchain, so a source change that needs a newer compiler fails there.
+#
+# The floor moves only in a pull request whose purpose is moving it, naming the API or dependency
+# that forced the raise, with the `msrv` job's pinned toolchain in ci.yml moving in the same
+# commit. It never rides along in an unrelated change — a `cargo clippy --fix` autofix reaching
+# for a newer std API is a reason to write it the old way, not a reason to bump. The repository
+# maintainers decide, because the floor is a promise to consumers, not a local build detail.
+#
+# This is not rust-toolchain.toml. That file pins the nightly `cargo fmt` runs on; this says the
+# oldest compiler a consumer can build the workspace with. #57 raised the floor to 1.88 through a
+# clippy autofix that had nothing to object to, because nothing here declared a floor for it to
+# violate — this closes that gap.
+[workspace.package]
+rust-version = "1.88"
