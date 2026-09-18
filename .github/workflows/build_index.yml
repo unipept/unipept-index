@@ -4,8 +4,8 @@ name: Build index binaries
 
 on:
   schedule:
-    # Run on the first day of every month at midnight UTC
-    - cron: '0 0 1 * *'
+    # 06:00 on the 1st, after unipept-database has published that month's tables
+    - cron: '0 6 1 * *'
   workflow_dispatch:
 
 # Least privilege by default; the release step below raises it where it is actually needed.
@@ -59,10 +59,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          release_date=$(gh release view --repo unipept/unipept-database \
-            --json publishedAt --jq '.publishedAt[:10]')
-          echo "SP_VERSION=SP_$release_date" >> "$GITHUB_ENV"
-          gh release download --repo unipept/unipept-database \
+          # The newest suffix-array-<date> release. The latest release is the static database.
+          tag=$(gh release list --repo unipept/unipept-database --limit 1000 --json tagName \
+            --jq '.[].tagName | select(startswith("suffix-array-"))' | sort | tail -n 1)
+          test -n "$tag" || { echo "no suffix-array-<date> release in unipept-database"; exit 1; }
+          echo "Using $tag"
+          echo "SP_VERSION=SP_${tag#suffix-array-}" >> "$GITHUB_ENV"
+          gh release download "$tag" --repo unipept/unipept-database \
             --pattern 'suffix_array.zip' --output build/suffix_array.zip --clobber
 
       # Extract the contents of the output folder from the zip into a folder "build/input"
