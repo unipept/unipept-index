@@ -144,7 +144,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit_status_to_result(
         "cmake",
         Command::new("cmake")
-            .args(["-DCMAKE_BUILD_TYPE=\"Release\"", LIBSAIS_DIRECTORY, cmake_build_dir.as_str()])
+            .args(["-DCMAKE_BUILD_TYPE=Release", LIBSAIS_DIRECTORY, cmake_build_dir.as_str()])
             .status()?
     )?;
     exit_status_to_result("make", Command::new("make").args(["-C", LIBSAIS_DIRECTORY]).status()?)?;
