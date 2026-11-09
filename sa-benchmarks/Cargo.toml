@@ -3,7 +3,7 @@ name = "sa-benchmarks"
 version = "0.1.0"
 edition.workspace = true
 # Not `rust-version.workspace = true`: sa-benchmarks is a dev-only measurement harness, is not a
-# default member, and ships to nobody, but its `sysinfo` 0.39.6 dependency requires rustc 1.95, well
+# default member, and ships to nobody, but its `sysinfo` 0.40 dependency requires rustc 1.95, well
 # above the workspace's 1.88 floor. Declaring its own floor means `cargo -p sa-benchmarks` on an
 # older toolchain says so plainly instead of failing deep inside a dependency.
 rust-version = "1.95"
@@ -34,5 +34,5 @@ clap       = { version = "4.5", features = ["derive"] }
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rand       = "0.10"
-sysinfo    = "0.39"
+sysinfo    = "0.40"
 rayon      = "1.8"
