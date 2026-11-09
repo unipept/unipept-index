@@ -10,9 +10,6 @@
 #     two-step manual ritual (bump, then `cargo fmt --all`) documented in that file.
 #   * the libsais-packed C library, which libsais64-rs/builder.rs clones at build time rather than
 #     declaring as a dependency.
-#
-# Monthly, ungrouped, and effectively uncapped: one PR per update, so each bump is reviewed and
-# merged on its own evidence rather than as part of a batch that is green as a whole.
 version: 2
 
 updates:
@@ -23,6 +20,15 @@ updates:
       time: "13:00"
       timezone: Europe/Brussels
     open-pull-requests-limit: 99
+    groups:
+      # Dependabot classifies a Cargo `0.y` minor update as major, so it gets its own PR.
+      cargo-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels:
+      - deps
+    commit-message:
+      prefix: deps
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -31,6 +37,13 @@ updates:
       time: "13:00"
       timezone: Europe/Brussels
     open-pull-requests-limit: 99
+    ignore:
+      # The MSRV job pins this action to the workspace `rust-version`.
+      - dependency-name: dtolnay/rust-toolchain
+    labels:
+      - deps
+    commit-message:
+      prefix: deps
 
   - package-ecosystem: devcontainers
     directory: "/"
@@ -39,3 +52,7 @@ updates:
       time: "13:00"
       timezone: Europe/Brussels
     open-pull-requests-limit: 99
+    labels:
+      - deps
+    commit-message:
+      prefix: deps
