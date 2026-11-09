@@ -708,7 +708,7 @@ fn page_faults() -> (u64, u64) {
 /// Linux — cost this function has no use for, paid around a timed region.
 fn measure_process_memory() -> u64 {
     let pid = Pid::from(std::process::id() as usize);
-    let mut sys = System::new();
+    let mut sys = System::new().expect("sysinfo does not support this OS");
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         false,
